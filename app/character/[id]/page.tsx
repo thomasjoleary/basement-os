@@ -34,6 +34,10 @@ export default function CharacterDetail() {
   // Edit State
   const [isEditing, setIsEditing] = useState(false)
   const [formData, setFormData] = useState<any>(null)
+  
+  // Tame Buffs
+  const [activeTames, setActiveTames] = useState<any[]>([])
+  const [totalStats, setTotalStats] = useState<any>({})
 
   useEffect(() => {
     async function init() {
@@ -64,10 +68,41 @@ export default function CharacterDetail() {
           ...data,
           skills: data.skills || [],
           mana_current: data.mana_current ?? 0,
-          mana_max: data.mana_max ?? 0
+          mana_max: data.mana_max ?? 0,
+          is_active: data.is_active ?? false,
+          stat_buffs: data.stat_buffs || {}
         }
         setChar(normalized)
         setFormData(normalized)
+        
+        // If this character has an owner, fetch their active tames for buff calculation
+        if (data.user_id) {
+          const { data: tames } = await supabase
+            .from('characters')
+            .select('name, stat_buffs, is_active')
+            .eq('user_id', data.user_id)
+            .eq('is_tame', true)
+            .eq('is_active', true)
+          
+          if (tames) {
+            setActiveTames(tames)
+            // Calculate total stats (base + buffs)
+            const baseStats = normalized.stats || {}
+            const buffedStats = { ...baseStats }
+            
+            tames.forEach(tame => {
+              const buffs = tame.stat_buffs || {}
+              Object.keys(buffs).forEach(stat => {
+                buffedStats[stat] = (buffedStats[stat] || 0) + (buffs[stat] || 0)
+              })
+            })
+            
+            setTotalStats(buffedStats)
+          }
+        } else {
+          // No owner = no buffs, just use base stats
+          setTotalStats(normalized.stats || {})
+        }
       }
 
       // 3. If GM, fetch all profiles for assignment dropdown
@@ -95,7 +130,9 @@ export default function CharacterDetail() {
             stats: formData.stats,
             inventory: formData.inventory,
             abilities: formData.abilities,
-            skills: formData.skills
+            skills: formData.skills,
+            is_active: formData.is_active,
+            stat_buffs: formData.stat_buffs
         })
         .eq('id', id)
 
@@ -104,6 +141,8 @@ export default function CharacterDetail() {
     } else {
         setChar(formData) 
         setIsEditing(false)
+        // Reload page to recalculate buffs
+        window.location.reload()
     }
   }
 
@@ -210,6 +249,34 @@ export default function CharacterDetail() {
     const newSkills = [...(formData.skills || [])]
     newSkills.splice(index, 1)
     setFormData({ ...formData, skills: newSkills })
+  }
+
+  function handleStatBuffChange(statName: string, value: string) {
+    const newBuffs = { ...formData.stat_buffs }
+    const numValue = parseInt(value) || 0
+    if (numValue === 0) {
+      delete newBuffs[statName]
+    } else {
+      newBuffs[statName] = numValue
+    }
+    setFormData({ ...formData, stat_buffs: newBuffs })
+  }
+
+  async function toggleTameActive() {
+    const newActiveState = !char.is_active
+    const { error } = await supabase
+      .from('characters')
+      .update({ is_active: newActiveState })
+      .eq('id', id)
+    
+    if (error) {
+      alert('Error toggling active state: ' + error.message)
+    } else {
+      setChar({ ...char, is_active: newActiveState })
+      setFormData({ ...formData, is_active: newActiveState })
+      // Reload to recalculate owner's stats
+      window.location.reload()
+    }
   }
 
   if (loading) return <div className="min-h-screen bg-gray-900 text-white p-8 text-center">Loading...</div>
@@ -392,23 +459,115 @@ export default function CharacterDetail() {
             <div className="bg-gray-800 rounded-xl p-6 shadow border border-gray-700">
                 <h2 className="text-xl font-bold text-gray-200 mb-4 border-b border-gray-700 pb-2">Stats</h2>
                 <div className="grid grid-cols-2 gap-4">
-                    {Object.entries(displayData.stats || {}).map(([key, val]: [string, any]) => (
-                        <div key={key} className="bg-gray-900 p-3 rounded text-center">
-                            <div className="text-gray-500 text-xs uppercase tracking-widest mb-1">{key}</div>
-                            {isEditing ? (
-                                <input 
-                                    type="number" 
-                                    className="w-full bg-black border border-gray-600 rounded text-center font-mono font-bold text-white py-1"
-                                    value={val}
-                                    onChange={(e) => handleStatChange(key, e.target.value)}
-                                />
-                            ) : (
-                                <div className="text-2xl font-mono font-bold text-white">{val}</div>
-                            )}
-                        </div>
-                    ))}
+                    {Object.entries(displayData.stats || {}).map(([key, val]: [string, any]) => {
+                        const baseStat = val
+                        const totalStat = totalStats[key] || baseStat
+                        const buffAmount = totalStat - baseStat
+                        
+                        return (
+                            <div key={key} className="bg-gray-900 p-3 rounded text-center">
+                                <div className="text-gray-500 text-xs uppercase tracking-widest mb-1">{key}</div>
+                                {isEditing ? (
+                                    <input 
+                                        type="number" 
+                                        className="w-full bg-black border border-gray-600 rounded text-center font-mono font-bold text-white py-1"
+                                        value={val}
+                                        onChange={(e) => handleStatChange(key, e.target.value)}
+                                    />
+                                ) : (
+                                    <div className="flex flex-col items-center">
+                                        <div className={`text-2xl font-mono font-bold ${buffAmount > 0 ? 'text-green-400' : 'text-white'}`}>
+                                            {totalStat}
+                                        </div>
+                                        {buffAmount > 0 && (
+                                            <div className="text-xs text-green-500">
+                                                +{buffAmount} from tames
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                            </div>
+                        )
+                    })}
                 </div>
             </div>
+            
+            {/* ACTIVE TAMES (Show buffs being received) */}
+            {!char.is_tame && activeTames.length > 0 && (
+                <div className="bg-gray-800 rounded-xl p-6 shadow border border-gray-700">
+                    <h2 className="text-xl font-bold text-gray-200 mb-4 border-b border-gray-700 pb-2">Active Tames</h2>
+                    <div className="space-y-2">
+                        {activeTames.map((tame, i) => (
+                            <div key={i} className="bg-green-900/20 border border-green-800 rounded p-3">
+                                <div className="font-bold text-green-300 mb-1 flex items-center gap-2">
+                                    <span>✓</span> {tame.name}
+                                </div>
+                                <div className="flex flex-wrap gap-2 text-xs">
+                                    {Object.entries(tame.stat_buffs || {}).map(([stat, buff]: [string, any]) => (
+                                        <span key={stat} className="bg-green-900/50 text-green-300 px-2 py-1 rounded border border-green-700">
+                                            +{buff} {stat}
+                                        </span>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+            
+            {/* TAME BUFFS (Only show for tames) */}
+            {char.is_tame && isGM && (
+                <div className="bg-gray-800 rounded-xl p-6 shadow border border-gray-700">
+                    <div className="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
+                        <h2 className="text-xl font-bold text-gray-200">Tame Buffs</h2>
+                        <button
+                            onClick={toggleTameActive}
+                            className={`px-3 py-1 rounded font-bold text-sm transition ${
+                                char.is_active 
+                                ? 'bg-green-900 text-green-300 border border-green-600 hover:bg-green-800' 
+                                : 'bg-gray-700 text-gray-400 border border-gray-600 hover:bg-gray-600'
+                            }`}
+                        >
+                            {char.is_active ? '✓ Active' : 'Inactive'}
+                        </button>
+                    </div>
+                    
+                    {isEditing ? (
+                        <div className="space-y-3">
+                            <p className="text-xs text-gray-400 mb-2">Set buffs this tame provides when active:</p>
+                            {Object.keys(char.stats || {}).map(statName => {
+                                const currentBuff = formData.stat_buffs?.[statName] || 0
+                                return (
+                                    <div key={statName} className="flex items-center gap-2 bg-gray-900 p-2 rounded">
+                                        <span className="text-sm text-gray-300 flex-1 uppercase">{statName}</span>
+                                        <span className="text-xs text-gray-500">+</span>
+                                        <input 
+                                            type="number"
+                                            className="w-20 bg-black text-white px-2 py-1 rounded border border-gray-700 text-center text-sm"
+                                            value={currentBuff}
+                                            onChange={(e) => handleStatBuffChange(statName, e.target.value)}
+                                            placeholder="0"
+                                        />
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    ) : (
+                        <div className="space-y-2">
+                            {Object.keys(char.stat_buffs || {}).length > 0 ? (
+                                Object.entries(char.stat_buffs).map(([stat, buff]: [string, any]) => (
+                                    <div key={stat} className="flex justify-between items-center bg-gray-900 px-3 py-2 rounded">
+                                        <span className="text-sm text-gray-300 uppercase">{stat}</span>
+                                        <span className="text-green-400 font-bold">+{buff}</span>
+                                    </div>
+                                ))
+                            ) : (
+                                <p className="text-gray-500 italic text-sm">No buffs configured.</p>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
 
             {/* SKILLS */}
             <div className="bg-gray-800 rounded-xl p-6 shadow border border-gray-700">
