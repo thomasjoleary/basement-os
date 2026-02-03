@@ -48,22 +48,19 @@ export default function Home() {
 
   // --- DATA PROCESSING & VISIBILITY FILTER ---
   const filteredCharacters = characters.filter(char => {
-      // 1. GM sees everything
-      if (isGM) return true;
-
-      // 2. Dead characters (Graveyard) are visible to everyone
+      // 1. Dead characters are public (Graveyard)
       if (char.is_dead) return true;
 
-      // 3. Players see characters assigned to them
-      if (session && char.user_id === session.user.id) return true;
+      // 2. GM sees everything
+      if (isGM) return true;
 
-      // 4. Players see TAMES assigned to them (Cascading visibility)
-      // Note: We need to know who owns the tame.
-      // Logic: If char is tame, and its owner (linked via name/job) is assigned to me, show it.
-      // Or simpler: The "Assign Owner" logic ALREADY updates the tame's user_id. 
-      // So rule #3 covers Tames too!
-      
-      // Default: Hidden
+      // 3. Guests (Logged Out) see NOTHING else
+      if (!session) return false;
+
+      // 4. Players see characters assigned to them
+      if (char.user_id === session.user.id) return true;
+
+      // 5. Default: Hidden (Living characters of others / Unclaimed)
       return false;
   })
 
@@ -97,26 +94,46 @@ export default function Home() {
   });
 
   return (
-    <main className="min-h-screen p-8 bg-gray-900 text-white font-sans">
-      <div className="flex flex-col items-center mb-8">
-        <h1 className="text-4xl font-bold mb-4 text-center text-red-500 font-mono">
-            BASEMENT_OS
-        </h1>
-        
-        {/* AUTH HEADER */}
+    <main className="min-h-screen p-8 bg-gray-900 text-white font-sans relative">
+      
+      {/* AUTH HEADER - TOP RIGHT */}
+      <div className="flex justify-end mb-4 md:absolute md:top-6 md:right-8 z-10">
         {loading ? (
-            <div className="h-8"></div>
+            <div className="h-10 w-32 bg-gray-800 rounded animate-pulse"></div>
         ) : session ? (
-            <div className="flex items-center gap-4 text-sm text-gray-400">
-                <span>Logged in as <span className="text-white">{session.user.email}</span></span>
-                {isGM && <span className="bg-red-900 text-red-200 text-xs px-2 py-1 rounded border border-red-700">GM</span>}
-                <button onClick={handleSignOut} className="text-red-400 hover:text-red-300 underline">Sign Out</button>
+            <div className="flex items-center gap-3 bg-gray-800 p-1.5 pr-4 pl-1.5 rounded-full border border-gray-700 shadow-xl backdrop-blur-sm bg-opacity-90">
+                <div className="w-8 h-8 bg-gradient-to-br from-red-600 to-purple-600 rounded-full flex items-center justify-center text-xs font-bold text-white shadow-inner">
+                    {session.user.email?.[0].toUpperCase()}
+                </div>
+                <div className="flex flex-col">
+                    <span className="text-[10px] text-gray-400 leading-none uppercase tracking-wider">Operator</span>
+                    <span className="text-sm font-bold text-white leading-none">{session.user.email?.split('@')[0]}</span>
+                </div>
+                {isGM && (
+                    <span className="ml-1 bg-red-900/80 text-red-200 text-[10px] px-2 py-0.5 rounded border border-red-700 font-bold tracking-wider shadow">
+                        GM
+                    </span>
+                )}
+                <div className="h-6 w-px bg-gray-700 mx-2"></div>
+                <button onClick={handleSignOut} className="text-gray-400 hover:text-white transition text-xs font-bold uppercase tracking-wide">
+                    Sign Out
+                </button>
             </div>
         ) : (
-            <Link href="/login" className="text-blue-400 hover:text-blue-300 underline text-sm">
-                Log In / Sign Up
+            <Link 
+                href="/login" 
+                className="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-full font-bold transition shadow-lg flex items-center gap-2 hover:shadow-blue-500/20"
+            >
+                <span>👤</span> Log In
             </Link>
         )}
+      </div>
+
+      <div className="flex flex-col items-center mb-12 mt-4 md:mt-0">
+        <h1 className="text-5xl font-bold mb-2 text-center text-red-500 font-mono tracking-tighter drop-shadow-[0_2px_10px_rgba(220,38,38,0.5)]">
+            BASEMENT_OS
+        </h1>
+        <div className="h-1 w-32 bg-gradient-to-r from-transparent via-red-500 to-transparent opacity-50"></div>
       </div>
 
       <div className="flex justify-center gap-4 mb-8">
