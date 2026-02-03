@@ -84,7 +84,8 @@ export default function CharacterDetail() {
             xp_max: parseInt(formData.xp_max),
             level: parseInt(formData.level),
             stats: formData.stats,
-            inventory: formData.inventory 
+            inventory: formData.inventory,
+            abilities: formData.abilities
         })
         .eq('id', id)
 
@@ -165,6 +166,23 @@ export default function CharacterDetail() {
     const newInventory = [...formData.inventory]
     newInventory.splice(index, 1)
     setFormData({ ...formData, inventory: newInventory })
+  }
+
+  function handleAbilityChange(index: number, field: string, value: string) {
+    const newAbilities = [...(formData.abilities || [])]
+    newAbilities[index] = { ...newAbilities[index], [field]: value }
+    setFormData({ ...formData, abilities: newAbilities })
+  }
+
+  function handleAddAbility() {
+    const newAbility = { name: "New Ability", rarity: "Common", description: "", level: null, type: "" }
+    setFormData({ ...formData, abilities: [...(formData.abilities || []), newAbility] })
+  }
+
+  function handleRemoveAbility(index: number) {
+    const newAbilities = [...(formData.abilities || [])]
+    newAbilities.splice(index, 1)
+    setFormData({ ...formData, abilities: newAbilities })
   }
 
   if (loading) return <div className="min-h-screen bg-gray-900 text-white p-8 text-center">Loading...</div>
@@ -337,19 +355,74 @@ export default function CharacterDetail() {
             {/* ABILITIES */}
             <div className="bg-gray-800 rounded-xl p-6 shadow border border-gray-700">
                 <h2 className="text-xl font-bold text-gray-200 mb-4 border-b border-gray-700 pb-2">Abilities</h2>
-                <div className="space-y-4">
-                    {char.abilities && char.abilities.length > 0 ? (
-                        char.abilities.map((ab: any, i: number) => (
-                            <div key={i} className="group">
-                                <div className="flex justify-between items-baseline">
-                                    <h3 className={`font-bold ${getRarityColor(ab.rarity)}`}>{ab.name}</h3>
-                                    {ab.level && <span className="text-xs text-gray-500">Lv {ab.level}</span>}
+                
+                {isEditing ? (
+                    // EDIT MODE ABILITIES
+                    <div className="space-y-3">
+                        {formData.abilities && formData.abilities.map((ab: any, i: number) => (
+                            <div key={i} className="bg-gray-900 p-3 rounded border border-gray-600">
+                                <div className="flex flex-col gap-2 mb-2">
+                                    <div className="flex gap-2">
+                                        <input 
+                                            className="flex-1 bg-black text-white px-2 py-1 rounded border border-gray-700" 
+                                            placeholder="Ability Name"
+                                            value={ab.name} 
+                                            onChange={(e) => handleAbilityChange(i, 'name', e.target.value)}
+                                        />
+                                        <select 
+                                            className={`bg-black px-2 py-1 rounded border border-gray-700 text-xs font-bold ${getRarityColor(ab.rarity)}`}
+                                            value={ab.rarity || 'Common'}
+                                            onChange={(e) => handleAbilityChange(i, 'rarity', e.target.value)}
+                                        >
+                                            {RARITIES.map(r => <option key={r} value={r} className="text-white">{r}</option>)}
+                                        </select>
+                                        <input 
+                                            type="number"
+                                            className="w-16 bg-black text-gray-300 px-2 py-1 rounded border border-gray-700 text-center text-xs" 
+                                            placeholder="Lv"
+                                            value={ab.level || ''}
+                                            onChange={(e) => handleAbilityChange(i, 'level', e.target.value)}
+                                        />
+                                        <button 
+                                            onClick={() => handleRemoveAbility(i)}
+                                            className="bg-red-900/50 text-red-400 hover:bg-red-900 px-3 rounded border border-red-800 transition"
+                                            title="Remove Ability"
+                                        >
+                                            ✕
+                                        </button>
+                                    </div>
+                                    <textarea
+                                        className="w-full bg-black text-gray-400 text-sm px-2 py-1 rounded border border-gray-700 min-h-[60px]"
+                                        placeholder="Ability description..."
+                                        value={ab.description || ''}
+                                        onChange={(e) => handleAbilityChange(i, 'description', e.target.value)}
+                                    />
                                 </div>
-                                <p className="text-sm text-gray-400 mt-1 leading-relaxed">{ab.description}</p>
                             </div>
-                        ))
-                    ) : <p className="text-gray-500 italic">No abilities listed.</p>}
-                </div>
+                        ))}
+                        <button 
+                            onClick={handleAddAbility}
+                            className="w-full py-3 border-2 border-dashed border-gray-600 text-gray-400 rounded hover:border-gray-400 hover:text-white transition font-bold"
+                        >
+                            + Add Ability
+                        </button>
+                    </div>
+                ) : (
+                    // VIEW MODE ABILITIES
+                    <div className="space-y-4">
+                        {char.abilities && char.abilities.length > 0 ? (
+                            char.abilities.map((ab: any, i: number) => (
+                                <div key={i} className="group">
+                                    <div className="flex justify-between items-baseline">
+                                        <h3 className={`font-bold ${getRarityColor(ab.rarity)}`}>{ab.name}</h3>
+                                        {ab.level && <span className="text-xs text-gray-500">Lv {ab.level}</span>}
+                                    </div>
+                                    <p className="text-sm text-gray-400 mt-1 leading-relaxed">{ab.description}</p>
+                                </div>
+                            ))
+                        ) : <p className="text-gray-500 italic">No abilities listed.</p>}
+                    </div>
+                )}
             </div>
         </div>
 
