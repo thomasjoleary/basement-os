@@ -172,7 +172,7 @@ export default function CharacterDetail() {
 
   const displayData = isEditing ? formData : char
   
-  const canEdit = isGM || (session && char.user_id === session.user.id) || (session && !char.user_id)
+  const canEdit = isGM // ONLY GMs can edit characters
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4 md:p-8 font-sans">
