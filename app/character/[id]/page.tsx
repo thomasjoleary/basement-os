@@ -59,8 +59,13 @@ export default function CharacterDetail() {
       
       if (error) console.error(error)
       else {
-        setChar(data)
-        setFormData(data)
+        // Ensure skills is always an array
+        const normalized = {
+          ...data,
+          skills: data.skills || []
+        }
+        setChar(normalized)
+        setFormData(normalized)
       }
 
       // 3. If GM, fetch all profiles for assignment dropdown
