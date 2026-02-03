@@ -59,10 +59,12 @@ export default function CharacterDetail() {
       
       if (error) console.error(error)
       else {
-        // Ensure skills is always an array
+        // Ensure skills is always an array and mana values default to 0
         const normalized = {
           ...data,
-          skills: data.skills || []
+          skills: data.skills || [],
+          mana_current: data.mana_current ?? 0,
+          mana_max: data.mana_max ?? 0
         }
         setChar(normalized)
         setFormData(normalized)
@@ -85,6 +87,8 @@ export default function CharacterDetail() {
         .update({
             hp_current: parseInt(formData.hp_current),
             hp_max: parseInt(formData.hp_max),
+            mana_current: parseInt(formData.mana_current),
+            mana_max: parseInt(formData.mana_max),
             xp_current: parseInt(formData.xp_current),
             xp_max: parseInt(formData.xp_max),
             level: parseInt(formData.level),
@@ -304,6 +308,37 @@ export default function CharacterDetail() {
                     />
                 </div>
              </div>
+             {/* MANA BAR */}
+             <div className="w-full md:w-64">
+                <div className="flex justify-between text-xs uppercase font-bold text-gray-400 mb-1 items-center">
+                    <span>Mana</span>
+                    {isEditing ? (
+                        <div className="flex items-center gap-1">
+                            <input 
+                                type="number" 
+                                className="w-16 bg-gray-900 border border-gray-600 rounded px-1 text-right"
+                                value={formData.mana_current}
+                                onChange={(e) => setFormData({...formData, mana_current: e.target.value})}
+                            />
+                            <span>/</span>
+                            <input 
+                                type="number" 
+                                className="w-16 bg-gray-900 border border-gray-600 rounded px-1"
+                                value={formData.mana_max}
+                                onChange={(e) => setFormData({...formData, mana_max: e.target.value})}
+                            />
+                        </div>
+                    ) : (
+                        <span>{char.mana_current} / {char.mana_max}</span>
+                    )}
+                </div>
+                <div className="w-full bg-gray-900 h-4 rounded-full overflow-hidden border border-gray-600">
+                    <div 
+                        className="bg-blue-600 h-full transition-all duration-500" 
+                        style={{ width: `${Math.min(100, (displayData.mana_current / displayData.mana_max) * 100 || 0)}%` }}
+                    />
+                </div>
+             </div>
              {/* XP BAR */}
              <div className="w-full md:w-64">
                 <div className="flex justify-between text-xs uppercase font-bold text-gray-400 mb-1 items-center">
@@ -330,7 +365,7 @@ export default function CharacterDetail() {
                 </div>
                 <div className="w-full bg-gray-900 h-2 rounded-full overflow-hidden border border-gray-600">
                     <div 
-                        className="bg-blue-500 h-full transition-all duration-500" 
+                        className="bg-fuchsia-500 h-full transition-all duration-500" 
                         style={{ width: `${Math.min(100, (displayData.xp_current / displayData.xp_max) * 100 || 0)}%` }}
                     />
                 </div>
