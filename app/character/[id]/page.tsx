@@ -85,7 +85,8 @@ export default function CharacterDetail() {
             level: parseInt(formData.level),
             stats: formData.stats,
             inventory: formData.inventory,
-            abilities: formData.abilities
+            abilities: formData.abilities,
+            skills: formData.skills
         })
         .eq('id', id)
 
@@ -183,6 +184,23 @@ export default function CharacterDetail() {
     const newAbilities = [...(formData.abilities || [])]
     newAbilities.splice(index, 1)
     setFormData({ ...formData, abilities: newAbilities })
+  }
+
+  function handleSkillChange(index: number, field: string, value: string) {
+    const newSkills = [...(formData.skills || [])]
+    newSkills[index] = { ...newSkills[index], [field]: field === 'level' ? parseInt(value) || 0 : value }
+    setFormData({ ...formData, skills: newSkills })
+  }
+
+  function handleAddSkill() {
+    const newSkill = { name: "New Skill", level: 1 }
+    setFormData({ ...formData, skills: [...(formData.skills || []), newSkill] })
+  }
+
+  function handleRemoveSkill(index: number) {
+    const newSkills = [...(formData.skills || [])]
+    newSkills.splice(index, 1)
+    setFormData({ ...formData, skills: newSkills })
   }
 
   if (loading) return <div className="min-h-screen bg-gray-900 text-white p-8 text-center">Loading...</div>
@@ -350,6 +368,61 @@ export default function CharacterDetail() {
                         </div>
                     ))}
                 </div>
+            </div>
+
+            {/* SKILLS */}
+            <div className="bg-gray-800 rounded-xl p-6 shadow border border-gray-700">
+                <h2 className="text-xl font-bold text-gray-200 mb-4 border-b border-gray-700 pb-2">Skills</h2>
+                
+                {isEditing ? (
+                    // EDIT MODE SKILLS
+                    <div className="space-y-2">
+                        {formData.skills && formData.skills.map((skill: any, i: number) => (
+                            <div key={i} className="flex items-center gap-2 bg-gray-900 p-2 rounded border border-gray-600">
+                                <input 
+                                    className="flex-1 bg-black text-white px-2 py-1 rounded border border-gray-700 text-sm" 
+                                    placeholder="Skill Name"
+                                    value={skill.name} 
+                                    onChange={(e) => handleSkillChange(i, 'name', e.target.value)}
+                                />
+                                <div className="flex items-center gap-1">
+                                    <span className="text-xs text-gray-500">Lv</span>
+                                    <input 
+                                        type="number"
+                                        className="w-16 bg-black text-white px-2 py-1 rounded border border-gray-700 text-center text-sm" 
+                                        value={skill.level}
+                                        onChange={(e) => handleSkillChange(i, 'level', e.target.value)}
+                                    />
+                                </div>
+                                <button 
+                                    onClick={() => handleRemoveSkill(i)}
+                                    className="bg-red-900/50 text-red-400 hover:bg-red-900 px-2 py-1 rounded border border-red-800 transition text-sm"
+                                    title="Remove Skill"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        ))}
+                        <button 
+                            onClick={handleAddSkill}
+                            className="w-full py-2 border-2 border-dashed border-gray-600 text-gray-400 rounded hover:border-gray-400 hover:text-white transition text-sm font-bold"
+                        >
+                            + Add Skill
+                        </button>
+                    </div>
+                ) : (
+                    // VIEW MODE SKILLS
+                    <div className="space-y-2">
+                        {char.skills && char.skills.length > 0 ? (
+                            char.skills.map((skill: any, i: number) => (
+                                <div key={i} className="flex justify-between items-center bg-gray-900 px-3 py-2 rounded border border-gray-800">
+                                    <span className="text-sm text-gray-200">{skill.name}</span>
+                                    <span className="text-xs bg-gray-700 text-gray-300 px-2 py-1 rounded font-mono">Lv {skill.level}</span>
+                                </div>
+                            ))
+                        ) : <p className="text-gray-500 italic text-sm">No skills learned.</p>}
+                    </div>
+                )}
             </div>
 
             {/* ABILITIES */}
