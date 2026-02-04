@@ -231,7 +231,7 @@ export default function WordsOfPower() {
                 type="number"
                 className="w-full bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white"
                 value={newWordForm.mana_cost}
-                onChange={(e) => setNewWordForm({ ...newWordForm, mana_cost: e.target.value })}
+                onChange={(e) => setNewWordForm({ ...newWordForm, mana_cost: parseInt(e.target.value) || 0 })}
               />
             </div>
           </div>
@@ -294,7 +294,7 @@ export default function WordsOfPower() {
                           type="number"
                           className="w-full bg-black border border-gray-700 rounded px-2 py-1 text-sm text-white text-center"
                           value={editForm.mana_cost}
-                          onChange={(e) => setEditForm({ ...editForm, mana_cost: e.target.value })}
+                          onChange={(e) => setEditForm({ ...editForm, mana_cost: parseInt(e.target.value) || 0 })}
                         />
                       </td>
                       {characters.map(char => (
