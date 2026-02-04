@@ -15,7 +15,7 @@ export default function CreateCharacter() {
     party: '',
     player_name: '', // For Tames (Owner Name) or PCs (Player Name)
     hp: 100,
-    stats: { strength: 10, speed: 10, fortitude: 10, magic: 10 }
+    stats: { strength: 0, speed: 0, fortitude: 0, magic: 0 }
   })
 
   async function handleSubmit(e: React.FormEvent) {

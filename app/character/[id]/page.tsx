@@ -63,9 +63,19 @@ export default function CharacterDetail() {
       
       if (error) console.error(error)
       else {
+        // Ensure default stats exist (strength, speed, fortitude, magic)
+        const defaultStats = {
+          strength: 0,
+          speed: 0,
+          fortitude: 0,
+          magic: 0,
+          ...(data.stats || {})
+        }
+        
         // Ensure skills is always an array and mana values default to 0
         const normalized = {
           ...data,
+          stats: defaultStats,
           skills: data.skills || [],
           mana_current: data.mana_current ?? 0,
           mana_max: data.mana_max ?? 0,
