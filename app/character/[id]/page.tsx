@@ -38,6 +38,9 @@ export default function CharacterDetail() {
   // Tame Buffs
   const [activeTames, setActiveTames] = useState<any[]>([])
   const [totalStats, setTotalStats] = useState<any>({})
+  
+  // Words of Power
+  const [words, setWords] = useState<any[]>([])
 
   useEffect(() => {
     async function init() {
@@ -119,6 +122,17 @@ export default function CharacterDetail() {
       if (userIsGM) {
           const { data: allProfiles } = await supabase.from('profiles').select('id, username').order('username')
           if (allProfiles) setProfiles(allProfiles)
+      }
+
+      // 4. Fetch Words of Power for this character
+      const { data: characterWords } = await supabase
+        .from('character_words')
+        .select('word_id, words_of_power(word, meaning, mana_cost)')
+        .eq('character_id', id)
+      
+      if (characterWords) {
+        const wordsData = characterWords.map(cw => cw.words_of_power).filter(Boolean)
+        setWords(wordsData)
       }
 
       setLoading(false)
@@ -784,14 +798,27 @@ export default function CharacterDetail() {
             </div>
 
             {/* WORDS (SPELLS) */}
-            {char.words && char.words.length > 0 && (
+            {words.length > 0 && (
                 <div className="bg-gray-800 rounded-xl p-6 shadow border border-gray-700">
-                    <h2 className="text-xl font-bold text-gray-200 mb-4 border-b border-gray-700 pb-2">Words of Power</h2>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                        {char.words.map((word: any, i: number) => (
-                            <div key={i} className="flex justify-between bg-gray-900 px-4 py-2 rounded items-center border border-gray-800">
-                                <span className="font-mono text-purple-400 font-bold">{word.name}</span>
-                                <span className="text-gray-500 text-sm">→ {word.meaning}</span>
+                    <div className="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
+                        <h2 className="text-xl font-bold text-gray-200">Words of Power</h2>
+                        {isGM && (
+                            <a 
+                                href="/words" 
+                                className="text-xs text-purple-400 hover:text-purple-300 transition flex items-center gap-1"
+                            >
+                                <span>✏️</span> Manage Words
+                            </a>
+                        )}
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {words.map((word: any, i: number) => (
+                            <div key={i} className="bg-gray-900 p-3 rounded border border-gray-800 hover:border-purple-700 transition">
+                                <div className="flex justify-between items-start mb-1">
+                                    <span className="font-mono text-purple-400 font-bold text-lg">{word.word}</span>
+                                    <span className="text-blue-400 text-xs font-mono bg-blue-900/30 px-2 py-0.5 rounded">{word.mana_cost} MP</span>
+                                </div>
+                                <div className="text-gray-500 text-sm italic">{word.meaning}</div>
                             </div>
                         ))}
                     </div>

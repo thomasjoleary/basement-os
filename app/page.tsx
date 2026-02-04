@@ -136,15 +136,20 @@ export default function Home() {
         <div className="h-1 w-32 bg-gradient-to-r from-transparent via-red-500 to-transparent opacity-50"></div>
       </div>
 
-      <div className="flex justify-center gap-4 mb-8">
+      <div className="flex justify-center gap-4 mb-8 flex-wrap">
         <a href="/wiki" className="bg-gray-800 border border-gray-600 px-6 py-2 rounded hover:bg-gray-700 hover:border-red-500 transition-colors text-gray-300 font-bold flex items-center gap-2">
             <span>📖</span> Open Wiki
         </a>
         
         {isGM && (
-            <a href="/create" className="bg-blue-900 border border-blue-700 px-6 py-2 rounded hover:bg-blue-800 transition-colors text-blue-200 font-bold flex items-center gap-2">
-                <span>+</span> New Character
-            </a>
+            <>
+                <a href="/words" className="bg-purple-900 border border-purple-700 px-6 py-2 rounded hover:bg-purple-800 transition-colors text-purple-200 font-bold flex items-center gap-2">
+                    <span>✨</span> Words of Power
+                </a>
+                <a href="/create" className="bg-blue-900 border border-blue-700 px-6 py-2 rounded hover:bg-blue-800 transition-colors text-blue-200 font-bold flex items-center gap-2">
+                    <span>+</span> New Character
+                </a>
+            </>
         )}
       </div>
 
