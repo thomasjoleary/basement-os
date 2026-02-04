@@ -48,17 +48,17 @@ export default function WordsOfPower() {
   }, [router])
 
   async function loadData() {
-    // Fetch all words
+    // Fetch all words (sorted by mana cost, then alphabetically)
     const { data: wordsData } = await supabase
       .from('words_of_power')
       .select('*')
+      .order('mana_cost')
       .order('word')
     
-    // Fetch all player characters (not NPCs, not tames)
+    // Fetch all characters except tames (includes PCs and NPCs)
     const { data: charsData } = await supabase
       .from('characters')
-      .select('id, name, user_id, profiles(username)')
-      .eq('is_npc', false)
+      .select('id, name, user_id, is_npc, profiles(username)')
       .is('is_tame', false)
       .order('name')
     
@@ -261,6 +261,7 @@ export default function WordsOfPower() {
                   <th key={char.id} className="text-center p-2 text-gray-400 text-xs font-bold min-w-[100px]">
                     <div className="truncate" title={char.name}>
                       {char.name}
+                      {char.is_npc && <span className="block text-[10px] text-green-500">NPC</span>}
                     </div>
                   </th>
                 ))}
@@ -378,7 +379,8 @@ export default function WordsOfPower() {
           <li>✓ Check a box to grant a character knowledge of that word</li>
           <li>✏️ Click edit to modify word details</li>
           <li>🗑️ Delete removes the word from all characters</li>
-          <li>💡 Only player characters (not NPCs or tames) are shown</li>
+          <li>💡 Words are sorted by mana cost (lowest to highest)</li>
+          <li>💡 All characters except tames are shown (PCs and NPCs)</li>
         </ul>
       </div>
     </div>
