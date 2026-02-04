@@ -157,6 +157,10 @@ export default function WordsOfPower() {
     )
   }
 
+  function getWordCount(characterId: string): number {
+    return characterWords.filter(cw => cw.character_id === characterId).length
+  }
+
   async function handleAddWord() {
     if (!newWordForm.word.trim() || !newWordForm.meaning.trim()) {
       alert('Word and meaning are required.')
@@ -297,38 +301,44 @@ export default function WordsOfPower() {
           <p className="text-gray-400 text-lg">No words of power yet. Add one to get started!</p>
         </div>
       ) : (
-        <div className="bg-gray-800 rounded-xl shadow border border-gray-700 overflow-x-auto">
+        <div className="bg-gray-800 rounded-xl shadow border border-gray-700 overflow-x-auto max-h-[calc(100vh-300px)]">
           <table className="w-full">
-            <thead className="bg-gray-900 border-b border-gray-700">
+            <thead className="bg-gray-900 border-b border-gray-700 sticky top-0 z-10">
               <tr>
-                <th className="text-left p-4 text-gray-400 uppercase text-xs font-bold w-32">Word</th>
-                <th className="text-left p-4 text-gray-400 uppercase text-xs font-bold w-32">Meaning</th>
-                <th className="text-center p-4 text-gray-400 uppercase text-xs font-bold w-24">Mana</th>
-                {characters.map(char => (
-                  <th key={char.id} className="text-center p-2 text-gray-400 text-xs font-bold min-w-[100px]">
-                    <div className="truncate mb-1" title={char.name}>
-                      {char.name}
-                      {char.is_npc && <span className="block text-[10px] text-green-500">NPC</span>}
-                    </div>
-                    <button
-                      onClick={() => grantGrammar(char.id)}
-                      className="text-[10px] bg-purple-900/50 hover:bg-purple-800 text-purple-300 px-2 py-0.5 rounded border border-purple-700 transition font-bold"
-                      title="Grant all 1-mana spells"
-                    >
-                      ⚡ Grammar
-                    </button>
-                  </th>
-                ))}
-                <th className="text-center p-4 text-gray-400 uppercase text-xs font-bold w-24">Actions</th>
+                <th className="text-left p-4 text-gray-400 uppercase text-xs font-bold w-32 bg-gray-900">Word</th>
+                <th className="text-left p-4 text-gray-400 uppercase text-xs font-bold w-32 bg-gray-900">Meaning</th>
+                <th className="text-center p-4 text-gray-400 uppercase text-xs font-bold w-24 bg-gray-900">Mana</th>
+                {characters.map(char => {
+                  const wordCount = getWordCount(char.id)
+                  return (
+                    <th key={char.id} className="text-center p-2 text-gray-400 text-xs font-bold min-w-[100px] bg-gray-900">
+                      <div className="mb-1 bg-blue-900/50 text-blue-300 text-xs font-mono rounded px-2 py-1 border border-blue-800">
+                        {wordCount} {wordCount === 1 ? 'word' : 'words'}
+                      </div>
+                      <div className="truncate mb-1" title={char.name}>
+                        {char.name}
+                        {char.is_npc && <span className="block text-[10px] text-green-500">NPC</span>}
+                      </div>
+                      <button
+                        onClick={() => grantGrammar(char.id)}
+                        className="text-[10px] bg-purple-900/50 hover:bg-purple-800 text-purple-300 px-2 py-0.5 rounded border border-purple-700 transition font-bold"
+                        title="Grant all 1-mana spells"
+                      >
+                        ⚡ Grammar
+                      </button>
+                    </th>
+                  )
+                })}
+                <th className="text-center p-4 text-gray-400 uppercase text-xs font-bold w-24 bg-gray-900">Actions</th>
               </tr>
             </thead>
             <tbody>
               {words.map(word => (
-                <tr key={word.id} className="border-b border-gray-800 hover:bg-gray-900/50">
+                <tr key={word.id} className="border-b border-gray-800 hover:bg-gray-900/50 bg-gray-800">
                   {editingWordId === word.id ? (
                     // EDIT MODE
                     <>
-                      <td className="p-2">
+                      <td className="p-2 bg-gray-800">
                         <input
                           type="text"
                           className="w-full bg-black border border-gray-700 rounded px-2 py-1 text-sm text-white"
@@ -336,7 +346,7 @@ export default function WordsOfPower() {
                           onChange={(e) => setEditForm({ ...editForm, word: e.target.value })}
                         />
                       </td>
-                      <td className="p-2">
+                      <td className="p-2 bg-gray-800">
                         <input
                           type="text"
                           className="w-full bg-black border border-gray-700 rounded px-2 py-1 text-sm text-white"
@@ -344,7 +354,7 @@ export default function WordsOfPower() {
                           onChange={(e) => setEditForm({ ...editForm, meaning: e.target.value })}
                         />
                       </td>
-                      <td className="p-2">
+                      <td className="p-2 bg-gray-800">
                         <input
                           type="number"
                           className="w-full bg-black border border-gray-700 rounded px-2 py-1 text-sm text-white text-center"
@@ -353,7 +363,7 @@ export default function WordsOfPower() {
                         />
                       </td>
                       {characters.map(char => (
-                        <td key={char.id} className="p-2 text-center">
+                        <td key={char.id} className="p-2 text-center bg-gray-800">
                           <input
                             type="checkbox"
                             className="w-5 h-5 cursor-pointer"
@@ -362,7 +372,7 @@ export default function WordsOfPower() {
                           />
                         </td>
                       ))}
-                      <td className="p-2 text-center">
+                      <td className="p-2 text-center bg-gray-800">
                         <div className="flex gap-1 justify-center">
                           <button
                             onClick={() => handleUpdateWord(word.id)}
@@ -384,13 +394,13 @@ export default function WordsOfPower() {
                   ) : (
                     // VIEW MODE
                     <>
-                      <td className="p-4">
+                      <td className="p-4 bg-gray-800">
                         <span className="font-mono text-purple-400 font-bold">{word.word}</span>
                       </td>
-                      <td className="p-4 text-gray-300">{word.meaning}</td>
-                      <td className="p-4 text-center text-blue-400 font-mono">{word.mana_cost}</td>
+                      <td className="p-4 text-gray-300 bg-gray-800">{word.meaning}</td>
+                      <td className="p-4 text-center text-blue-400 font-mono bg-gray-800">{word.mana_cost}</td>
                       {characters.map(char => (
-                        <td key={char.id} className="p-2 text-center">
+                        <td key={char.id} className="p-2 text-center bg-gray-800">
                           <input
                             type="checkbox"
                             className="w-5 h-5 cursor-pointer"
@@ -399,7 +409,7 @@ export default function WordsOfPower() {
                           />
                         </td>
                       ))}
-                      <td className="p-2 text-center">
+                      <td className="p-2 text-center bg-gray-800">
                         <div className="flex gap-1 justify-center">
                           <button
                             onClick={() => startEdit(word)}
