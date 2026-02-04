@@ -535,22 +535,29 @@ export default function CharacterDetail() {
                     {isEditing ? (
                         <div className="space-y-3">
                             <p className="text-xs text-gray-400 mb-2">Set buffs this tame provides when active:</p>
-                            {Object.keys(char.stats || {}).map(statName => {
-                                const currentBuff = formData.stat_buffs?.[statName] || 0
-                                return (
-                                    <div key={statName} className="flex items-center gap-2 bg-gray-900 p-2 rounded">
-                                        <span className="text-sm text-gray-300 flex-1 uppercase">{statName}</span>
-                                        <span className="text-xs text-gray-500">+</span>
-                                        <input 
-                                            type="number"
-                                            className="w-20 bg-black text-white px-2 py-1 rounded border border-gray-700 text-center text-sm"
-                                            value={currentBuff}
-                                            onChange={(e) => handleStatBuffChange(statName, e.target.value)}
-                                            placeholder="0"
-                                        />
-                                    </div>
-                                )
-                            })}
+                            {Object.keys(formData.stats || {}).length > 0 ? (
+                                Object.keys(formData.stats || {}).map(statName => {
+                                    const currentBuff = formData.stat_buffs?.[statName] || 0
+                                    return (
+                                        <div key={statName} className="flex items-center gap-2 bg-gray-900 p-2 rounded">
+                                            <span className="text-sm text-gray-300 flex-1 uppercase">{statName}</span>
+                                            <span className="text-xs text-gray-500">+</span>
+                                            <input 
+                                                type="number"
+                                                className="w-20 bg-black text-white px-2 py-1 rounded border border-gray-700 text-center text-sm"
+                                                value={currentBuff}
+                                                onChange={(e) => handleStatBuffChange(statName, e.target.value)}
+                                                placeholder="0"
+                                            />
+                                        </div>
+                                    )
+                                })
+                            ) : (
+                                <div className="bg-yellow-900/20 border border-yellow-800 rounded p-3">
+                                    <p className="text-yellow-500 text-sm font-bold mb-2">⚠️ No Stats Defined</p>
+                                    <p className="text-xs text-gray-400">This tame has no stats yet. Scroll up to the "Stats" section and add some stats first (like strength, speed, etc.), then come back here to configure buffs.</p>
+                                </div>
+                            )}
                         </div>
                     ) : (
                         <div className="space-y-2">
