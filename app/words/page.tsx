@@ -104,6 +104,53 @@ export default function WordsOfPower() {
     }
   }
 
+  async function grantGrammar(characterId: string) {
+    const characterName = characters.find(c => c.id === characterId)?.name || 'character'
+    
+    if (!confirm(`Grant "Grammar" ability to ${characterName}?\n\nThis will teach them all 1-mana spells.`)) {
+      return
+    }
+
+    // Find all 1-mana words
+    const oneManaWords = words.filter(w => w.mana_cost === 1)
+    
+    if (oneManaWords.length === 0) {
+      alert('No 1-mana spells found!')
+      return
+    }
+
+    // Get words this character already knows
+    const existingWordIds = characterWords
+      .filter(cw => cw.character_id === characterId)
+      .map(cw => cw.word_id)
+
+    // Filter to only new words
+    const newWords = oneManaWords.filter(w => !existingWordIds.includes(w.id))
+
+    if (newWords.length === 0) {
+      alert(`${characterName} already knows all 1-mana spells!`)
+      return
+    }
+
+    // Batch insert
+    const inserts = newWords.map(w => ({
+      character_id: characterId,
+      word_id: w.id
+    }))
+
+    const { data, error } = await supabase
+      .from('character_words')
+      .insert(inserts)
+      .select()
+
+    if (error) {
+      alert('Error granting Grammar: ' + error.message)
+    } else if (data) {
+      setCharacterWords([...characterWords, ...data])
+      alert(`✨ Grammar granted! ${characterName} learned ${newWords.length} spell(s).`)
+    }
+  }
+
   function hasWord(characterId: string, wordId: string): boolean {
     return characterWords.some(
       cw => cw.character_id === characterId && cw.word_id === wordId
@@ -259,10 +306,17 @@ export default function WordsOfPower() {
                 <th className="text-center p-4 text-gray-400 uppercase text-xs font-bold w-24">Mana</th>
                 {characters.map(char => (
                   <th key={char.id} className="text-center p-2 text-gray-400 text-xs font-bold min-w-[100px]">
-                    <div className="truncate" title={char.name}>
+                    <div className="truncate mb-1" title={char.name}>
                       {char.name}
                       {char.is_npc && <span className="block text-[10px] text-green-500">NPC</span>}
                     </div>
+                    <button
+                      onClick={() => grantGrammar(char.id)}
+                      className="text-[10px] bg-purple-900/50 hover:bg-purple-800 text-purple-300 px-2 py-0.5 rounded border border-purple-700 transition font-bold"
+                      title="Grant all 1-mana spells"
+                    >
+                      ⚡ Grammar
+                    </button>
                   </th>
                 ))}
                 <th className="text-center p-4 text-gray-400 uppercase text-xs font-bold w-24">Actions</th>
@@ -377,6 +431,7 @@ export default function WordsOfPower() {
         <h3 className="text-sm font-bold text-gray-400 uppercase mb-2">How to Use</h3>
         <ul className="text-sm text-gray-400 space-y-1">
           <li>✓ Check a box to grant a character knowledge of that word</li>
+          <li>⚡ <strong className="text-purple-400">Grammar</strong> button grants all 1-mana spells at once</li>
           <li>✏️ Click edit to modify word details</li>
           <li>🗑️ Delete removes the word from all characters</li>
           <li>💡 Words are sorted by mana cost (lowest to highest)</li>
