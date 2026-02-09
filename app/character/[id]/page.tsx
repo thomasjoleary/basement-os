@@ -41,6 +41,9 @@ export default function CharacterDetail() {
   
   // Words of Power
   const [words, setWords] = useState<any[]>([])
+  const [wordSearch, setWordSearch] = useState('')
+  const [minMana, setMinMana] = useState('')
+  const [maxMana, setMaxMana] = useState('')
 
   useEffect(() => {
     async function init() {
@@ -798,32 +801,126 @@ export default function CharacterDetail() {
             </div>
 
             {/* WORDS (SPELLS) */}
-            {words.length > 0 && (
-                <div className="bg-gray-800 rounded-xl p-6 shadow border border-gray-700">
-                    <div className="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
-                        <h2 className="text-xl font-bold text-gray-200">Words of Power</h2>
-                        {isGM && (
-                            <a 
-                                href="/words" 
-                                className="text-xs text-purple-400 hover:text-purple-300 transition flex items-center gap-1"
-                            >
-                                <span>✏️</span> Manage Words
-                            </a>
+            {words.length > 0 && (() => {
+                // Sort words: by mana cost (low to high), then alphabetically by word
+                const sortedWords = [...words].sort((a, b) => {
+                    if (a.mana_cost !== b.mana_cost) {
+                        return a.mana_cost - b.mana_cost;
+                    }
+                    return a.word.localeCompare(b.word);
+                });
+                
+                // Apply filters
+                const filteredWords = sortedWords.filter(word => {
+                    // Text search filter
+                    if (wordSearch) {
+                        const search = wordSearch.toLowerCase();
+                        const matchesText = word.word.toLowerCase().includes(search) ||
+                                          word.meaning.toLowerCase().includes(search);
+                        if (!matchesText) return false;
+                    }
+                    
+                    // Mana cost range filter
+                    const min = minMana ? parseInt(minMana) : -Infinity;
+                    const max = maxMana ? parseInt(maxMana) : Infinity;
+                    if (word.mana_cost < min || word.mana_cost > max) {
+                        return false;
+                    }
+                    
+                    return true;
+                });
+                
+                const hasFilters = wordSearch || minMana || maxMana;
+                
+                return (
+                    <div className="bg-gray-800 rounded-xl p-6 shadow border border-gray-700">
+                        <div className="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
+                            <h2 className="text-xl font-bold text-gray-200">Words of Power</h2>
+                            {isGM && (
+                                <a 
+                                    href="/words" 
+                                    className="text-xs text-purple-400 hover:text-purple-300 transition flex items-center gap-1"
+                                >
+                                    <span>✏️</span> Manage Words
+                                </a>
+                            )}
+                        </div>
+                        
+                        {/* Search & Filter Bar */}
+                        <div className="mb-4 space-y-3">
+                            {/* Text Search */}
+                            <input
+                                type="text"
+                                placeholder="Search by word or meaning..."
+                                className="w-full bg-gray-900 border border-gray-700 rounded px-4 py-2 text-white placeholder-gray-500 focus:border-purple-500 focus:outline-none transition"
+                                value={wordSearch}
+                                onChange={(e) => setWordSearch(e.target.value)}
+                            />
+                            
+                            {/* Mana Cost Range */}
+                            <div className="flex gap-3 items-center">
+                                <span className="text-sm text-gray-400 whitespace-nowrap">Mana Cost:</span>
+                                <input
+                                    type="number"
+                                    placeholder="Min"
+                                    className="flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none transition text-sm"
+                                    value={minMana}
+                                    onChange={(e) => setMinMana(e.target.value)}
+                                    min="0"
+                                />
+                                <span className="text-gray-600">—</span>
+                                <input
+                                    type="number"
+                                    placeholder="Max"
+                                    className="flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none transition text-sm"
+                                    value={maxMana}
+                                    onChange={(e) => setMaxMana(e.target.value)}
+                                    min="0"
+                                />
+                                {(minMana || maxMana) && (
+                                    <button
+                                        onClick={() => { setMinMana(''); setMaxMana(''); }}
+                                        className="px-3 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded text-xs transition"
+                                        title="Clear mana filters"
+                                    >
+                                        ✕
+                                    </button>
+                                )}
+                            </div>
+                            
+                            {/* Results Counter */}
+                            {hasFilters && (
+                                <p className="text-xs text-gray-500">
+                                    Showing {filteredWords.length} of {words.length} words
+                                </p>
+                            )}
+                        </div>
+                        
+                        {/* Words Grid */}
+                        {filteredWords.length > 0 ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                {filteredWords.map((word: any, i: number) => (
+                                    <div key={i} className="bg-gray-900 p-3 rounded border border-gray-800 hover:border-purple-700 transition">
+                                        <div className="flex justify-between items-start mb-1">
+                                            <span className="font-mono text-purple-400 font-bold text-lg">{word.word}</span>
+                                            <span className="text-blue-400 text-xs font-mono bg-blue-900/30 px-2 py-0.5 rounded">{word.mana_cost} MP</span>
+                                        </div>
+                                        <div className="text-gray-500 text-sm italic">{word.meaning}</div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-center py-8 text-gray-500">
+                                {hasFilters ? (
+                                    <>No words found matching your filters</>
+                                ) : (
+                                    <>No words of power yet</>
+                                )}
+                            </div>
                         )}
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {words.map((word: any, i: number) => (
-                            <div key={i} className="bg-gray-900 p-3 rounded border border-gray-800 hover:border-purple-700 transition">
-                                <div className="flex justify-between items-start mb-1">
-                                    <span className="font-mono text-purple-400 font-bold text-lg">{word.word}</span>
-                                    <span className="text-blue-400 text-xs font-mono bg-blue-900/30 px-2 py-0.5 rounded">{word.mana_cost} MP</span>
-                                </div>
-                                <div className="text-gray-500 text-sm italic">{word.meaning}</div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
+                );
+            })()}
 
         </div>
       </div>
