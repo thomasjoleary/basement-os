@@ -138,6 +138,14 @@ export default function NoteDetail() {
                         {note.type}
                     </span>
                     {note.is_public && <span className="text-sm bg-green-900/50 text-green-300 px-2 py-1 rounded border border-green-800">Public</span>}
+                    {isGM && (
+                      <Link
+                        href={`/wiki/${id}/edit`}
+                        className="text-sm bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded border border-yellow-500 uppercase tracking-widest transition-colors"
+                      >
+                        Edit
+                      </Link>
+                    )}
                 </div>
             </div>
             {note.tags && (

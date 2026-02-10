@@ -9,17 +9,19 @@ export default function WikiIndex() {
   const [search, setSearch] = useState('')
   const [filterType, setFilterType] = useState<string>('all')
   const [loading, setLoading] = useState(true)
+  const [isGM, setIsGM] = useState(false)
 
   useEffect(() => {
     async function getData() {
       // 1. Get Session & Role
       const { data: { session } } = await supabase.auth.getSession()
       
-      let isGM = false
+      let gmStatus = false
       if (session) {
           const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single()
-          if (profile && profile.role === 'gm') isGM = true
+          if (profile && profile.role === 'gm') gmStatus = true
       }
+      setIsGM(gmStatus)
 
       // 2. Get All Notes
       const { data: allNotes } = await supabase
@@ -41,7 +43,7 @@ export default function WikiIndex() {
       // 4. Filter
       if (allNotes) {
           const visible = allNotes.filter(n => {
-              if (isGM) return true; // GM sees all
+              if (gmStatus) return true; // GM sees all
               if (n.is_public) return true; // Public notes
               if (unlockedIds.has(n.id)) return true; // Unlocked notes
               return false; // Hidden
@@ -73,6 +75,14 @@ export default function WikiIndex() {
         <div>
             <h1 className="text-4xl font-bold text-red-500 font-mono">BASEMENT WIKI</h1>
             <p className="text-gray-400 mt-2">The Archive of Lost Knowledge</p>
+            {isGM && (
+              <Link 
+                href="/wiki/new"
+                className="inline-block mt-4 bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded transition-colors text-sm uppercase tracking-wider"
+              >
+                + Create New Lore
+              </Link>
+            )}
         </div>
         
         <div className="w-full md:w-auto">
@@ -117,6 +127,7 @@ export default function WikiIndex() {
                                 <span className={`text-[10px] uppercase px-2 py-0.5 rounded ${
                                     note.type === 'monster' ? 'bg-red-900/50 text-red-300' :
                                     note.type === 'class' ? 'bg-blue-900/50 text-blue-300' :
+                                    note.type === 'system' ? 'bg-purple-900/50 text-purple-300' :
                                     'bg-gray-700 text-gray-300'
                                 }`}>
                                     {note.type}
