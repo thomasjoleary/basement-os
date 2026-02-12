@@ -91,32 +91,32 @@ export default function CharacterDetail() {
         setChar(normalized)
         setFormData(normalized)
         
-        // If this character has an owner, fetch their active tames for buff calculation
-        if (data.user_id) {
-          const { data: tames } = await supabase
-            .from('characters')
-            .select('name, stat_buffs, is_active')
-            .eq('user_id', data.user_id)
-            .eq('is_tame', true)
-            .eq('is_active', true)
+        // Fetch active tames that belong to THIS character (master linkage)
+        // Tames are linked via player_name matching this character's name OR job starting with first name
+        const firstName = data.name.split(' ')[0]
+        const { data: tames } = await supabase
+          .from('characters')
+          .select('name, stat_buffs, is_active')
+          .eq('is_tame', true)
+          .eq('is_active', true)
+          .or(`player_name.eq.${data.name},job.ilike.${firstName}%`)
+        
+        if (tames && tames.length > 0) {
+          setActiveTames(tames)
+          // Calculate total stats (base + buffs)
+          const baseStats = normalized.stats || {}
+          const buffedStats = { ...baseStats }
           
-          if (tames) {
-            setActiveTames(tames)
-            // Calculate total stats (base + buffs)
-            const baseStats = normalized.stats || {}
-            const buffedStats = { ...baseStats }
-            
-            tames.forEach(tame => {
-              const buffs = tame.stat_buffs || {}
-              Object.keys(buffs).forEach(stat => {
-                buffedStats[stat] = (buffedStats[stat] || 0) + (buffs[stat] || 0)
-              })
+          tames.forEach(tame => {
+            const buffs = tame.stat_buffs || {}
+            Object.keys(buffs).forEach(stat => {
+              buffedStats[stat] = (buffedStats[stat] || 0) + (buffs[stat] || 0)
             })
-            
-            setTotalStats(buffedStats)
-          }
+          })
+          
+          setTotalStats(buffedStats)
         } else {
-          // No owner = no buffs, just use base stats
+          // No linked tames = no buffs, just use base stats
           setTotalStats(normalized.stats || {})
         }
       }
