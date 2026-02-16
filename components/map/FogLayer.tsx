@@ -150,7 +150,7 @@ export default function FogLayer({
     // Create an inverted polygon (fog everywhere except the visible area)
     // We do this by creating a large rectangle and cutting out the polygon
     const bounds = map.getBounds()
-    const pad = 1000  // Extra padding
+    const pad = 1000000  // Extra padding
     const outerBounds: [number, number][] = [
       [bounds.getSouth() - pad, bounds.getWest() - pad],
       [bounds.getSouth() - pad, bounds.getEast() + pad],
