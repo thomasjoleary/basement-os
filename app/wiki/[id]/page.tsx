@@ -79,9 +79,29 @@ export default function NoteDetail() {
 
       // 4. GM Data Fetching (Players & Unlocks)
       if (userIsGM) {
-          // Get all players
-          const { data: allProfiles } = await supabase.from('profiles').select('id, username').neq('role', 'gm')
-          if (allProfiles) setPlayers(allProfiles)
+          // Get all players with their main characters
+          // Main character = not a tame, not an NPC, not dead
+          const { data: mainCharacters } = await supabase
+            .from('characters')
+            .select('id, name, user_id, profiles(id, username)')
+            .eq('is_tame', false)
+            .eq('is_npc', false)
+            .eq('is_dead', false)
+          
+          // Map to player format with character name
+          if (mainCharacters) {
+            const playerMap = mainCharacters.map(char => {
+              // Supabase returns profiles as array from join
+              const profile = Array.isArray(char.profiles) ? char.profiles[0] : char.profiles
+              return {
+                id: char.user_id,
+                username: profile?.username,
+                characterName: char.name,
+                characterId: char.id
+              }
+            })
+            setPlayers(playerMap)
+          }
 
           // Get existing unlocks for this note
           const { data: existingUnlocks } = await supabase.from('unlocks').select('user_id').eq('note_id', id)
@@ -215,10 +235,13 @@ export default function NoteDetail() {
                         const isUnlocked = unlocks.has(player.id)
                         return (
                             <div key={player.id} className="flex items-center justify-between bg-gray-900 p-3 rounded border border-gray-800">
-                                <span className="text-sm text-gray-300 truncate">{player.username}</span>
+                                <div className="truncate">
+                                  <span className="text-sm text-gray-100 font-medium">{player.characterName}</span>
+                                  <span className="text-xs text-gray-500 ml-2">({player.username})</span>
+                                </div>
                                 <button
                                     onClick={() => toggleUnlock(player.id, isUnlocked)}
-                                    className={`text-xs font-bold px-3 py-1 rounded transition-colors ${
+                                    className={`text-xs font-bold px-3 py-1 rounded transition-colors ml-2 ${
                                         isUnlocked 
                                         ? 'bg-green-900/50 text-green-400 border border-green-800 hover:bg-green-900'
                                         : 'bg-red-900/50 text-red-400 border border-red-800 hover:bg-red-900'
@@ -229,7 +252,7 @@ export default function NoteDetail() {
                             </div>
                         )
                     })}
-                    {players.length === 0 && <p className="text-gray-600 text-sm">No players found.</p>}
+                    {players.length === 0 && <p className="text-gray-600 text-sm">No active player characters found.</p>}
                 </div>
             </div>
         )}
