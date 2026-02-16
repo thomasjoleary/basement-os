@@ -302,7 +302,7 @@ export default function LeafletMap({
       const bounds = L.latLngBounds([0, 0], [coordHeight, coordWidth])
 
       // Initialize map at zoom 0 (native resolution 1707x993)
-      // Players get restricted zoom to prevent seeing past fog
+      // Players get restricted zoom and no dragging to prevent seeing past fog
       const map = L.map('map', {
         crs: customCRS,
         minZoom: isGM ? minMapZoom : 0,  // Players can't zoom out past native resolution
@@ -312,6 +312,7 @@ export default function LeafletMap({
         zoomControl: false,
         attributionControl: false,
         maxBoundsViscosity: isGM ? 0.5 : 1.0,  // Players get stricter bounds (can't drag outside)
+        dragging: isGM,  // Only GMs can drag the map - players are locked in place
       })
       
       mapInstance = map
@@ -326,99 +327,6 @@ export default function LeafletMap({
       
       // Create layer group for fog
       fogLayerGroup = L.layerGroup().addTo(map)
-      
-      // Create canvas overlay for fog (for players only - controlled by parent)
-      if (!isGM) {
-        const CanvasLayer = L.Layer.extend({
-          onAdd: function(map: any) {
-            this._map = map
-            this._canvas = L.DomUtil.create('canvas', 'leaflet-layer')
-            this._canvas.style.pointerEvents = 'none'
-            
-            const size = map.getSize()
-            this._canvas.width = size.x
-            this._canvas.height = size.y
-            
-            const pane = map.getPane('fogPane')
-            pane.appendChild(this._canvas)
-            
-            this._ctx = this._canvas.getContext('2d')
-            
-            // Render initial fog
-            this._render()
-            
-            map.on('move', this._render, this)
-            map.on('zoom', this._render, this)
-            map.on('resize', this._resize, this)
-          },
-          
-          onRemove: function(map: any) {
-            L.DomUtil.remove(this._canvas)
-            map.off('move', this._render, this)
-            map.off('zoom', this._render, this)
-            map.off('resize', this._resize, this)
-          },
-          
-          _resize: function() {
-            const size = this._map.getSize()
-            this._canvas.width = size.x
-            this._canvas.height = size.y
-            this._render()
-          },
-          
-          _render: function() {
-            if (!this._ctx) return
-            
-            const ctx = this._ctx
-            const map = this._map
-            const canvas = this._canvas
-            
-            // Clear canvas
-            ctx.clearRect(0, 0, canvas.width, canvas.height)
-            
-            // Get fog polygon data from parent (stored globally)
-            const fogData = (window as any)._playerFogPolygon
-            
-            if (!fogData || !fogData.points || fogData.points.length < 3) {
-              // No polygon = full black fog
-              ctx.fillStyle = '#000000'
-              ctx.fillRect(0, 0, canvas.width, canvas.height)
-              return
-            }
-            
-            // Draw inverted fog (black everywhere except polygon)
-            ctx.save()
-            ctx.fillStyle = '#000000'
-            
-            // Create clip path from polygon
-            ctx.beginPath()
-            fogData.points.forEach((p: number[], i: number) => {
-              const x = p[0] * MAP_WIDTH
-              const y = (1 - p[1]) * MAP_HEIGHT
-              const point = map.latLngToContainerPoint([y, x])
-              
-              if (i === 0) {
-                ctx.moveTo(point.x, point.y)
-              } else {
-                ctx.lineTo(point.x, point.y)
-              }
-            })
-            ctx.closePath()
-            
-            // Fill everything, then clear the polygon
-            ctx.fillRect(0, 0, canvas.width, canvas.height)
-            ctx.globalCompositeOperation = 'destination-out'
-            ctx.fill()
-            
-            ctx.restore()
-          }
-        })
-        
-        // Store canvas layer instance
-        const canvasLayer = new CanvasLayer()
-        canvasLayer.addTo(map);
-        (window as any)._fogCanvasLayer = canvasLayer
-      }
       
       // Create layer group for player positions
       positionsLayerGroup = L.layerGroup().addTo(map)
@@ -1011,30 +919,7 @@ export default function LeafletMap({
     }
   }, [showBiomes])
   
-  // Update canvas fog data when polygon changes (players only)
-  useEffect(() => {
-    if (isGM || !mapInstance) return
-    
-    // Update global fog data for canvas layer
-    if (!playerCharacterId || !fogLoaded) {
-      (window as any)._playerFogPolygon = { points: null }
-    } else {
-      const playerFog = fogPolygons.find(fp => fp.character_id === playerCharacterId)
-      if (playerFog && playerFog.polygon && playerFog.polygon.length >= 3) {
-        (window as any)._playerFogPolygon = { points: playerFog.polygon }
-      } else {
-        (window as any)._playerFogPolygon = { points: null }
-      }
-    }
-    
-    // Trigger canvas re-render
-    const canvasLayer = (window as any)._fogCanvasLayer
-    if (canvasLayer && canvasLayer._render) {
-      canvasLayer._render()
-    }
-  }, [isGM, playerCharacterId, fogPolygons, fogLoaded])
-  
-  // Render fog of war (GM editing mode only - players use canvas)
+  // Render fog of war
   useEffect(() => {
     if (!mapInstance || !leafletLib || !fogLayerGroup) return
     
@@ -1133,7 +1018,62 @@ export default function LeafletMap({
       
       return  // GM editing mode - don't show full fog
     }
-  }, [showFog, isGM, fogPolygons, selectedFogCharacter, isFogEditing])
+    
+    // For players: show fog everywhere except their polygon (completely black)
+    // IMPORTANT: Show full black fog while loading to prevent map flash
+    if (!isGM) {
+      // While loading (no character ID yet or fog not loaded), show full black fog
+      if (!playerCharacterId || !fogLoaded) {
+        // Use extremely large static coordinates
+        const huge = 1000000
+        L.rectangle([[-huge, -huge], [huge, huge]], {
+          color: 'transparent',
+          fillColor: '#000000',
+          fillOpacity: 1,
+          interactive: false,
+          pane: 'fogPane',
+        }).addTo(fogLayerGroup)
+        return  // Exit early
+      }
+      
+      const playerFog = fogPolygons.find(fp => fp.character_id === playerCharacterId)
+      
+      if (playerFog && playerFog.polygon && playerFog.polygon.length >= 3) {
+        const points = playerFog.polygon.map((p: number[]) => {
+          const x = p[0] * MAP_WIDTH
+          const y = (1 - p[1]) * MAP_HEIGHT
+          return [y, x] as [number, number]
+        })
+        
+        // Create inverted fog - extremely large outer bounds
+        const huge = 1000000
+        const outerBounds: [number, number][] = [
+          [-huge, -huge],
+          [-huge, huge],
+          [huge, huge],
+          [huge, -huge],
+        ]
+        
+        L.polygon([outerBounds, points], {
+          color: 'transparent',
+          fillColor: '#000000',
+          fillOpacity: 1,
+          interactive: false,
+          pane: 'fogPane',
+        }).addTo(fogLayerGroup)
+      } else {
+        // No polygon = full fog
+        const huge = 1000000
+        L.rectangle([[-huge, -huge], [huge, huge]], {
+          color: 'transparent',
+          fillColor: '#000000',
+          fillOpacity: 1,
+          interactive: false,
+          pane: 'fogPane',
+        }).addTo(fogLayerGroup)
+      }
+    }
+  }, [showFog, isGM, fogPolygons, fogLoaded, playerCharacterId, selectedFogCharacter, isFogEditing])
   
   // Handle fog polygon editing (GM only)
   useEffect(() => {
