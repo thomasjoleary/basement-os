@@ -918,7 +918,7 @@ export default function LeafletMap({
     }
   }, [showBiomes])
   
-  // Render fog of war
+  // Render fog of war with viewport-locked rendering
   useEffect(() => {
     if (!mapInstance || !leafletLib || !fogLayerGroup) return
     
@@ -928,6 +928,52 @@ export default function LeafletMap({
     if (!showFog) return
     
     const L = leafletLib
+    
+    // Helper function to create viewport-covering fog
+    const createFullViewportFog = () => {
+      const bounds = mapInstance.getBounds()
+      const pad = 10 // Padding as a multiplier of current viewport size
+      const ne = bounds.getNorthEast()
+      const sw = bounds.getSouthWest()
+      const width = ne.lng - sw.lng
+      const height = ne.lat - sw.lat
+      
+      return L.rectangle([
+        [sw.lat - height * pad, sw.lng - width * pad],
+        [ne.lat + height * pad, ne.lng + width * pad]
+      ], {
+        color: 'transparent',
+        fillColor: '#000000',
+        fillOpacity: 1,
+        interactive: false,
+        pane: 'fogPane',
+      })
+    }
+    
+    // Helper function to create inverted polygon fog (viewport-relative)
+    const createInvertedFog = (visiblePoints: [number, number][]) => {
+      const bounds = mapInstance.getBounds()
+      const pad = 10
+      const ne = bounds.getNorthEast()
+      const sw = bounds.getSouthWest()
+      const width = ne.lng - sw.lng
+      const height = ne.lat - sw.lat
+      
+      const outerBounds: [number, number][] = [
+        [sw.lat - height * pad, sw.lng - width * pad],
+        [sw.lat - height * pad, ne.lng + width * pad],
+        [ne.lat + height * pad, ne.lng + width * pad],
+        [ne.lat + height * pad, sw.lng - width * pad],
+      ]
+      
+      return L.polygon([outerBounds, visiblePoints], {
+        color: 'transparent',
+        fillColor: '#000000',
+        fillOpacity: 1,
+        interactive: false,
+        pane: 'fogPane',
+      })
+    }
     
     // For GMs editing: show selected character's polygon with draggable vertices
     if (isGM && selectedFogCharacter) {
@@ -1021,57 +1067,62 @@ export default function LeafletMap({
     // For players: show fog everywhere except their polygon (completely black)
     // IMPORTANT: Show full black fog while loading to prevent map flash
     if (!isGM) {
+      // Render fog based on current state
+      let fogLayer: any = null
+      
       // While loading (no character ID yet or fog not loaded), show full black fog
       if (!playerCharacterId || !fogLoaded) {
-        // Use massive coordinates to ensure fog covers entire world at any zoom
-        const infinity = 1000000
-        L.rectangle([[-infinity, -infinity], [infinity, infinity]], {
-          color: 'transparent',
-          fillColor: '#000000',
-          fillOpacity: 1,
-          interactive: false,
-          pane: 'fogPane',
-        }).addTo(fogLayerGroup)
-        return  // Exit early, don't process fog polygon yet
+        fogLayer = createFullViewportFog()
+        fogLayer.addTo(fogLayerGroup)
+      } else {
+        const playerFog = fogPolygons.find(fp => fp.character_id === playerCharacterId)
+        
+        if (playerFog && playerFog.polygon && playerFog.polygon.length >= 3) {
+          const points = playerFog.polygon.map((p: number[]) => {
+            const x = p[0] * MAP_WIDTH
+            const y = (1 - p[1]) * MAP_HEIGHT
+            return [y, x] as [number, number]
+          })
+          
+          fogLayer = createInvertedFog(points)
+          fogLayer.addTo(fogLayerGroup)
+        } else {
+          // No polygon = full fog (completely black)
+          fogLayer = createFullViewportFog()
+          fogLayer.addTo(fogLayerGroup)
+        }
       }
       
-      const playerFog = fogPolygons.find(fp => fp.character_id === playerCharacterId)
+      // Re-render fog on move/zoom to keep it covering viewport
+      const updateFog = () => {
+        fogLayerGroup.clearLayers()
+        
+        if (!playerCharacterId || !fogLoaded) {
+          createFullViewportFog().addTo(fogLayerGroup)
+        } else {
+          const playerFog = fogPolygons.find(fp => fp.character_id === playerCharacterId)
+          
+          if (playerFog && playerFog.polygon && playerFog.polygon.length >= 3) {
+            const points = playerFog.polygon.map((p: number[]) => {
+              const x = p[0] * MAP_WIDTH
+              const y = (1 - p[1]) * MAP_HEIGHT
+              return [y, x] as [number, number]
+            })
+            
+            createInvertedFog(points).addTo(fogLayerGroup)
+          } else {
+            createFullViewportFog().addTo(fogLayerGroup)
+          }
+        }
+      }
       
-      if (playerFog && playerFog.polygon && playerFog.polygon.length >= 3) {
-        const points = playerFog.polygon.map((p: number[]) => {
-          const x = p[0] * MAP_WIDTH
-          const y = (1 - p[1]) * MAP_HEIGHT
-          return [y, x]
-        })
-        
-        // Create inverted fog (covers everything except visible area) - completely black
-        // Use massive coordinates to ensure fog covers entire world at any zoom
-        const infinity = 1000000
-        const outerBounds: [number, number][] = [
-          [-infinity, -infinity],
-          [-infinity, infinity],
-          [infinity, infinity],
-          [infinity, -infinity],
-        ]
-        
-        L.polygon([outerBounds, points], {
-          color: 'transparent',
-          fillColor: '#000000',
-          fillOpacity: 1,
-          interactive: false,
-          pane: 'fogPane',
-        }).addTo(fogLayerGroup)
-      } else {
-        // No polygon = full fog (completely black)
-        // Use massive coordinates to ensure fog covers entire world at any zoom
-        const infinity = 1000000
-        L.rectangle([[-infinity, -infinity], [infinity, infinity]], {
-          color: 'transparent',
-          fillColor: '#000000',
-          fillOpacity: 1,
-          interactive: false,
-          pane: 'fogPane',
-        }).addTo(fogLayerGroup)
+      // Update fog during pan and zoom
+      mapInstance.on('move', updateFog)
+      mapInstance.on('zoom', updateFog)
+      
+      return () => {
+        mapInstance.off('move', updateFog)
+        mapInstance.off('zoom', updateFog)
       }
     }
   }, [showFog, isGM, fogPolygons, fogLoaded, playerCharacterId, selectedFogCharacter, isFogEditing])
