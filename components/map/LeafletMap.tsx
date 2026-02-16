@@ -302,14 +302,16 @@ export default function LeafletMap({
       const bounds = L.latLngBounds([0, 0], [coordHeight, coordWidth])
 
       // Initialize map at zoom 0 (native resolution 1707x993)
+      // Players get restricted zoom to prevent seeing past fog
       const map = L.map('map', {
         crs: customCRS,
-        minZoom: minMapZoom,
+        minZoom: isGM ? minMapZoom : 0,  // Players can't zoom out past native resolution
         maxZoom: maxMapZoom,
         zoom: 0,  // Native resolution - scroll to zoom in/out
         center: [coordHeight / 2, coordWidth / 2],
         zoomControl: false,
         attributionControl: false,
+        maxBoundsViscosity: isGM ? 0.5 : 1.0,  // Players get stricter bounds (can't drag outside)
       })
       
       mapInstance = map
@@ -334,7 +336,13 @@ export default function LeafletMap({
       // Create layer group for travel routes
       travelLayerGroup = L.layerGroup().addTo(map)
       
-      map.setMaxBounds(bounds.pad(0.3))
+      // Set max bounds - stricter for players to prevent panning past fog
+      // GMs get more freedom, players are restricted to prevent seeing past fog
+      if (isGM) {
+        map.setMaxBounds(bounds.pad(0.3))  // GMs can pan a bit outside
+      } else {
+        map.setMaxBounds(bounds.pad(0.1))  // Players locked to map area
+      }
 
       // Base tile layer
       L.tileLayer('/maps/tiles/{z}/{x}/{y}.png', {
@@ -1015,8 +1023,9 @@ export default function LeafletMap({
     if (!isGM) {
       // While loading (no character ID yet or fog not loaded), show full black fog
       if (!playerCharacterId || !fogLoaded) {
-        const pad = 50000  // Huge padding to cover any viewport position
-        L.rectangle([[-pad, -pad], [MAP_HEIGHT + pad, MAP_WIDTH + pad]], {
+        // Use massive coordinates to ensure fog covers entire world at any zoom
+        const infinity = 1000000
+        L.rectangle([[-infinity, -infinity], [infinity, infinity]], {
           color: 'transparent',
           fillColor: '#000000',
           fillOpacity: 1,
@@ -1036,12 +1045,13 @@ export default function LeafletMap({
         })
         
         // Create inverted fog (covers everything except visible area) - completely black
-        const pad = 50000  // Huge padding to cover any viewport position
+        // Use massive coordinates to ensure fog covers entire world at any zoom
+        const infinity = 1000000
         const outerBounds: [number, number][] = [
-          [-pad, -pad],
-          [-pad, MAP_WIDTH + pad],
-          [MAP_HEIGHT + pad, MAP_WIDTH + pad],
-          [MAP_HEIGHT + pad, -pad],
+          [-infinity, -infinity],
+          [-infinity, infinity],
+          [infinity, infinity],
+          [infinity, -infinity],
         ]
         
         L.polygon([outerBounds, points], {
@@ -1053,8 +1063,9 @@ export default function LeafletMap({
         }).addTo(fogLayerGroup)
       } else {
         // No polygon = full fog (completely black)
-        const pad = 50000  // Huge padding to cover any viewport position
-        L.rectangle([[-pad, -pad], [MAP_HEIGHT + pad, MAP_WIDTH + pad]], {
+        // Use massive coordinates to ensure fog covers entire world at any zoom
+        const infinity = 1000000
+        L.rectangle([[-infinity, -infinity], [infinity, infinity]], {
           color: 'transparent',
           fillColor: '#000000',
           fillOpacity: 1,
