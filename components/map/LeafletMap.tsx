@@ -280,10 +280,11 @@ export default function LeafletMap({
     }
     
     try {
-      // Convert screen polygons to polygon-clipping format
+      // Convert screen polygons to polygon-clipping format (MultiPolygon)
+      // Each polygon needs to be wrapped: [[ring]] -> MultiPolygon format
       const clippingPolygons = screenPolygons
         .filter(poly => poly.length >= 3)
-        .map(poly => [poly.map(p => [p.x, p.y])])
+        .map(poly => [[poly.map(p => [p.x, p.y])]])  // Extra [] wrapper for MultiPolygon
       
       if (clippingPolygons.length === 0) {
         setUnionedPolygon(null)
@@ -300,16 +301,36 @@ export default function LeafletMap({
         inputPolygons: clippingPolygons.length,
         multiPolygons: unionResult.length,
         firstRingPoints: unionResult[0]?.[0]?.length,
-        allPoints: unionResult[0]?.[0]
+        allPoints: unionResult[0]?.[0],
+        willSetUnionedPolygon: true
+      })
+      
+      // Debug: Check exact structure
+      console.log('🌫️ DEBUG unionResult structure:', {
+        'unionResult type': Array.isArray(unionResult) ? 'array' : typeof unionResult,
+        'unionResult.length': unionResult?.length,
+        'unionResult[0] type': Array.isArray(unionResult?.[0]) ? 'array' : typeof unionResult?.[0],
+        'unionResult[0].length': unionResult?.[0]?.length,
+        'unionResult[0][0] type': Array.isArray(unionResult?.[0]?.[0]) ? 'array' : typeof unionResult?.[0]?.[0],
+        'unionResult[0][0].length': unionResult?.[0]?.[0]?.length,
+        'unionResult[0][0] value': unionResult?.[0]?.[0],
+        'first 3 items': unionResult?.[0]?.[0]?.slice?.(0, 3)
       })
       
       // Generate CSS polygon() string from unioned polygon
       // This will be used with clip-path
-      const clipPolygonStr = unionResult[0]?.[0]
-        ?.map(([x, y]: [number, number]) => `${x}px ${y}px`)
+      const ring = unionResult?.[0]?.[0]
+      if (!ring || !Array.isArray(ring)) {
+        console.error('🌫️ ERROR: ring is not an array!', ring)
+        setUnionedPolygon(null)
+        return
+      }
+      
+      const clipPolygonStr = ring
+        .map(([x, y]: [number, number]) => `${x}px ${y}px`)
         .join(', ')
       
-      console.log('🌫️ CLIP POLYGON generated, points:', unionResult[0]?.[0]?.length)
+      console.log('🌫️ CLIP POLYGON generated, points:', ring.length)
       
       setUnionedPolygon(unionResult)
       setFogPath(clipPolygonStr || '')
@@ -1568,8 +1589,8 @@ export default function LeafletMap({
         </div>
       )}
       
-      {/* Show full black fog if no polygons loaded yet (prevents map flash) */}
-      {!isGM && screenPolygons.length === 0 && (
+      {/* Show full black fog if no polygons loaded yet OR if union hasn't computed */}
+      {!isGM && !unionedPolygon && (
         <div 
           className="absolute inset-0 pointer-events-none bg-black"
           style={{ zIndex: 2000 }}
