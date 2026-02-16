@@ -326,6 +326,8 @@ export default function LeafletMap({
     const renderCanvas = () => {
     
     const canvas = fogCanvasRef.current
+    if (!canvas) return
+    
     const ctx = canvas.getContext('2d', { alpha: true })
     if (!ctx) return
     
