@@ -72,6 +72,7 @@ export default function MapViewer({ isGM }: MapViewerProps) {
   // Fog of War state
   const [showFog, setShowFog] = useState(true)
   const [selectedFogCharacter, setSelectedFogCharacter] = useState<string | null>(null)
+  const [selectedPolygonId, setSelectedPolygonId] = useState<string | null>(null)
   const [isFogEditing, setIsFogEditing] = useState(false)
   
   // Player Positions state
@@ -258,7 +259,7 @@ export default function MapViewer({ isGM }: MapViewerProps) {
   return (
     <div className="relative w-full h-[calc(100vh-73px)]">
       {/* Controls */}
-      <div className="absolute top-4 left-4 z-[1000] bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-3 space-y-2">
+      <div className="absolute top-4 left-4 z-[2100] bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-3 space-y-2">
         <div className="flex items-center gap-2">
           <input
             type="checkbox"
@@ -417,13 +418,13 @@ export default function MapViewer({ isGM }: MapViewerProps) {
       </div>
 
       {/* Zoom Instructions */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[1000] bg-gray-800/90 border border-gray-700 rounded-lg px-4 py-2 text-xs text-gray-400">
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[2100] bg-gray-800/90 border border-gray-700 rounded-lg px-4 py-2 text-xs text-gray-400">
         <span className="font-bold text-gray-300">Controls:</span> Scroll to zoom • Drag to pan
       </div>
 
       {/* Hovered Biome Display */}
       {showBiomes && hoveredBiome !== null && (
-        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-[1000] bg-gray-800/95 border border-gray-600 rounded-lg px-4 py-2 flex items-center gap-3">
+        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-[2100] bg-gray-800/95 border border-gray-600 rounded-lg px-4 py-2 flex items-center gap-3">
           <div 
             className="w-5 h-5 rounded border border-gray-500"
             style={{ backgroundColor: BIOMES[hoveredBiome]?.color || '#000' }}
@@ -673,7 +674,7 @@ export default function MapViewer({ isGM }: MapViewerProps) {
       )}
 
       {/* Distance Tool (GM and Players) */}
-      <div className="absolute top-4 right-4 z-[1000] w-64">
+      <div className="absolute top-4 right-4 z-[2100] w-64">
         <DistanceTool
           isActive={isDistanceMeasuring}
           onToggle={(active) => {
@@ -705,7 +706,7 @@ export default function MapViewer({ isGM }: MapViewerProps) {
 
       {/* GM Travel Controls */}
       {isGM && (
-        <div className="absolute bottom-4 left-4 z-[1000] w-80">
+        <div className="absolute bottom-4 left-4 z-[2100] w-80">
           <TravelControls
             isGM={isGM}
             isPlanningTravel={isPlanningTravel}
@@ -734,7 +735,7 @@ export default function MapViewer({ isGM }: MapViewerProps) {
 
       {/* GM Position Controls */}
       {isGM && (
-        <div className="absolute bottom-4 right-4 z-[1000] w-64">
+        <div className="absolute bottom-4 right-4 z-[2100] w-64">
           <PositionControls
             isGM={isGM}
             selectedCharacterId={selectedPositionCharacter}
@@ -758,13 +759,18 @@ export default function MapViewer({ isGM }: MapViewerProps) {
 
       {/* GM Fog Controls - only show when fog is enabled */}
       {isGM && showFog && (
-        <div className="absolute top-80 left-4 z-[1000] w-64">
-          <FogControls
+        <FogControls
             isGM={isGM}
             selectedCharacterId={selectedFogCharacter}
             onSelectCharacter={(id) => {
               setSelectedFogCharacter(id)
+              setSelectedPolygonId(null)  // Reset polygon selection when changing character
               setIsFogEditing(false)  // Reset editing when changing character
+            }}
+            selectedPolygonId={selectedPolygonId}
+            onSelectPolygon={(id) => {
+              setSelectedPolygonId(id)
+              setIsFogEditing(false)  // Reset editing when changing polygon
             }}
             isEditing={isFogEditing}
             onToggleEditing={(editing) => {
@@ -777,48 +783,36 @@ export default function MapViewer({ isGM }: MapViewerProps) {
               }
             }}
             onClearPolygon={async () => {
-            if (selectedFogCharacter && confirm('Clear this character\'s fog polygon?')) {
+            if (selectedPolygonId && confirm('Clear all points in this fog polygon?')) {
               await supabase
                 .from('player_fog_polygons')
-                .delete()
-                .eq('character_id', selectedFogCharacter)
-              // Force a page-level state refresh by toggling fog
-              setShowFog(false)
-              setTimeout(() => setShowFog(true), 50)
+                .update({ polygon: [] })
+                .eq('id', selectedPolygonId)
+              // Supabase real-time subscription will automatically update the display
             }
           }}
           onUndoPoint={async () => {
-            if (!selectedFogCharacter) return
+            if (!selectedPolygonId) return
             
             // Get current polygon
             const { data } = await supabase
               .from('player_fog_polygons')
               .select('id, polygon')
-              .eq('character_id', selectedFogCharacter)
+              .eq('id', selectedPolygonId)
               .single()
             
             if (data && data.polygon && data.polygon.length > 0) {
               const newPoints = data.polygon.slice(0, -1)  // Remove last point
               
-              if (newPoints.length === 0) {
-                await supabase
-                  .from('player_fog_polygons')
-                  .delete()
-                  .eq('id', data.id)
-              } else {
-                await supabase
-                  .from('player_fog_polygons')
-                  .update({ polygon: newPoints })
-                  .eq('id', data.id)
-              }
-              
-              // Force refresh
-              setShowFog(false)
-              setTimeout(() => setShowFog(true), 50)
+              await supabase
+                .from('player_fog_polygons')
+                .update({ polygon: newPoints })
+                .eq('id', data.id)
+              // Supabase real-time subscription will automatically update the display
+              // No need to force refresh - this keeps us in edit mode!
             }
           }}
           />
-        </div>
       )}
 
       {/* Create Marker Modal */}
@@ -963,6 +957,7 @@ export default function MapViewer({ isGM }: MapViewerProps) {
         markerFilters={markerFilters}
         showFog={isGM ? showFog : true}  // Players always have fog enabled
         selectedFogCharacter={selectedFogCharacter}
+        selectedPolygonId={selectedPolygonId}
         isFogEditing={isFogEditing}
         isMarkerCreating={isMarkerCreating}
         showPositions={showPositions}

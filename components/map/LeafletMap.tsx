@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import 'leaflet/dist/leaflet.css'
 import { supabase } from '@/lib/supabase'
+import polygonClipping from 'polygon-clipping'
 
 // Biome data from MapOfWorld.map
 const BIOMES = [
@@ -29,6 +30,7 @@ interface LeafletMapProps {
   markerFilters?: string[]  // Empty array = show all
   showFog?: boolean
   selectedFogCharacter?: string | null
+  selectedPolygonId?: string | null
   isFogEditing?: boolean
   isMarkerCreating?: boolean  // GM mode: click to create marker
   showPositions?: boolean
@@ -93,6 +95,7 @@ export default function LeafletMap({
   markerFilters = [], 
   showFog = true,
   selectedFogCharacter = null,
+  selectedPolygonId = null,
   isFogEditing = false,
   isMarkerCreating = false,
   showPositions = true,
@@ -118,7 +121,10 @@ export default function LeafletMap({
   const [playerCharacterId, setPlayerCharacterId] = useState<string | null>(null)
   const [playerVisibleMarkers, setPlayerVisibleMarkers] = useState<Set<string>>(new Set())
   const [positions, setPositions] = useState<any[]>([])
-  const [screenPolygon, setScreenPolygon] = useState<{x: number, y: number}[]>([])
+  const [screenPolygons, setScreenPolygons] = useState<{x: number, y: number}[][]>([])  // Array of polygons
+  const [unionedPolygon, setUnionedPolygon] = useState<any>(null)  // Store the unioned result
+  const [fogPath, setFogPath] = useState<string>('')  // SVG path for fog
+  const fogCanvasRef = useRef<HTMLCanvasElement>(null)
   
   // Marker types that are auto-visible (within fog polygon)
   // Other types require explicit GM grant via player_marker_visibility
@@ -266,54 +272,163 @@ export default function LeafletMap({
     return () => { sub.unsubscribe() }
   }, [isGM, playerCharacterId])
   
-  // Update screen-space polygon for viewport-fixed fog overlay (players only)
+  // Compute union of screen polygons (players only)
   useEffect(() => {
-    if (isGM || !mapInstance || !playerCharacterId || !fogLoaded) {
-      setScreenPolygon([])
+    if (isGM || screenPolygons.length === 0) {
+      setUnionedPolygon(null)
       return
     }
     
-    const updateScreenPolygon = () => {
-      const playerFog = fogPolygons.find(fp => fp.character_id === playerCharacterId)
+    try {
+      // Convert screen polygons to polygon-clipping format
+      const clippingPolygons = screenPolygons
+        .filter(poly => poly.length >= 3)
+        .map(poly => [poly.map(p => [p.x, p.y])])
       
-      if (!playerFog || !playerFog.polygon || playerFog.polygon.length < 3) {
-        setScreenPolygon([])
+      if (clippingPolygons.length === 0) {
+        setUnionedPolygon(null)
         return
       }
       
-      // Convert normalized coords → map coords → screen pixels
-      const screenPoints = playerFog.polygon.map((p: number[]) => {
-        const x = p[0] * MAP_WIDTH
-        const y = (1 - p[1]) * MAP_HEIGHT
-        const point = mapInstance.latLngToContainerPoint([y, x])
-        return { x: point.x, y: point.y }
+      // Union all polygons
+      let unionResult = clippingPolygons[0]
+      for (let i = 1; i < clippingPolygons.length; i++) {
+        unionResult = polygonClipping.union(unionResult, clippingPolygons[i])
+      }
+      
+      console.log('🌫️ UNION COMPUTED:', {
+        inputPolygons: clippingPolygons.length,
+        multiPolygons: unionResult.length,
+        firstRingPoints: unionResult[0]?.[0]?.length,
+        allPoints: unionResult[0]?.[0]
       })
       
-      setScreenPolygon(screenPoints)
+      // Generate CSS polygon() string from unioned polygon
+      // This will be used with clip-path
+      const clipPolygonStr = unionResult[0]?.[0]
+        ?.map(([x, y]: [number, number]) => `${x}px ${y}px`)
+        .join(', ')
+      
+      console.log('🌫️ CLIP POLYGON generated, points:', unionResult[0]?.[0]?.length)
+      
+      setUnionedPolygon(unionResult)
+      setFogPath(clipPolygonStr || '')
+    } catch (error) {
+      console.error('Error computing union:', error)
+      setUnionedPolygon(null)
+    }
+  }, [isGM, screenPolygons])
+  
+  // Render unioned polygon to canvas (redraws on window resize too)
+  useEffect(() => {
+    if (!unionedPolygon || !fogCanvasRef.current) return
+    
+    const renderCanvas = () => {
+    
+    const canvas = fogCanvasRef.current
+    const ctx = canvas.getContext('2d', { alpha: true })
+    if (!ctx) return
+    
+    // Get device pixel ratio for sharp rendering
+    const dpr = window.devicePixelRatio || 1
+    const rect = canvas.getBoundingClientRect()
+    
+    // Set actual canvas size (with pixel ratio)
+    canvas.width = rect.width * dpr
+    canvas.height = rect.height * dpr
+    
+    // Scale context to match
+    ctx.scale(dpr, dpr)
+    
+    // Clear canvas
+    ctx.clearRect(0, 0, rect.width, rect.height)
+    
+    // Fill with black fog
+    ctx.fillStyle = 'black'
+    ctx.fillRect(0, 0, rect.width, rect.height)
+    
+    // Cut out the unioned polygon
+    ctx.globalCompositeOperation = 'destination-out'
+    ctx.fillStyle = 'rgba(255, 255, 255, 1)'
+    
+    unionedPolygon.forEach((multiPoly: any) => {
+      multiPoly.forEach((ring: any) => {
+        ctx.beginPath()
+        ring.forEach(([x, y]: [number, number], i: number) => {
+          if (i === 0) {
+            ctx.moveTo(x, y)
+          } else {
+            ctx.lineTo(x, y)
+          }
+        })
+        ctx.closePath()
+        ctx.fill()
+      })
+    })
+    
+      console.log('🌫️ Canvas rendered:', rect.width, 'x', rect.height, '@', dpr, 'dpr')
+    }
+    
+    renderCanvas()
+    
+    // Re-render on window resize
+    window.addEventListener('resize', renderCanvas)
+    return () => window.removeEventListener('resize', renderCanvas)
+  }, [unionedPolygon])
+  
+  // Update screen-space polygons for viewport-fixed fog overlay (players only)
+  useEffect(() => {
+    if (isGM || !mapInstance || !playerCharacterId || !fogLoaded) {
+      setScreenPolygons([])
+      return
+    }
+    
+    const updateScreenPolygons = () => {
+      // Get ALL active polygons for this player's character
+      const playerPolygons = fogPolygons.filter(
+        fp => fp.character_id === playerCharacterId && fp.is_active && fp.polygon?.length >= 3
+      )
+      
+      if (playerPolygons.length === 0) {
+        setScreenPolygons([])
+        return
+      }
+      
+      // Convert each polygon's normalized coords → map coords → screen pixels
+      const allScreenPolygons = playerPolygons.map(fogPoly => {
+        return fogPoly.polygon.map((p: number[]) => {
+          const x = p[0] * MAP_WIDTH
+          const y = (1 - p[1]) * MAP_HEIGHT
+          const point = mapInstance.latLngToContainerPoint([y, x])
+          return { x: point.x, y: point.y }
+        })
+      })
+      
+      setScreenPolygons(allScreenPolygons)
     }
     
     // Initial update
-    updateScreenPolygon()
+    updateScreenPolygons()
     
     // Update on map move/zoom - multiple events to catch it ASAP
-    mapInstance.on('move', updateScreenPolygon)
-    mapInstance.on('movestart', updateScreenPolygon)
-    mapInstance.on('moveend', updateScreenPolygon)
-    mapInstance.on('zoom', updateScreenPolygon)
-    mapInstance.on('zoomstart', updateScreenPolygon)
-    mapInstance.on('zoomanim', updateScreenPolygon)  // Fires during zoom animation
-    mapInstance.on('zoomend', updateScreenPolygon)
-    mapInstance.on('viewreset', updateScreenPolygon)
+    mapInstance.on('move', updateScreenPolygons)
+    mapInstance.on('movestart', updateScreenPolygons)
+    mapInstance.on('moveend', updateScreenPolygons)
+    mapInstance.on('zoom', updateScreenPolygons)
+    mapInstance.on('zoomstart', updateScreenPolygons)
+    mapInstance.on('zoomanim', updateScreenPolygons)  // Fires during zoom animation
+    mapInstance.on('zoomend', updateScreenPolygons)
+    mapInstance.on('viewreset', updateScreenPolygons)
     
     return () => {
-      mapInstance.off('move', updateScreenPolygon)
-      mapInstance.off('movestart', updateScreenPolygon)
-      mapInstance.off('moveend', updateScreenPolygon)
-      mapInstance.off('zoom', updateScreenPolygon)
-      mapInstance.off('zoomstart', updateScreenPolygon)
-      mapInstance.off('zoomanim', updateScreenPolygon)
-      mapInstance.off('zoomend', updateScreenPolygon)
-      mapInstance.off('viewreset', updateScreenPolygon)
+      mapInstance.off('move', updateScreenPolygons)
+      mapInstance.off('movestart', updateScreenPolygons)
+      mapInstance.off('moveend', updateScreenPolygons)
+      mapInstance.off('zoom', updateScreenPolygons)
+      mapInstance.off('zoomstart', updateScreenPolygons)
+      mapInstance.off('zoomanim', updateScreenPolygons)
+      mapInstance.off('zoomend', updateScreenPolygons)
+      mapInstance.off('viewreset', updateScreenPolygons)
     }
   }, [isGM, mapInstance, playerCharacterId, fogPolygons, fogLoaded])
 
@@ -514,7 +629,7 @@ export default function LeafletMap({
       : markers
     
     // For players: apply visibility rules
-    // - Cities/Towns: auto-visible if within fog polygon
+    // - Cities/Towns: auto-visible if within ANY active fog polygon
     // - Other types (volcanoes, hot springs, water sources, dungeons): need GM grant + within fog
     // - While loading: show no markers (prevent spoilers)
     if (!isGM) {
@@ -522,13 +637,22 @@ export default function LeafletMap({
       if (!playerCharacterId || !fogLoaded) {
         filteredMarkers = []
       } else {
-        const playerFog = fogPolygons.find(fp => fp.character_id === playerCharacterId)
-        if (playerFog && playerFog.polygon && playerFog.polygon.length >= 3) {
+        // Get ALL active polygons for this player's character
+        const playerPolygons = fogPolygons.filter(
+          fp => fp.character_id === playerCharacterId && fp.is_active && fp.polygon?.length >= 3
+        )
+        
+        if (playerPolygons.length > 0) {
           filteredMarkers = filteredMarkers.filter(marker => {
-            // Must be within fog polygon first
-            if (!isPointInPolygon([marker.x, marker.y], playerFog.polygon)) {
-              return false
+            // Check if marker is within ANY active fog polygon
+            const isInAnyPolygon = playerPolygons.some(fogPoly => 
+              isPointInPolygon([marker.x, marker.y], fogPoly.polygon)
+            )
+            
+            if (!isInAnyPolygon) {
+              return false  // Not in any revealed area
             }
+            
             // Auto-visible types (cities, towns) - just need to be in fog
             if (AUTO_VISIBLE_TYPES.includes(marker.type)) {
               return true
@@ -537,7 +661,7 @@ export default function LeafletMap({
             return playerVisibleMarkers.has(marker.id)
           })
         } else {
-          // No fog polygon = no revealed area = no markers visible
+          // No active polygons = no revealed area = no markers visible
           filteredMarkers = []
         }
       }
@@ -983,98 +1107,107 @@ export default function LeafletMap({
     
     const L = leafletLib
     
-    // For GMs editing: show selected character's polygon with draggable vertices
+    // For GMs: show ALL polygons for selected character
     if (isGM && selectedFogCharacter) {
-      const charFog = fogPolygons.find(fp => fp.character_id === selectedFogCharacter)
-      const points = charFog?.polygon || []
+      const charPolygons = fogPolygons.filter(fp => fp.character_id === selectedFogCharacter)
       
-      if (points.length >= 3) {
-        const mapPoints = points.map((p: number[]) => {
-          const x = p[0] * MAP_WIDTH
-          const y = (1 - p[1]) * MAP_HEIGHT
-          return [y, x]
-        })
+      // Render all polygons for this character
+      charPolygons.forEach(fogPoly => {
+        const points = fogPoly.polygon || []
+        const isSelected = fogPoly.id === selectedPolygonId
+        const isActive = fogPoly.is_active
         
-        L.polygon(mapPoints, {
-          color: '#ef4444',
-          fillColor: '#ef4444',
-          fillOpacity: 0.2,
-          weight: 2,
-          dashArray: isFogEditing ? '5, 5' : undefined,
-          pane: 'fogPane',
-        }).addTo(fogLayerGroup)
-      }
-      
-      // Show draggable vertex markers when editing
-      if (isFogEditing && points.length > 0) {
-        points.forEach((p: number[], index: number) => {
-          const x = p[0] * MAP_WIDTH
-          const y = (1 - p[1]) * MAP_HEIGHT
-          
-          const vertexIcon = L.divIcon({
-            className: 'fog-vertex',
-            html: `<div style="
-              width: 12px;
-              height: 12px;
-              background: #ef4444;
-              border: 2px solid white;
-              border-radius: 50%;
-              cursor: move;
-              box-shadow: 0 2px 4px rgba(0,0,0,0.3);
-            "></div>`,
-            iconSize: [12, 12],
-            iconAnchor: [6, 6],
+        if (points.length >= 3) {
+          const mapPoints = points.map((p: number[]) => {
+            const x = p[0] * MAP_WIDTH
+            const y = (1 - p[1]) * MAP_HEIGHT
+            return [y, x]
           })
           
-          const vertexMarker = L.marker([y, x], {
-            icon: vertexIcon,
-            draggable: true,
+          // Different colors for selected vs other polygons
+          const color = isSelected ? '#ef4444' : (isActive ? '#22c55e' : '#6b7280')
+          const fillOpacity = isSelected ? 0.3 : (isActive ? 0.15 : 0.05)
+          
+          L.polygon(mapPoints, {
+            color: color,
+            fillColor: color,
+            fillOpacity: fillOpacity,
+            weight: isSelected ? 3 : 2,
+            dashArray: (isSelected && isFogEditing) ? '5, 5' : undefined,
+            pane: 'fogPane',
           }).addTo(fogLayerGroup)
-          
-          // Show point number on hover
-          vertexMarker.bindTooltip(`Point ${index + 1}`, {
-            direction: 'top',
-            offset: [0, -8],
-          })
-          
-          // Handle drag end - update polygon
-          vertexMarker.on('dragend', async (e: any) => {
-            const newLatLng = e.target.getLatLng()
-            const newX = newLatLng.lng / MAP_WIDTH
-            const newY = 1 - (newLatLng.lat / MAP_HEIGHT)
-            const newPoint = [
-              Math.max(0, Math.min(1, newX)),
-              Math.max(0, Math.min(1, newY))
-            ]
+        }
+        
+        // Show draggable vertex markers ONLY for the selected polygon when editing
+        if (isSelected && isFogEditing && points.length > 0) {
+          points.forEach((p: number[], index: number) => {
+            const x = p[0] * MAP_WIDTH
+            const y = (1 - p[1]) * MAP_HEIGHT
             
-            // Update the polygon
-            const newPoints = [...points]
-            newPoints[index] = newPoint
+            const vertexIcon = L.divIcon({
+              className: 'fog-vertex',
+              html: `<div style="
+                width: 12px;
+                height: 12px;
+                background: #ef4444;
+                border: 2px solid white;
+                border-radius: 50%;
+                cursor: move;
+                box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+              "></div>`,
+              iconSize: [12, 12],
+              iconAnchor: [6, 6],
+            })
             
-            // Save to database
-            if (charFog?.id) {
+            const vertexMarker = L.marker([y, x], {
+              icon: vertexIcon,
+              draggable: true,
+            }).addTo(fogLayerGroup)
+            
+            // Show point number on hover
+            vertexMarker.bindTooltip(`Point ${index + 1}`, {
+              direction: 'top',
+              offset: [0, -8],
+            })
+            
+            // Handle drag end - update polygon
+            vertexMarker.on('dragend', async (e: any) => {
+              const newLatLng = e.target.getLatLng()
+              const newX = newLatLng.lng / MAP_WIDTH
+              const newY = 1 - (newLatLng.lat / MAP_HEIGHT)
+              const newPoint = [
+                Math.max(0, Math.min(1, newX)),
+                Math.max(0, Math.min(1, newY))
+              ]
+              
+              // Update the polygon
+              const newPoints = [...points]
+              newPoints[index] = newPoint
+              
+              // Save to database
               await supabase
                 .from('player_fog_polygons')
                 .update({ polygon: newPoints })
-                .eq('id', charFog.id)
+                .eq('id', fogPoly.id)
               
               // Update local state
               setFogPolygons(prev => prev.map(fp => 
-                fp.character_id === selectedFogCharacter 
+                fp.id === fogPoly.id 
                   ? { ...fp, polygon: newPoints }
                   : fp
               ))
-            }
+            })
           })
-        })
-      }
+        }
+      })
       
-      return  // GM editing mode - don't show full fog
+      return  // GM viewing mode - don't show full fog
     }
     
-    // For players: show fog everywhere except their polygon (completely black)
-    // IMPORTANT: Show full black fog while loading to prevent map flash
+    // For players: fog is now handled by viewport-fixed overlay with unioned polygons
+    // Skip Leaflet fog rendering for players
     if (!isGM) {
+      return  // Players use viewport-fixed overlay instead
       // While loading (no character ID yet or fog not loaded), show full black fog
       if (!playerCharacterId || !fogLoaded) {
         // Use extremely large static coordinates
@@ -1089,16 +1222,22 @@ export default function LeafletMap({
         return  // Exit early
       }
       
-      const playerFog = fogPolygons.find(fp => fp.character_id === playerCharacterId)
+      // Get ALL active polygons for this player's character
+      const playerPolygons = fogPolygons.filter(
+        fp => fp.character_id === playerCharacterId && fp.is_active && fp.polygon?.length >= 3
+      )
       
-      if (playerFog && playerFog.polygon && playerFog.polygon.length >= 3) {
-        const points = playerFog.polygon.map((p: number[]) => {
-          const x = p[0] * MAP_WIDTH
-          const y = (1 - p[1]) * MAP_HEIGHT
-          return [y, x] as [number, number]
+      if (playerPolygons.length > 0) {
+        // Convert all polygons to map coordinates
+        const allPolygonCoords = playerPolygons.map(fogPoly => {
+          return fogPoly.polygon.map((p: number[]) => {
+            const x = p[0] * MAP_WIDTH
+            const y = (1 - p[1]) * MAP_HEIGHT
+            return [y, x] as [number, number]
+          })
         })
         
-        // Create inverted fog - extremely large outer bounds
+        // Create inverted fog - extremely large outer bounds with holes for each polygon
         const huge = 1000000
         const outerBounds: [number, number][] = [
           [-huge, -huge],
@@ -1107,7 +1246,8 @@ export default function LeafletMap({
           [huge, -huge],
         ]
         
-        L.polygon([outerBounds, points], {
+        // Use MultiPolygon with outer bounds and all fog polygons as holes
+        L.polygon([outerBounds, ...allPolygonCoords], {
           color: 'transparent',
           fillColor: '#000000',
           fillOpacity: 1,
@@ -1115,7 +1255,7 @@ export default function LeafletMap({
           pane: 'fogPane',
         }).addTo(fogLayerGroup)
       } else {
-        // No polygon = full fog
+        // No active polygons = full fog
         const huge = 1000000
         L.rectangle([[-huge, -huge], [huge, huge]], {
           color: 'transparent',
@@ -1126,7 +1266,7 @@ export default function LeafletMap({
         }).addTo(fogLayerGroup)
       }
     }
-  }, [showFog, isGM, fogPolygons, fogLoaded, playerCharacterId, selectedFogCharacter, isFogEditing])
+  }, [showFog, isGM, fogPolygons, fogLoaded, playerCharacterId, selectedFogCharacter, selectedPolygonId, isFogEditing])
   
   // Handle fog polygon editing (GM only)
   useEffect(() => {
@@ -1134,14 +1274,14 @@ export default function LeafletMap({
       hasMap: !!mapInstance, 
       isGM, 
       isFogEditing, 
-      selectedFogCharacter 
+      selectedPolygonId 
     })
     
-    if (!mapInstance || !isGM || !isFogEditing || !selectedFogCharacter) {
+    if (!mapInstance || !isGM || !isFogEditing || !selectedPolygonId) {
       return
     }
     
-    console.log('Fog edit mode ACTIVE for character:', selectedFogCharacter)
+    console.log('Fog edit mode ACTIVE for polygon:', selectedPolygonId)
     
     // Change cursor to crosshair during editing
     mapInstance.getContainer().style.cursor = 'crosshair'
@@ -1169,7 +1309,7 @@ export default function LeafletMap({
       const { data: currentFog } = await supabase
         .from('player_fog_polygons')
         .select('id, polygon')
-        .eq('character_id', selectedFogCharacter)
+        .eq('id', selectedPolygonId)
         .single()
       
       const currentPoints = currentFog?.polygon || []
@@ -1178,17 +1318,10 @@ export default function LeafletMap({
       console.log('Saving points:', newPoints.length, 'total')
       
       // Save to database
-      let result
-      if (currentFog) {
-        result = await supabase
-          .from('player_fog_polygons')
-          .update({ polygon: newPoints })
-          .eq('id', currentFog.id)
-      } else {
-        result = await supabase
-          .from('player_fog_polygons')
-          .insert({ character_id: selectedFogCharacter, polygon: newPoints })
-      }
+      const result = await supabase
+        .from('player_fog_polygons')
+        .update({ polygon: newPoints })
+        .eq('id', selectedPolygonId)
       
       if (result.error) {
         console.error('Error saving fog:', result.error)
@@ -1196,18 +1329,11 @@ export default function LeafletMap({
         console.log(`✓ Added fog point #${newPoints.length}`)
         
         // Update local state immediately for real-time visual feedback
-        setFogPolygons(prev => {
-          const existing = prev.find(fp => fp.character_id === selectedFogCharacter)
-          if (existing) {
-            return prev.map(fp => 
-              fp.character_id === selectedFogCharacter 
-                ? { ...fp, polygon: newPoints }
-                : fp
-            )
-          } else {
-            return [...prev, { character_id: selectedFogCharacter, polygon: newPoints }]
-          }
-        })
+        setFogPolygons(prev => prev.map(fp => 
+          fp.id === selectedPolygonId 
+            ? { ...fp, polygon: newPoints }
+            : fp
+        ))
       }
     }
     
@@ -1219,7 +1345,7 @@ export default function LeafletMap({
         mapInstance.getContainer().style.cursor = ''
       }
     }
-  }, [isGM, isFogEditing, selectedFogCharacter, fogPolygons])
+  }, [isGM, isFogEditing, selectedPolygonId, fogPolygons])
   
   // Handle marker creation mode (GM only)
   useEffect(() => {
@@ -1397,8 +1523,8 @@ export default function LeafletMap({
 
   return (
     <>
-      {/* Viewport-fixed fog overlay - updates instantly on pan/zoom */}
-      {!isGM && (
+      {/* Viewport-fixed fog overlay - simple mask with unioned polygon */}
+      {!isGM && unionedPolygon && (
         <div 
           className="absolute inset-0 pointer-events-none"
           style={{ zIndex: 2000 }}
@@ -1409,14 +1535,21 @@ export default function LeafletMap({
             style={{ position: 'absolute', top: 0, left: 0 }}
           >
             <defs>
-              <mask id="viewport-fog-mask">
-                {/* White background = show fog, Black polygon = hide fog (reveal map) */}
+              <mask id="unioned-fog-mask">
+                {/* White = show fog (opaque), Black = hide fog (transparent/reveal map) */}
                 <rect x="0" y="0" width="100%" height="100%" fill="white" />
-                {screenPolygon.length >= 3 && (
-                  <polygon 
-                    points={screenPolygon.map(p => `${p.x},${p.y}`).join(' ')}
-                    fill="black"
-                  />
+                {/* Single unioned polygon in black = reveal map */}
+                {unionedPolygon.map((multiPoly: any, i: number) => 
+                  multiPoly.map((ring: any, j: number) => {
+                    const points = ring.map(([x, y]: [number, number]) => `${x},${y}`).join(' ')
+                    return (
+                      <polygon 
+                        key={`mask-${i}-${j}`}
+                        points={points}
+                        fill="black"
+                      />
+                    )
+                  })
                 )}
               </mask>
             </defs>
@@ -1427,15 +1560,23 @@ export default function LeafletMap({
               width="100%" 
               height="100%" 
               fill="black"
-              mask="url(#viewport-fog-mask)"
+              mask="url(#unioned-fog-mask)"
             />
           </svg>
         </div>
       )}
+      
+      {/* Show full black fog if no polygons loaded yet (prevents map flash) */}
+      {!isGM && screenPolygons.length === 0 && (
+        <div 
+          className="absolute inset-0 pointer-events-none bg-black"
+          style={{ zIndex: 2000 }}
+        />
+      )}
 
       {/* Biome Legend */}
       {showBiomes && showLegend && (
-        <div className="absolute top-4 right-4 z-[1000] bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-4 max-h-[80vh] overflow-y-auto">
+        <div className="absolute top-4 right-4 z-[2100] bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-4 max-h-[80vh] overflow-y-auto">
           <h3 className="text-sm font-bold text-gray-300 mb-3 uppercase tracking-wide">
             Biomes
           </h3>
