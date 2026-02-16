@@ -290,10 +290,10 @@ export default function LeafletMap({
         return
       }
       
-      // Union all polygons
-      let unionResult = clippingPolygons[0]
+      // Union all polygons (explicit type to satisfy TypeScript)
+      let unionResult: any = clippingPolygons[0]
       for (let i = 1; i < clippingPolygons.length; i++) {
-        unionResult = polygonClipping.union(unionResult, clippingPolygons[i])
+        unionResult = polygonClipping.union(unionResult as any, clippingPolygons[i] as any)
       }
       
       console.log('🌫️ UNION COMPUTED:', {
