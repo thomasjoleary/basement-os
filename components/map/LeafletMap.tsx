@@ -118,6 +118,7 @@ export default function LeafletMap({
   const [playerCharacterId, setPlayerCharacterId] = useState<string | null>(null)
   const [playerVisibleMarkers, setPlayerVisibleMarkers] = useState<Set<string>>(new Set())
   const [positions, setPositions] = useState<any[]>([])
+  const [screenPolygon, setScreenPolygon] = useState<{x: number, y: number}[]>([])
   
   // Marker types that are auto-visible (within fog polygon)
   // Other types require explicit GM grant via player_marker_visibility
@@ -264,6 +265,57 @@ export default function LeafletMap({
     
     return () => { sub.unsubscribe() }
   }, [isGM, playerCharacterId])
+  
+  // Update screen-space polygon for viewport-fixed fog overlay (players only)
+  useEffect(() => {
+    if (isGM || !mapInstance || !playerCharacterId || !fogLoaded) {
+      setScreenPolygon([])
+      return
+    }
+    
+    const updateScreenPolygon = () => {
+      const playerFog = fogPolygons.find(fp => fp.character_id === playerCharacterId)
+      
+      if (!playerFog || !playerFog.polygon || playerFog.polygon.length < 3) {
+        setScreenPolygon([])
+        return
+      }
+      
+      // Convert normalized coords → map coords → screen pixels
+      const screenPoints = playerFog.polygon.map((p: number[]) => {
+        const x = p[0] * MAP_WIDTH
+        const y = (1 - p[1]) * MAP_HEIGHT
+        const point = mapInstance.latLngToContainerPoint([y, x])
+        return { x: point.x, y: point.y }
+      })
+      
+      setScreenPolygon(screenPoints)
+    }
+    
+    // Initial update
+    updateScreenPolygon()
+    
+    // Update on map move/zoom - multiple events to catch it ASAP
+    mapInstance.on('move', updateScreenPolygon)
+    mapInstance.on('movestart', updateScreenPolygon)
+    mapInstance.on('moveend', updateScreenPolygon)
+    mapInstance.on('zoom', updateScreenPolygon)
+    mapInstance.on('zoomstart', updateScreenPolygon)
+    mapInstance.on('zoomanim', updateScreenPolygon)  // Fires during zoom animation
+    mapInstance.on('zoomend', updateScreenPolygon)
+    mapInstance.on('viewreset', updateScreenPolygon)
+    
+    return () => {
+      mapInstance.off('move', updateScreenPolygon)
+      mapInstance.off('movestart', updateScreenPolygon)
+      mapInstance.off('moveend', updateScreenPolygon)
+      mapInstance.off('zoom', updateScreenPolygon)
+      mapInstance.off('zoomstart', updateScreenPolygon)
+      mapInstance.off('zoomanim', updateScreenPolygon)
+      mapInstance.off('zoomend', updateScreenPolygon)
+      mapInstance.off('viewreset', updateScreenPolygon)
+    }
+  }, [isGM, mapInstance, playerCharacterId, fogPolygons, fogLoaded])
 
   // Initialize map once
   useEffect(() => {
@@ -302,7 +354,7 @@ export default function LeafletMap({
       const bounds = L.latLngBounds([0, 0], [coordHeight, coordWidth])
 
       // Initialize map at zoom 0 (native resolution 1707x993)
-      // Players get restricted zoom and no dragging to prevent seeing past fog
+      // Players get restricted zoom to prevent seeing past fog
       const map = L.map('map', {
         crs: customCRS,
         minZoom: isGM ? minMapZoom : 0,  // Players can't zoom out past native resolution
@@ -312,7 +364,8 @@ export default function LeafletMap({
         zoomControl: false,
         attributionControl: false,
         maxBoundsViscosity: isGM ? 0.5 : 1.0,  // Players get stricter bounds (can't drag outside)
-        dragging: isGM,  // Only GMs can drag the map - players are locked in place
+        dragging: true,  // Viewport-fixed fog handles rendering during drags
+        zoomAnimation: isGM,  // Players get instant zoom (no animation flash), GMs keep smooth zoom
       })
       
       mapInstance = map
@@ -1344,6 +1397,42 @@ export default function LeafletMap({
 
   return (
     <>
+      {/* Viewport-fixed fog overlay - updates instantly on pan/zoom */}
+      {!isGM && (
+        <div 
+          className="absolute inset-0 pointer-events-none"
+          style={{ zIndex: 2000 }}
+        >
+          <svg 
+            width="100%" 
+            height="100%" 
+            style={{ position: 'absolute', top: 0, left: 0 }}
+          >
+            <defs>
+              <mask id="viewport-fog-mask">
+                {/* White background = show fog, Black polygon = hide fog (reveal map) */}
+                <rect x="0" y="0" width="100%" height="100%" fill="white" />
+                {screenPolygon.length >= 3 && (
+                  <polygon 
+                    points={screenPolygon.map(p => `${p.x},${p.y}`).join(' ')}
+                    fill="black"
+                  />
+                )}
+              </mask>
+            </defs>
+            {/* Black fog with mask applied */}
+            <rect 
+              x="0" 
+              y="0" 
+              width="100%" 
+              height="100%" 
+              fill="black"
+              mask="url(#viewport-fog-mask)"
+            />
+          </svg>
+        </div>
+      )}
+
       {/* Biome Legend */}
       {showBiomes && showLegend && (
         <div className="absolute top-4 right-4 z-[1000] bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-4 max-h-[80vh] overflow-y-auto">
