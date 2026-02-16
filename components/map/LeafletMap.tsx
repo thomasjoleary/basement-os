@@ -1015,7 +1015,7 @@ export default function LeafletMap({
     if (!isGM) {
       // While loading (no character ID yet or fog not loaded), show full black fog
       if (!playerCharacterId || !fogLoaded) {
-        const pad = 2000
+        const pad = 50000  // Huge padding to cover any viewport position
         L.rectangle([[-pad, -pad], [MAP_HEIGHT + pad, MAP_WIDTH + pad]], {
           color: 'transparent',
           fillColor: '#000000',
@@ -1036,7 +1036,7 @@ export default function LeafletMap({
         })
         
         // Create inverted fog (covers everything except visible area) - completely black
-        const pad = 2000
+        const pad = 50000  // Huge padding to cover any viewport position
         const outerBounds: [number, number][] = [
           [-pad, -pad],
           [-pad, MAP_WIDTH + pad],
@@ -1053,7 +1053,7 @@ export default function LeafletMap({
         }).addTo(fogLayerGroup)
       } else {
         // No polygon = full fog (completely black)
-        const pad = 2000
+        const pad = 50000  // Huge padding to cover any viewport position
         L.rectangle([[-pad, -pad], [MAP_HEIGHT + pad, MAP_WIDTH + pad]], {
           color: 'transparent',
           fillColor: '#000000',
