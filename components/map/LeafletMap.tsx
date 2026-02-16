@@ -1394,14 +1394,64 @@ export default function LeafletMap({
     }
   }, [isGM, isPlanningTravel, onMapClick])
 
+  // Calculate SVG mask for fog of war (black everywhere except visible polygon)
+  const getFogMask = () => {
+    if (isGM || !playerCharacterId || !fogLoaded) {
+      // While loading or if GM, show full black (no mask)
+      return { hasPolygon: false, points: '' }
+    }
+    
+    const playerFog = fogPolygons.find(fp => fp.character_id === playerCharacterId)
+    if (!playerFog || !playerFog.polygon || playerFog.polygon.length < 3) {
+      return { hasPolygon: false, points: '' }
+    }
+    
+    // Convert normalized coords to percentage (0-100) for SVG
+    const points = playerFog.polygon.map((p: number[]) => {
+      const x = p[0] * 100
+      const y = p[1] * 100
+      return `${x},${y}`
+    }).join(' ')
+    
+    return { hasPolygon: true, points }
+  }
+
+  const fogMask = getFogMask()
+
   return (
     <>
-      {/* Fog Loading Overlay - prevents tile flash during initial load */}
-      {!isGM && !fogLoaded && (
-        <div 
-          className="absolute inset-0 z-[2000] bg-black"
-          style={{ pointerEvents: 'none' }}
-        />
+      {/* CSS/SVG-based Fog Overlay - instant rendering with mask */}
+      {!isGM && (
+        <div className="absolute inset-0 z-[2000] pointer-events-none">
+          <svg width="100%" height="100%" style={{ position: 'absolute', top: 0, left: 0 }}>
+            <defs>
+              <mask id="fog-mask">
+                {/* White = visible, Black = hidden */}
+                {fogMask.hasPolygon ? (
+                  <>
+                    {/* Black background (hidden) */}
+                    <rect x="0" y="0" width="100" height="100" fill="black" />
+                    {/* White polygon (visible area) */}
+                    <polygon points={fogMask.points} fill="white" transform="scale(0.01)" transform-origin="0 0" />
+                  </>
+                ) : (
+                  /* No polygon = everything black (hidden) */
+                  <rect x="0" y="0" width="100" height="100" fill="black" />
+                )}
+              </mask>
+            </defs>
+            {/* Black rectangle with mask applied */}
+            <rect 
+              x="-1000%" 
+              y="-1000%" 
+              width="3000%" 
+              height="3000%" 
+              fill="black" 
+              mask="url(#fog-mask)"
+              style={{ mixBlendMode: 'normal' }}
+            />
+          </svg>
+        </div>
       )}
 
       {/* Biome Legend */}
