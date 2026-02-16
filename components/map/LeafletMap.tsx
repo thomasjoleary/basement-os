@@ -318,6 +318,10 @@ export default function LeafletMap({
       // Create layer group for markers
       markersLayerGroup = L.layerGroup().addTo(map)
       
+      // Create custom pane for fog with high z-index to prevent tile flash
+      const fogPane = map.createPane('fogPane')
+      fogPane.style.zIndex = '650'  // Above tiles (400) and overlays (600)
+      
       // Create layer group for fog
       fogLayerGroup = L.layerGroup().addTo(map)
       
@@ -935,6 +939,7 @@ export default function LeafletMap({
           fillOpacity: 0.2,
           weight: 2,
           dashArray: isFogEditing ? '5, 5' : undefined,
+          pane: 'fogPane',
         }).addTo(fogLayerGroup)
       }
       
@@ -1016,6 +1021,7 @@ export default function LeafletMap({
           fillColor: '#000000',
           fillOpacity: 1,
           interactive: false,
+          pane: 'fogPane',
         }).addTo(fogLayerGroup)
         return  // Exit early, don't process fog polygon yet
       }
@@ -1043,6 +1049,7 @@ export default function LeafletMap({
           fillColor: '#000000',
           fillOpacity: 1,
           interactive: false,
+          pane: 'fogPane',
         }).addTo(fogLayerGroup)
       } else {
         // No polygon = full fog (completely black)
@@ -1052,6 +1059,7 @@ export default function LeafletMap({
           fillColor: '#000000',
           fillOpacity: 1,
           interactive: false,
+          pane: 'fogPane',
         }).addTo(fogLayerGroup)
       }
     }
@@ -1326,6 +1334,14 @@ export default function LeafletMap({
 
   return (
     <>
+      {/* Fog Loading Overlay - prevents tile flash during initial load */}
+      {!isGM && !fogLoaded && (
+        <div 
+          className="absolute inset-0 z-[2000] bg-black"
+          style={{ pointerEvents: 'none' }}
+        />
+      )}
+
       {/* Biome Legend */}
       {showBiomes && showLegend && (
         <div className="absolute top-4 right-4 z-[1000] bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-4 max-h-[80vh] overflow-y-auto">
