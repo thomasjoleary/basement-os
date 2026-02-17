@@ -185,7 +185,7 @@ export default function NoteDetail() {
                 <div className="flex gap-2">
                     {note.type && (
                       <span className="text-sm bg-gray-800 px-3 py-1 rounded text-gray-300 border border-gray-700 uppercase tracking-widest">
-                          {note.type}
+                          {note.type === 'post' ? 'Post' : note.type}
                       </span>
                     )}
                     {note.is_public && <span className="text-sm bg-green-900/50 text-green-300 px-2 py-1 rounded border border-green-800">Public</span>}

@@ -75,7 +75,7 @@ export default function CreateLore() {
       const noteData: any = {
         title: title.trim(),
         content: content.trim(),
-        type,
+        type: !isGM ? 'post' : type, // Player notes are "post" type
         tags: tagArray.length > 0 ? tagArray : null,
         is_public: isPublic,
         data: {}

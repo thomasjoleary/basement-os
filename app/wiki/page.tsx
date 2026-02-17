@@ -115,7 +115,10 @@ export default function WikiIndex() {
       <div className="mb-4">
         <div className="text-xs text-gray-500 uppercase tracking-wider mb-2">Filter by Type</div>
         <div className="flex flex-wrap gap-2">
-          {types.map(type => (
+          {types.map(type => {
+            // Display label mapping
+            const displayLabel = type === 'post' ? 'Posts' : type
+            return (
               <button
                   key={type}
                   onClick={() => setFilterType(type)}
@@ -125,9 +128,10 @@ export default function WikiIndex() {
                       : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-500'
                   }`}
               >
-                  {type}
+                  {displayLabel}
               </button>
-          ))}
+            )
+          })}
         </div>
       </div>
 
@@ -203,12 +207,13 @@ export default function WikiIndex() {
                               <h2 className="text-lg font-bold text-gray-200 group-hover:text-white flex-1">{note.title}</h2>
                               {note.type && (
                                   <span className={`text-[10px] uppercase px-2 py-0.5 rounded ml-2 ${
+                                      note.type === 'post' ? 'bg-green-900/50 text-green-300' :
                                       note.type === 'monster' ? 'bg-red-900/50 text-red-300' :
                                       note.type === 'class' ? 'bg-blue-900/50 text-blue-300' :
                                       note.type === 'system' ? 'bg-purple-900/50 text-purple-300' :
                                       'bg-gray-700 text-gray-300'
                                   }`}>
-                                      {note.type}
+                                      {note.type === 'post' ? 'Post' : note.type}
                                   </span>
                               )}
                           </div>

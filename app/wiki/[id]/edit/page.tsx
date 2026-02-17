@@ -112,7 +112,7 @@ export default function EditNote() {
       const updates: any = {
         title: title.trim(),
         content: content.trim(),
-        type,
+        type: createdBy && !isGM ? 'post' : type, // Player notes always "post"
         tags: tagArray.length > 0 ? tagArray : null,
         is_public: isPublic
       }
