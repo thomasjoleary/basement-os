@@ -26,8 +26,12 @@ export default function NoteDetail() {
   const [loading, setLoading] = useState(true)
   const [accessDenied, setAccessDenied] = useState(false)
   
-  // GM Tools
+  // User State
   const [isGM, setIsGM] = useState(false)
+  const [userId, setUserId] = useState<string | null>(null)
+  const [canEdit, setCanEdit] = useState(false)
+  
+  // GM Tools
   const [players, setPlayers] = useState<any[]>([])
   const [unlocks, setUnlocks] = useState<Set<string>>(new Set())
 
@@ -37,7 +41,12 @@ export default function NoteDetail() {
       const { data: { session } } = await supabase.auth.getSession()
       
       let userIsGM = false
+      let currentUserId: string | null = null
+      
       if (session) {
+          currentUserId = session.user.id
+          setUserId(currentUserId)
+          
           const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single()
           if (profile && profile.role === 'gm') {
               userIsGM = true
@@ -59,7 +68,10 @@ export default function NoteDetail() {
 
       // 3. Check Permissions
       let hasAccess = false
+      const isOwner = data.created_by === currentUserId
+      
       if (userIsGM) hasAccess = true
+      else if (isOwner) hasAccess = true
       else if (data.is_public) hasAccess = true
       else if (session) {
           const { data: unlock } = await supabase
@@ -73,6 +85,8 @@ export default function NoteDetail() {
 
       if (hasAccess) {
           setNote(data)
+          // Can edit if GM or owner
+          setCanEdit(userIsGM || isOwner)
       } else {
           setAccessDenied(true)
       }
@@ -152,13 +166,33 @@ export default function NoteDetail() {
         {/* HEADER */}
         <div className="border-b border-gray-700 pb-4 mb-6">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-2">
-                <h1 className="text-4xl font-bold text-red-500 font-mono">{note.title}</h1>
+                <div className="flex-1">
+                  <h1 className="text-4xl font-bold text-red-500 font-mono">{note.title}</h1>
+                  {/* Player Note Indicator */}
+                  {note.created_by && (
+                    <div className="flex items-center gap-2 mt-2">
+                      <span className="text-sm bg-green-900/30 text-green-400 px-2 py-1 rounded border border-green-800">
+                        📝 Player Note
+                      </span>
+                      {note.character_name && (
+                        <span className="text-sm bg-cyan-900/50 text-cyan-300 px-2 py-1 rounded border border-cyan-800">
+                          {note.character_name}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
                 <div className="flex gap-2">
-                    <span className="text-sm bg-gray-800 px-3 py-1 rounded text-gray-300 border border-gray-700 uppercase tracking-widest">
-                        {note.type}
-                    </span>
+                    {note.type && (
+                      <span className="text-sm bg-gray-800 px-3 py-1 rounded text-gray-300 border border-gray-700 uppercase tracking-widest">
+                          {note.type}
+                      </span>
+                    )}
                     {note.is_public && <span className="text-sm bg-green-900/50 text-green-300 px-2 py-1 rounded border border-green-800">Public</span>}
-                    {isGM && (
+                    {!note.is_public && note.created_by && (
+                      <span className="text-sm bg-gray-700 text-gray-400 px-2 py-1 rounded border border-gray-600">Private</span>
+                    )}
+                    {canEdit && (
                       <Link
                         href={`/wiki/${id}/edit`}
                         className="text-sm bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1 rounded border border-yellow-500 uppercase tracking-widest transition-colors"
