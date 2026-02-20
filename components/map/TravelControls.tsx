@@ -124,8 +124,8 @@ export default function TravelControls({
 
   // Start a new travel
   const startTravel = async () => {
-    if (!selectedCharacterId || travelWaypoints.length < 2) {
-      alert('Please select a character and plot a route with at least 2 waypoints')
+    if (!selectedCharacterId || travelWaypoints.length < 1) {
+      alert('Please select a character and plot a route with at least 1 waypoint')
       return
     }
 
@@ -349,7 +349,7 @@ export default function TravelControls({
         )}
 
         {/* Action buttons */}
-        {isPlanningTravel && travelWaypoints.length >= 2 && (
+        {isPlanningTravel && travelWaypoints.length >= 1 && (
           <div className="flex gap-2">
             <button
               onClick={startTravel}
@@ -367,12 +367,6 @@ export default function TravelControls({
               Cancel
             </button>
           </div>
-        )}
-
-        {isPlanningTravel && travelWaypoints.length === 1 && (
-          <p className="text-xs text-gray-400 text-center">
-            Add at least one more waypoint to start travel
-          </p>
         )}
 
         {isPlanningTravel && travelWaypoints.length === 0 && (

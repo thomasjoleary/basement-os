@@ -86,7 +86,9 @@ export default function CharacterDetail() {
           mana_current: data.mana_current ?? 0,
           mana_max: data.mana_max ?? 0,
           is_active: data.is_active ?? false,
-          stat_buffs: data.stat_buffs || {}
+          stat_buffs: data.stat_buffs || {},
+          tame_class: data.tame_class || '',
+          species: data.species || ''
         }
         setChar(normalized)
         setFormData(normalized)
@@ -159,7 +161,9 @@ export default function CharacterDetail() {
             abilities: formData.abilities,
             skills: formData.skills,
             is_active: formData.is_active,
-            stat_buffs: formData.stat_buffs
+            stat_buffs: formData.stat_buffs,
+            tame_class: formData.tame_class || null,
+            species: formData.species || null
         })
         .eq('id', id)
 
@@ -337,19 +341,56 @@ export default function CharacterDetail() {
           <div>
             <h1 className="text-4xl font-bold text-red-500">{char.name}</h1>
             <div className="text-xl text-gray-300 mt-1 flex items-center gap-2">
-              <span>Level</span>
-              {isEditing ? (
-                  <input 
-                    type="number" 
-                    className="w-16 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-center"
-                    value={formData.level}
-                    onChange={(e) => setFormData({...formData, level: e.target.value})}
-                  />
-              ) : (
-                  <span>{char.level}</span>
+              {!char.is_tame && (
+                <>
+                  <span>Level</span>
+                  {isEditing ? (
+                      <input 
+                        type="number" 
+                        className="w-16 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-center"
+                        value={formData.level}
+                        onChange={(e) => setFormData({...formData, level: e.target.value})}
+                      />
+                  ) : (
+                      <span>{char.level}</span>
+                  )}
+                  <span className="text-gray-500">•</span>
+                  {char.job || 'Jobless'} 
+                </>
               )}
-              <span className="text-gray-500">•</span> {char.job || 'Jobless'} 
-              {char.is_npc && <span className="ml-2 bg-gray-700 text-xs px-2 py-1 rounded">NPC</span>}
+              {char.is_tame && (
+                <>
+                  {isEditing ? (
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="text"
+                        placeholder="Class"
+                        className="w-16 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-center uppercase"
+                        value={formData.tame_class || ''}
+                        onChange={(e) => setFormData({...formData, tame_class: e.target.value})}
+                      />
+                      <span>Class</span>
+                      <span className="text-gray-500">-</span>
+                      <input 
+                        type="text"
+                        placeholder="Species"
+                        className="flex-1 bg-gray-900 border border-gray-600 rounded px-2 py-1"
+                        value={formData.species || ''}
+                        onChange={(e) => setFormData({...formData, species: e.target.value})}
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      {char.tame_class && <span className="uppercase font-bold text-purple-300">{char.tame_class} Class</span>}
+                      {char.tame_class && char.species && <span className="text-gray-500">-</span>}
+                      {char.species && <span>{char.species}</span>}
+                      {!char.tame_class && !char.species && <span className="text-gray-500 italic">Tame</span>}
+                    </>
+                  )}
+                  <span className="ml-2 bg-purple-900 text-purple-300 text-xs px-2 py-1 rounded border border-purple-700">TAME</span>
+                </>
+              )}
+              {!char.is_tame && char.is_npc && <span className="ml-2 bg-gray-700 text-xs px-2 py-1 rounded">NPC</span>}
             </div>
             
             {/* GM ONLY: OWNER ASSIGNMENT */}
