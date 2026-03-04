@@ -33,8 +33,9 @@ export default function WikiIndex() {
         .order('title')
       
       // 3. Get User Unlocks (if logged in and not GM)
+      // Note: use local gmStatus here, not isGM state (which is still false at this point in the render cycle)
       let unlockedIds = new Set<string>()
-      if (session && !isGM) {
+      if (session && !gmStatus) {
           const { data: unlocks } = await supabase
             .from('unlocks')
             .select('note_id')

@@ -106,21 +106,33 @@ export function useTravelAnimation(isGM: boolean, hasActiveTravels: boolean) {
         // Calculate current position
         const segmentStart = waypoints[currentSegment]
         const segmentEnd = waypoints[currentSegment + 1]
-        
+
+        // Safety guard: segmentEnd should always exist here, but protect against
+        // floating-point edge cases where the segment loop exits without a match
+        if (!segmentStart || !segmentEnd) {
+          console.error(`Travel ${travel.id}: invalid segment index ${currentSegment} for ${waypoints.length} waypoints`)
+          continue
+        }
+
         const currentX = segmentStart.x + (segmentEnd.x - segmentStart.x) * segmentProgress
         const currentY = segmentStart.y + (segmentEnd.y - segmentStart.y) * segmentProgress
-        
+
         // Update travel progress in database
-        await supabase
+        const { error: travelUpdateError } = await supabase
           .from('active_travels')
           .update({
             current_segment: currentSegment,
             segment_progress: segmentProgress
           })
           .eq('id', travel.id)
-        
+
+        if (travelUpdateError) {
+          console.error(`Failed to update travel progress for ${travel.id}:`, travelUpdateError)
+          // Don't skip position update — these two operations are independent
+        }
+
         // Update character position
-        await supabase
+        const { error: positionUpdateError } = await supabase
           .from('player_positions')
           .upsert({
             character_id: travel.character_id,
@@ -130,6 +142,10 @@ export function useTravelAnimation(isGM: boolean, hasActiveTravels: boolean) {
           }, {
             onConflict: 'character_id'
           })
+
+        if (positionUpdateError) {
+          console.error(`Failed to update position for character ${travel.character_id}:`, positionUpdateError)
+        }
       }
     }
 

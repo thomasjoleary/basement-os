@@ -95,7 +95,7 @@ export default function CharacterDetail() {
         
         // Fetch active tames that belong to THIS character (master linkage)
         // Tames are linked via player_name matching this character's name OR job starting with first name
-        const firstName = data.name.split(' ')[0]
+        const firstName = data.name?.split(' ')?.[0] ?? ''
         const { data: tames } = await supabase
           .from('characters')
           .select('name, stat_buffs, is_active')
@@ -195,7 +195,7 @@ export default function CharacterDetail() {
       // Logic: Update ALL characters where is_tame is true AND (player_name == thisChar.name OR job starts with thisChar.name)
       // Note: Supabase JS client doesn't support complex OR filters easily in update, so we fetch IDs first.
       
-      const firstName = char.name.split(' ')[0];
+      const firstName = char.name?.split(' ')?.[0] ?? '';
       
       const { data: tamesToUpdate } = await supabase
         .from('characters')

@@ -172,7 +172,7 @@ export default function WordsOfPower() {
       .insert({
         word: newWordForm.word.trim(),
         meaning: newWordForm.meaning.trim(),
-        mana_cost: parseInt(newWordForm.mana_cost as any) || 0
+        mana_cost: Math.max(0, parseInt(newWordForm.mana_cost as any) || 0)
       })
       .select()
       .single()
@@ -192,7 +192,7 @@ export default function WordsOfPower() {
       .update({
         word: editForm.word.trim(),
         meaning: editForm.meaning.trim(),
-        mana_cost: parseInt(editForm.mana_cost) || 0
+        mana_cost: Math.max(0, parseInt(editForm.mana_cost) || 0)
       })
       .eq('id', wordId)
 

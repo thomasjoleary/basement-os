@@ -12,30 +12,34 @@ export default function Home() {
 
   useEffect(() => {
     async function init() {
-        // 1. Get Session & Role
-        const { data: { session } } = await supabase.auth.getSession()
-        setSession(session)
+        try {
+            // 1. Get Session & Role
+            const { data: { session } } = await supabase.auth.getSession()
+            setSession(session)
 
-        let userIsGM = false
-        if (session) {
-            const { data: profile } = await supabase
-              .from('profiles')
-              .select('role')
-              .eq('id', session.user.id)
-              .single()
-            
-            if (profile && profile.role === 'gm') {
-                userIsGM = true
-                setIsGM(true)
+            let userIsGM = false
+            if (session) {
+                const { data: profile } = await supabase
+                  .from('profiles')
+                  .select('role')
+                  .eq('id', session.user.id)
+                  .single()
+
+                if (profile && profile.role === 'gm') {
+                    userIsGM = true
+                    setIsGM(true)
+                }
             }
-        }
 
-        // 2. Fetch Characters
-        const { data, error } = await supabase.from('characters').select('*')
-        if (data) setCharacters(data)
-        else console.error(error)
-        
-        setLoading(false)
+            // 2. Fetch Characters
+            const { data, error } = await supabase.from('characters').select('*')
+            if (data) setCharacters(data)
+            else console.error(error)
+        } catch (err) {
+            console.error('Failed to load party data:', err)
+        } finally {
+            setLoading(false)
+        }
     }
     init()
   }, [])
