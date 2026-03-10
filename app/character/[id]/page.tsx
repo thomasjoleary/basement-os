@@ -88,7 +88,8 @@ export default function CharacterDetail() {
           is_active: data.is_active ?? false,
           stat_buffs: data.stat_buffs || {},
           tame_class: data.tame_class || '',
-          species: data.species || ''
+          species: data.species || '',
+          money: data.money || { copper: 0, silver: 0, gold: 0 }
         }
         setChar(normalized)
         setFormData(normalized)
@@ -163,7 +164,8 @@ export default function CharacterDetail() {
             is_active: formData.is_active,
             stat_buffs: formData.stat_buffs,
             tame_class: formData.tame_class || null,
-            species: formData.species || null
+            species: formData.species || null,
+            money: formData.money || { copper: 0, silver: 0, gold: 0 }
         })
         .eq('id', id)
 
@@ -779,7 +781,64 @@ export default function CharacterDetail() {
             {/* INVENTORY */}
             <div className="bg-gray-800 rounded-xl p-6 shadow border border-gray-700">
                 <h2 className="text-xl font-bold text-gray-200 mb-4 border-b border-gray-700 pb-2">Inventory</h2>
-                
+
+                {/* MONEY */}
+                <div className="mb-5 bg-gray-900 rounded-lg border border-gray-700 p-3">
+                    <div className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-2">💰 Currency</div>
+                    {isEditing ? (
+                        <div className="flex gap-3">
+                            {/* Gold */}
+                            <div className="flex-1 flex flex-col items-center gap-1">
+                                <span className="text-xs font-bold text-yellow-400">Gold</span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    className="w-full bg-black text-yellow-400 font-bold text-center px-2 py-1 rounded border border-yellow-700 focus:border-yellow-400 focus:outline-none"
+                                    value={formData.money?.gold ?? 0}
+                                    onChange={(e) => setFormData({ ...formData, money: { ...formData.money, gold: parseInt(e.target.value) || 0 } })}
+                                />
+                            </div>
+                            {/* Silver */}
+                            <div className="flex-1 flex flex-col items-center gap-1">
+                                <span className="text-xs font-bold text-gray-300">Silver</span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    className="w-full bg-black text-gray-300 font-bold text-center px-2 py-1 rounded border border-gray-500 focus:border-gray-300 focus:outline-none"
+                                    value={formData.money?.silver ?? 0}
+                                    onChange={(e) => setFormData({ ...formData, money: { ...formData.money, silver: parseInt(e.target.value) || 0 } })}
+                                />
+                            </div>
+                            {/* Copper */}
+                            <div className="flex-1 flex flex-col items-center gap-1">
+                                <span className="text-xs font-bold text-orange-400">Copper</span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    className="w-full bg-black text-orange-400 font-bold text-center px-2 py-1 rounded border border-orange-700 focus:border-orange-400 focus:outline-none"
+                                    value={formData.money?.copper ?? 0}
+                                    onChange={(e) => setFormData({ ...formData, money: { ...formData.money, copper: parseInt(e.target.value) || 0 } })}
+                                />
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="flex gap-3">
+                            <div className="flex-1 flex flex-col items-center bg-black/30 rounded p-2 border border-yellow-900/40">
+                                <span className="text-lg font-extrabold text-yellow-400">{char.money?.gold ?? 0}</span>
+                                <span className="text-xs text-yellow-600 font-semibold">Gold</span>
+                            </div>
+                            <div className="flex-1 flex flex-col items-center bg-black/30 rounded p-2 border border-gray-600/40">
+                                <span className="text-lg font-extrabold text-gray-300">{char.money?.silver ?? 0}</span>
+                                <span className="text-xs text-gray-500 font-semibold">Silver</span>
+                            </div>
+                            <div className="flex-1 flex flex-col items-center bg-black/30 rounded p-2 border border-orange-900/40">
+                                <span className="text-lg font-extrabold text-orange-400">{char.money?.copper ?? 0}</span>
+                                <span className="text-xs text-orange-600 font-semibold">Copper</span>
+                            </div>
+                        </div>
+                    )}
+                </div>
+
                 {isEditing ? (
                     // EDIT MODE INVENTORY
                     <div className="space-y-3">
