@@ -45,6 +45,17 @@ export default function CharacterDetail() {
   const [minMana, setMinMana] = useState('')
   const [maxMana, setMaxMana] = useState('')
 
+  // Level Up Modal
+  const [showLevelUpModal, setShowLevelUpModal] = useState(false)
+  const [levelUpStep, setLevelUpStep] = useState<1 | 2 | 3>(1)
+  const [levelUpModalMode, setLevelUpModalMode] = useState<'gm-initiate' | 'player-allocate' | 'gm-review' | null>(null)
+  const [diceRollInput, setDiceRollInput] = useState('')
+  const [luStatDeltas, setLuStatDeltas] = useState<{ [key: string]: number }>({})
+  const [luManaGain, setLuManaGain] = useState(0)
+  const [luNewSkills, setLuNewSkills] = useState<{ name: string; level: number }[]>([])
+  const [luSkillLevelUps, setLuSkillLevelUps] = useState<number[]>([])
+  const [luNewSkillInput, setLuNewSkillInput] = useState('')
+
   useEffect(() => {
     async function init() {
       // 1. Get Session & Role
@@ -89,7 +100,8 @@ export default function CharacterDetail() {
           stat_buffs: data.stat_buffs || {},
           tame_class: data.tame_class || '',
           species: data.species || '',
-          money: data.money || { copper: 0, silver: 0, gold: 0 }
+          money: data.money || { copper: 0, silver: 0, gold: 0 },
+          pending_levelup: data.pending_levelup || null,
         }
         setChar(normalized)
         setFormData(normalized)
@@ -312,12 +324,172 @@ export default function CharacterDetail() {
     }
   }
 
+  // --- LEVEL UP HELPERS ---
+
+  const XP_MAX_TABLE: { [key: number]: number } = {
+    1: 50, 2: 250, 3: 1250, 4: 6250, 5: 30000,
+    6: 100000, 7: 500000, 8: 2000000, 9: 10000000, 10: 50000000,
+  }
+
+  function getXpMaxForLevel(level: number): number {
+    return XP_MAX_TABLE[level] ?? 50000000
+  }
+
+  function getSkillLevelUpCost(baseLevel: number, levelsAdded: number): number {
+    let cost = 0
+    for (let l = 0; l < levelsAdded; l++) {
+      cost += Math.pow(2, baseLevel + l)
+    }
+    return cost
+  }
+
+  function getLuPointsSpent(): number {
+    const statCost = Object.values(luStatDeltas).reduce((a, b) => a + b, 0)
+    const manaCost = luManaGain * 2
+    // Each new skill costs 10 to create (Lv 1), plus exponential cost for any levels above 1
+    const newSkillCost = luNewSkills.reduce((total, skill) => {
+      return total + 10 + getSkillLevelUpCost(1, (skill.level || 1) - 1)
+    }, 0)
+    const skillLevelCost = (char?.skills || []).reduce((total: number, skill: any, i: number) => {
+      return total + getSkillLevelUpCost(skill.level, luSkillLevelUps[i] || 0)
+    }, 0)
+    return statCost + manaCost + newSkillCost + skillLevelCost
+  }
+
+  // GM: Start the level-up flow (step 1 — dice roll entry)
+  function openGMInitiateModal() {
+    setLevelUpStep(1)
+    setDiceRollInput('')
+    setLuStatDeltas({})
+    setLuManaGain(0)
+    setLuNewSkills([])
+    setLuSkillLevelUps((char?.skills || []).map(() => 0))
+    setLuNewSkillInput('')
+    setLevelUpModalMode('gm-initiate')
+    setShowLevelUpModal(true)
+  }
+
+  // Player: Open their allocation modal (step 2 — spend points)
+  function openPlayerAllocateModal() {
+    const pending = char?.pending_levelup
+    setLevelUpStep(2)
+    setDiceRollInput(String(pending?.points_total || 0))
+    setLuStatDeltas(pending?.stat_deltas || {})
+    setLuManaGain(pending?.mana_gain || 0)
+    setLuNewSkills(pending?.new_skills || [])
+    setLuSkillLevelUps(pending?.skill_level_ups || (char?.skills || []).map(() => 0))
+    setLuNewSkillInput('')
+    setLevelUpModalMode('player-allocate')
+    setShowLevelUpModal(true)
+  }
+
+  // GM: Open review modal (step 3 — review player's submission)
+  function openGMReviewModal() {
+    const pending = char?.pending_levelup
+    setLevelUpStep(3)
+    setDiceRollInput(String(pending?.points_total || 0))
+    setLuStatDeltas(pending?.stat_deltas || {})
+    setLuManaGain(pending?.mana_gain || 0)
+    setLuNewSkills(pending?.new_skills || [])
+    setLuSkillLevelUps(pending?.skill_level_ups || (char?.skills || []).map(() => 0))
+    setLuNewSkillInput('')
+    setLevelUpModalMode('gm-review')
+    setShowLevelUpModal(true)
+  }
+
+  // GM: Save dice roll total to DB and hand off to player
+  async function handleGMInitiateLevelUp() {
+    const newLevel = char.level + 1
+    const { error } = await supabase.from('characters').update({
+      pending_levelup: {
+        status: 'player_allocating',
+        new_level: newLevel,
+        points_total: parseInt(diceRollInput) || 0,
+      },
+    }).eq('id', id)
+    if (error) { alert('Error initiating level up: ' + error.message) }
+    else { setShowLevelUpModal(false); window.location.reload() }
+  }
+
+  // Player: Submit their allocation for GM review
+  async function handlePlayerSubmitAllocation() {
+    const { error } = await supabase.from('characters').update({
+      pending_levelup: {
+        ...char.pending_levelup,
+        status: 'player_submitted',
+        stat_deltas: luStatDeltas,
+        mana_gain: luManaGain,
+        new_skills: luNewSkills,
+        skill_level_ups: luSkillLevelUps,
+      },
+    }).eq('id', id)
+    if (error) { alert('Error submitting allocation: ' + error.message) }
+    else { setShowLevelUpModal(false); window.location.reload() }
+  }
+
+  // GM: Confirm and apply the level up
+  async function handleGMConfirmLevelUp() {
+    const pending = char.pending_levelup
+    const newLevel = pending.new_level
+
+    const newStats = { ...char.stats }
+    Object.entries(luStatDeltas).forEach(([key, delta]) => {
+      newStats[key] = (newStats[key] || 0) + (delta as number)
+    })
+
+    const newManaMax = (char.mana_max || 0) + luManaGain
+
+    // HP max = level * (25 + floor(fortitude / 10))
+    const newFortitude = newStats['fortitude'] || 0
+    const newHpMax = newLevel * (25 + Math.floor(newFortitude / 10))
+
+    const updatedSkills = [...(char.skills || [])]
+    luSkillLevelUps.forEach((levelsAdded, i) => {
+      if (levelsAdded > 0 && updatedSkills[i]) {
+        updatedSkills[i] = { ...updatedSkills[i], level: updatedSkills[i].level + levelsAdded }
+      }
+    })
+    luNewSkills.forEach(skill => {
+      updatedSkills.push({ name: skill.name, level: skill.level || 1 })
+    })
+
+    const { error } = await supabase.from('characters').update({
+      level: newLevel,
+      xp_current: 0,
+      xp_max: getXpMaxForLevel(newLevel),
+      stats: newStats,
+      hp_max: newHpMax,
+      hp_current: newHpMax,
+      mana_max: newManaMax,
+      mana_current: newManaMax,
+      skills: updatedSkills,
+      pending_levelup: null,
+    }).eq('id', id)
+
+    if (error) { alert('Error confirming level up: ' + error.message) }
+    else { setShowLevelUpModal(false); window.location.reload() }
+  }
+
+  // GM: Void the pending level up entirely
+  async function handleGMCancelLevelUp() {
+    const { error } = await supabase.from('characters').update({
+      pending_levelup: null,
+    }).eq('id', id)
+    if (error) { alert('Error cancelling: ' + error.message) }
+    else { setShowLevelUpModal(false); window.location.reload() }
+  }
+
   if (loading) return <div className="min-h-screen bg-gray-900 text-white p-8 text-center">Loading...</div>
   if (!char) return <div className="min-h-screen bg-gray-900 text-white p-8 text-center">Character not found.</div>
 
   const displayData = isEditing ? formData : char
-  
+
   const canEdit = isGM // ONLY GMs can edit characters
+  const isMyCharacter = !isGM && session?.user?.id === char.user_id
+  const pendingLevelup = char.pending_levelup
+  const isPendingAllocating = pendingLevelup?.status === 'player_allocating'
+  const isPendingSubmitted = pendingLevelup?.status === 'player_submitted'
+  const xpMaxed = !char.is_tame && char.xp_max > 0 && char.xp_current >= char.xp_max
 
   return (
     <div className="min-h-screen bg-gray-900 text-white p-4 md:p-8 font-sans">
@@ -329,10 +501,49 @@ export default function CharacterDetail() {
                     <button onClick={() => setIsEditing(false)} className="px-4 py-2 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition">Cancel</button>
                     <button onClick={handleSave} className="px-4 py-2 rounded bg-green-600 text-white hover:bg-green-500 transition font-bold">Save Changes</button>
                 </>
-            ) : canEdit && (
-                <button onClick={() => setIsEditing(true)} className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-500 transition flex items-center gap-2">
-                    <span>✏️</span> Edit Sheet
-                </button>
+            ) : (
+                <>
+                    {/* GM: XP maxed, no pending level-up yet */}
+                    {isGM && xpMaxed && !pendingLevelup && (
+                        <button onClick={openGMInitiateModal} className="px-4 py-2 rounded bg-fuchsia-700 text-white hover:bg-fuchsia-600 transition font-bold flex items-center gap-2">
+                            ⬆️ Level Up
+                        </button>
+                    )}
+                    {/* GM: Waiting for player to allocate */}
+                    {isGM && isPendingAllocating && (
+                        <div className="flex items-center gap-2">
+                            <span className="px-3 py-2 rounded bg-yellow-900/40 border border-yellow-700 text-yellow-400 text-sm font-semibold flex items-center gap-1.5">
+                                ⏳ Awaiting Player
+                            </span>
+                            <button onClick={handleGMCancelLevelUp} className="px-3 py-2 rounded bg-gray-700 text-gray-400 hover:bg-gray-600 transition text-sm">
+                                Cancel
+                            </button>
+                        </div>
+                    )}
+                    {/* GM: Player has submitted, ready to review */}
+                    {isGM && isPendingSubmitted && (
+                        <button onClick={openGMReviewModal} className="px-4 py-2 rounded bg-green-700 text-white hover:bg-green-600 transition font-bold flex items-center gap-2 animate-pulse">
+                            ⚔️ Review Submission
+                        </button>
+                    )}
+                    {/* Player: Their turn to allocate points */}
+                    {isMyCharacter && isPendingAllocating && (
+                        <button onClick={openPlayerAllocateModal} className="px-4 py-2 rounded bg-fuchsia-700 text-white hover:bg-fuchsia-600 transition font-bold flex items-center gap-2 animate-pulse">
+                            ⬆️ Allocate Level Up!
+                        </button>
+                    )}
+                    {/* Player: Waiting for GM to confirm */}
+                    {isMyCharacter && isPendingSubmitted && (
+                        <span className="px-3 py-2 rounded bg-green-900/40 border border-green-700 text-green-400 text-sm font-semibold flex items-center gap-1.5">
+                            ✓ Submitted — Awaiting GM
+                        </span>
+                    )}
+                    {canEdit && (
+                        <button onClick={() => setIsEditing(true)} className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-500 transition flex items-center gap-2">
+                            <span>✏️</span> Edit Sheet
+                        </button>
+                    )}
+                </>
             )}
         </div>
       </div>
@@ -479,7 +690,18 @@ export default function CharacterDetail() {
              {/* XP BAR */}
              <div className="w-full md:w-64">
                 <div className="flex justify-between text-xs uppercase font-bold text-gray-400 mb-1 items-center">
-                    <span>XP</span>
+                    <span className="flex items-center gap-1.5">
+                        XP
+                        {!isEditing && xpMaxed && !pendingLevelup && (
+                            <span className="text-fuchsia-400 animate-pulse tracking-wide">✦ READY</span>
+                        )}
+                        {!isEditing && xpMaxed && isPendingAllocating && (
+                            <span className="text-yellow-400 tracking-wide">⏳ PENDING</span>
+                        )}
+                        {!isEditing && xpMaxed && isPendingSubmitted && (
+                            <span className="text-green-400 tracking-wide">✓ SUBMITTED</span>
+                        )}
+                    </span>
                     {isEditing ? (
                         <div className="flex items-center gap-1">
                             <input 
@@ -501,8 +723,8 @@ export default function CharacterDetail() {
                     )}
                 </div>
                 <div className="w-full bg-gray-900 h-2 rounded-full overflow-hidden border border-gray-600">
-                    <div 
-                        className="bg-fuchsia-500 h-full transition-all duration-500" 
+                    <div
+                        className={`h-full transition-all duration-500 ${xpMaxed && !pendingLevelup ? 'bg-fuchsia-400 animate-pulse' : xpMaxed ? 'bg-fuchsia-300' : 'bg-fuchsia-500'}`}
                         style={{ width: `${Math.min(100, (displayData.xp_current / displayData.xp_max) * 100 || 0)}%` }}
                     />
                 </div>
@@ -1024,6 +1246,397 @@ export default function CharacterDetail() {
 
         </div>
       </div>
+
+      {/* ===================== LEVEL UP MODAL ===================== */}
+      {showLevelUpModal && char && levelUpModalMode && (() => {
+        const newLevel = levelUpModalMode === 'gm-initiate'
+          ? char.level + 1
+          : (char.pending_levelup?.new_level || char.level + 1)
+        const diceCount = newLevel * 5
+        const pointsTotal = parseInt(diceRollInput) || 0
+        const pointsSpent = getLuPointsSpent()
+        const pointsRemaining = pointsTotal - pointsSpent
+
+        const modalTitles = {
+          'gm-initiate': '⬆️ Initiate Level Up',
+          'player-allocate': '⬆️ Allocate Your Points',
+          'gm-review': '⚔️ Review Submission',
+        }
+
+        // Shared allocation UI used in both player-allocate and gm-review (step 2)
+        const AllocationUI = () => (
+          <div className="space-y-4">
+            {levelUpModalMode === 'player-allocate' && (
+              <div className="bg-fuchsia-900/20 border border-fuchsia-800 rounded-xl px-4 py-3 text-sm text-fuchsia-300">
+                You have <span className="font-bold text-fuchsia-200">{pointsTotal} points</span> to spend. Allocate them below, then submit for GM review.
+              </div>
+            )}
+            {levelUpModalMode === 'gm-review' && levelUpStep === 2 && (
+              <div className="bg-yellow-900/20 border border-yellow-800 rounded-xl px-4 py-3 text-sm text-yellow-300">
+                <span className="font-bold">GM: Modify Allocation</span> — Adjust points below, then return to review.
+              </div>
+            )}
+
+            {/* Points Counter */}
+            <div className={`flex justify-between items-center bg-gray-800 rounded-xl px-5 py-3 border ${pointsRemaining < 0 ? 'border-red-600 bg-red-900/10' : pointsRemaining === 0 ? 'border-green-600' : 'border-fuchsia-700'}`}>
+              <span className="text-gray-400 text-sm font-semibold uppercase tracking-wide">Points Remaining</span>
+              <span className={`text-3xl font-bold font-mono ${pointsRemaining < 0 ? 'text-red-400' : pointsRemaining === 0 ? 'text-green-400' : 'text-fuchsia-300'}`}>
+                {pointsRemaining}
+                <span className="text-gray-500 text-sm font-normal"> / {pointsTotal}</span>
+              </span>
+            </div>
+
+            {/* Stats */}
+            <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
+                Stats <span className="text-gray-600 font-normal normal-case">(1 point = +1)</span>
+              </h3>
+              <div className="grid grid-cols-2 gap-2">
+                {Object.keys(char.stats || {}).map(statKey => {
+                  const base = char.stats[statKey] || 0
+                  const delta = luStatDeltas[statKey] || 0
+                  return (
+                    <div key={statKey} className="bg-gray-900 rounded-lg p-3 flex items-center justify-between gap-2">
+                      <div>
+                        <div className="text-xs text-gray-500 uppercase tracking-wider">{statKey}</div>
+                        <div className="font-bold text-white text-lg">
+                          {base}{delta > 0 && <span className="text-fuchsia-400 text-sm"> +{delta}</span>}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button disabled={delta <= 0}
+                          onClick={() => setLuStatDeltas(prev => ({ ...prev, [statKey]: Math.max(0, (prev[statKey] || 0) - 1) }))}
+                          className="w-7 h-7 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-30 text-white font-bold transition text-sm">−</button>
+                        <button disabled={pointsRemaining <= 0}
+                          onClick={() => setLuStatDeltas(prev => ({ ...prev, [statKey]: (prev[statKey] || 0) + 1 }))}
+                          className="w-7 h-7 rounded bg-fuchsia-800 hover:bg-fuchsia-700 disabled:opacity-30 text-white font-bold transition text-sm">+</button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Mana */}
+            <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
+                Mana Max <span className="text-gray-600 font-normal normal-case">(2 points = +1 mana)</span>
+              </h3>
+              <div className="bg-gray-900 rounded-lg p-3 flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-xs text-gray-500 uppercase tracking-wider">Mana Max</div>
+                  <div className="font-bold text-white text-lg">
+                    {char.mana_max || 0}{luManaGain > 0 && <span className="text-blue-400 text-sm"> +{luManaGain}</span>}
+                  </div>
+                  <div className="text-xs text-gray-600">Cost: {luManaGain * 2} pts</div>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button disabled={luManaGain <= 0} onClick={() => setLuManaGain(g => Math.max(0, g - 1))}
+                    className="w-7 h-7 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-30 text-white font-bold transition text-sm">−</button>
+                  <button disabled={pointsRemaining < 2} onClick={() => setLuManaGain(g => g + 1)}
+                    className="w-7 h-7 rounded bg-blue-800 hover:bg-blue-700 disabled:opacity-30 text-white font-bold transition text-sm">+</button>
+                </div>
+              </div>
+            </div>
+
+            {/* Level Up Existing Skills */}
+            {char.skills && char.skills.length > 0 && (
+              <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
+                <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
+                  Level Up Skills <span className="text-gray-600 font-normal normal-case">(cost doubles per level, max Lv 10)</span>
+                </h3>
+                <div className="space-y-2">
+                  {char.skills.map((skill: any, i: number) => {
+                    const levelsAdded = luSkillLevelUps[i] || 0
+                    const currentLevel = skill.level + levelsAdded
+                    const nextCost = Math.pow(2, currentLevel)
+                    const canUp = pointsRemaining >= nextCost && currentLevel < 10
+                    const canDown = levelsAdded > 0
+                    return (
+                      <div key={i} className="bg-gray-900 rounded-lg p-3 flex items-center justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm text-white font-medium truncate">{skill.name}</div>
+                          <div className="text-xs text-gray-500">
+                            Lv {skill.level}
+                            {levelsAdded > 0 && <span className="text-fuchsia-400"> → {currentLevel}</span>}
+                            {currentLevel < 10 ? <span className="text-gray-600"> • next: {nextCost} pts</span> : <span className="text-yellow-600"> • MAX</span>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button disabled={!canDown}
+                            onClick={() => setLuSkillLevelUps(prev => { const n = [...prev]; n[i] = Math.max(0, (n[i] || 0) - 1); return n })}
+                            className="w-7 h-7 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-30 text-white font-bold transition text-sm">−</button>
+                          <button disabled={!canUp}
+                            onClick={() => setLuSkillLevelUps(prev => { const n = [...prev]; n[i] = (n[i] || 0) + 1; return n })}
+                            className="w-7 h-7 rounded bg-fuchsia-800 hover:bg-fuchsia-700 disabled:opacity-30 text-white font-bold transition text-sm">+</button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* New Skills */}
+            <div className="bg-gray-800 rounded-xl p-4 border border-gray-700">
+              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
+                New Skills <span className="text-gray-600 font-normal normal-case">(10 pts each, starts at Lv 1)</span>
+              </h3>
+              {luNewSkills.length > 0 && (
+                <div className="space-y-2 mb-3">
+                  {luNewSkills.map((skill, i) => {
+                    const nextLevelCost = Math.pow(2, skill.level)
+                    const canLevelUp = pointsRemaining >= nextLevelCost && skill.level < 10
+                    const canLevelDown = skill.level > 1
+                    return (
+                      <div key={i} className="bg-gray-900 rounded-lg p-3 flex items-center justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm text-white font-medium truncate">{skill.name}</div>
+                          <div className="text-xs text-gray-500">
+                            <span className="text-fuchsia-400">Lv {skill.level}</span>
+                            {skill.level < 10
+                              ? <span className="text-gray-600"> • next level: {nextLevelCost} pts</span>
+                              : <span className="text-yellow-600"> • MAX</span>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button disabled={!canLevelDown}
+                            onClick={() => setLuNewSkills(prev => prev.map((s, j) => j === i ? { ...s, level: s.level - 1 } : s))}
+                            className="w-7 h-7 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-30 text-white font-bold transition text-sm">−</button>
+                          <button disabled={!canLevelUp}
+                            onClick={() => setLuNewSkills(prev => prev.map((s, j) => j === i ? { ...s, level: s.level + 1 } : s))}
+                            className="w-7 h-7 rounded bg-fuchsia-800 hover:bg-fuchsia-700 disabled:opacity-30 text-white font-bold transition text-sm">+</button>
+                          <button onClick={() => setLuNewSkills(prev => prev.filter((_, j) => j !== i))}
+                            className="w-7 h-7 rounded bg-red-900/40 hover:bg-red-900 text-red-400 hover:text-red-300 text-sm transition ml-1">✕</button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <input type="text" placeholder="Skill name..."
+                  className="flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-fuchsia-500 focus:outline-none"
+                  value={luNewSkillInput} onChange={(e) => setLuNewSkillInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && luNewSkillInput.trim() && pointsRemaining >= 10) {
+                      setLuNewSkills(prev => [...prev, { name: luNewSkillInput.trim(), level: 1 }])
+                      setLuNewSkillInput('')
+                    }
+                  }}
+                />
+                <button
+                  disabled={!luNewSkillInput.trim() || pointsRemaining < 10}
+                  onClick={() => { if (luNewSkillInput.trim()) { setLuNewSkills(prev => [...prev, { name: luNewSkillInput.trim(), level: 1 }]); setLuNewSkillInput('') } }}
+                  className="px-3 py-2 bg-fuchsia-800 hover:bg-fuchsia-700 disabled:opacity-30 text-white text-sm rounded font-bold transition shrink-0"
+                >+ Add (10 pts)</button>
+              </div>
+            </div>
+
+            {/* Navigation */}
+            <div className="flex gap-3 pt-1">
+              {levelUpModalMode === 'gm-review' && (
+                <button onClick={() => setLevelUpStep(3)}
+                  className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg font-bold transition">
+                  ← Back to Review
+                </button>
+              )}
+              {levelUpModalMode === 'player-allocate' && (
+                <button disabled={pointsRemaining < 0} onClick={handlePlayerSubmitAllocation}
+                  className="flex-1 py-3 bg-fuchsia-700 hover:bg-fuchsia-600 disabled:bg-gray-700 disabled:text-gray-500 text-white font-bold rounded-lg transition">
+                  Submit for GM Review →
+                </button>
+              )}
+              {levelUpModalMode === 'gm-review' && (
+                <button disabled={pointsRemaining < 0} onClick={() => setLevelUpStep(3)}
+                  className="flex-1 py-3 bg-fuchsia-700 hover:bg-fuchsia-600 disabled:bg-gray-700 disabled:text-gray-500 text-white font-bold rounded-lg transition">
+                  Update Review →
+                </button>
+              )}
+            </div>
+          </div>
+        )
+
+        return (
+          <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+            <div className="bg-gray-900 border border-fuchsia-800 rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto">
+
+              {/* Modal Header */}
+              <div className="bg-fuchsia-900/30 border-b border-fuchsia-800 px-6 py-4 flex justify-between items-center rounded-t-2xl">
+                <div>
+                  <h2 className="text-xl font-bold text-fuchsia-300">{modalTitles[levelUpModalMode]}</h2>
+                  <p className="text-sm text-gray-400">
+                    Level <span className="text-white font-bold">{char.level}</span> → <span className="text-fuchsia-400 font-bold">{newLevel}</span>
+                  </p>
+                </div>
+                <button onClick={() => setShowLevelUpModal(false)} className="text-gray-500 hover:text-white text-xl transition">✕</button>
+              </div>
+
+              <div className="px-6 py-5">
+
+                {/* ── STEP 1: GM enters dice roll ── */}
+                {levelUpStep === 1 && levelUpModalMode === 'gm-initiate' && (
+                  <div className="space-y-5">
+                    <div className="bg-gray-800 rounded-xl p-6 text-center border border-gray-700">
+                      <div className="text-5xl mb-3">🎲</div>
+                      <p className="text-gray-300 text-lg mb-1">
+                        Roll <span className="text-fuchsia-400 font-bold text-3xl">{diceCount}d10</span>
+                      </p>
+                      <p className="text-gray-500 text-sm">
+                        Reaching level {newLevel} — {newLevel} × 5 = {diceCount} ten-sided dice.
+                      </p>
+                      <p className="text-xs text-gray-600 mt-1">Range: {diceCount} – {diceCount * 10}</p>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2 font-semibold uppercase tracking-wide">Enter Total Roll</label>
+                      <input
+                        type="number" min={diceCount} max={diceCount * 10}
+                        placeholder={`${diceCount} – ${diceCount * 10}`}
+                        className="w-full bg-gray-800 border border-gray-600 rounded-lg px-4 py-3 text-white text-2xl text-center font-bold focus:border-fuchsia-500 focus:outline-none transition"
+                        value={diceRollInput} onChange={(e) => setDiceRollInput(e.target.value)}
+                      />
+                    </div>
+
+                    <div className="bg-gray-800 border border-gray-700 rounded-xl p-4 text-sm text-gray-400">
+                      <p className="font-semibold text-gray-300 mb-1">What happens next</p>
+                      <p>The player will see a button to allocate their points to stats, mana, and skills. You&apos;ll review their choices before anything is confirmed.</p>
+                    </div>
+
+                    <button
+                      disabled={!diceRollInput || parseInt(diceRollInput) < 1}
+                      onClick={handleGMInitiateLevelUp}
+                      className="w-full py-3 bg-fuchsia-700 hover:bg-fuchsia-600 disabled:bg-gray-700 disabled:text-gray-500 text-white font-bold rounded-lg transition"
+                    >
+                      Send to Player →
+                    </button>
+                  </div>
+                )}
+
+                {/* ── STEP 2: Allocate points (player or GM modifying) ── */}
+                {levelUpStep === 2 && (levelUpModalMode === 'player-allocate' || levelUpModalMode === 'gm-review') && (
+                  AllocationUI()
+                )}
+
+                {/* ── STEP 3: GM reviews and confirms ── */}
+                {levelUpStep === 3 && levelUpModalMode === 'gm-review' && (() => {
+                  const changedStats = Object.entries(luStatDeltas).filter(([, v]) => (v as number) > 0)
+                  const newXpMax = getXpMaxForLevel(newLevel)
+                  const reviewStats = { ...char.stats }
+                  Object.entries(luStatDeltas).forEach(([key, delta]) => {
+                    reviewStats[key] = (reviewStats[key] || 0) + (delta as number)
+                  })
+                  const reviewFortitude = reviewStats['fortitude'] || 0
+                  const reviewHpMax = newLevel * (25 + Math.floor(reviewFortitude / 10))
+                  const reviewManaMax = (char.mana_max || 0) + luManaGain
+                  return (
+                    <div className="space-y-4">
+                      <p className="text-gray-400 text-sm">Review the player&apos;s allocation. Modify or confirm below.</p>
+
+                      <div className="bg-fuchsia-950/40 border border-fuchsia-800 rounded-xl p-4 space-y-3">
+
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-400 font-semibold text-sm">Level</span>
+                          <span className="font-bold text-white">{char.level} <span className="text-gray-500">→</span> <span className="text-fuchsia-400">{newLevel}</span></span>
+                        </div>
+
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-400 font-semibold text-sm">XP</span>
+                          <span className="font-bold text-white">{char.xp_current} <span className="text-gray-500">→</span> <span className="text-fuchsia-400">0</span> / {newXpMax.toLocaleString()}</span>
+                        </div>
+
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-400 font-semibold text-sm">HP Max</span>
+                          <span className="font-bold text-white">{char.hp_max} <span className="text-gray-500">→</span> <span className="text-fuchsia-400">{reviewHpMax}</span> <span className="text-green-400 text-xs">(full heal)</span></span>
+                        </div>
+
+                        {reviewManaMax !== (char.mana_max || 0) && (
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-400 font-semibold text-sm">Mana Max</span>
+                            <span className="font-bold text-white">{char.mana_max || 0} <span className="text-gray-500">→</span> <span className="text-fuchsia-400">{reviewManaMax}</span> <span className="text-blue-400 text-xs">(full restore)</span></span>
+                          </div>
+                        )}
+                        {reviewManaMax === (char.mana_max || 0) && reviewManaMax > 0 && (
+                          <div className="flex justify-between items-center">
+                            <span className="text-gray-400 font-semibold text-sm">Mana</span>
+                            <span className="text-blue-400 text-xs font-semibold">Restored to full ({reviewManaMax})</span>
+                          </div>
+                        )}
+
+                        {changedStats.length > 0 && (
+                          <div>
+                            <div className="text-gray-400 font-semibold text-sm mb-1">Stats</div>
+                            {changedStats.map(([key, delta]) => (
+                              <div key={key} className="flex justify-between text-sm ml-3 py-0.5">
+                                <span className="text-gray-400 capitalize">{key}</span>
+                                <span className="text-white">{char.stats[key] || 0} <span className="text-gray-500">→</span> <span className="text-fuchsia-400">{(char.stats[key] || 0) + (delta as number)}</span></span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {luSkillLevelUps.some(n => n > 0) && (
+                          <div>
+                            <div className="text-gray-400 font-semibold text-sm mb-1">Skills Leveled Up</div>
+                            {char.skills?.map((skill: any, i: number) => {
+                              const levelsAdded = luSkillLevelUps[i] || 0
+                              if (!levelsAdded) return null
+                              return (
+                                <div key={i} className="flex justify-between text-sm ml-3 py-0.5">
+                                  <span className="text-gray-400">{skill.name}</span>
+                                  <span className="text-white">Lv {skill.level} <span className="text-gray-500">→</span> <span className="text-fuchsia-400">Lv {skill.level + levelsAdded}</span></span>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        )}
+
+                        {luNewSkills.length > 0 && (
+                          <div>
+                            <div className="text-gray-400 font-semibold text-sm mb-1">New Skills</div>
+                            {luNewSkills.map((skill, i) => (
+                              <div key={i} className="flex justify-between text-sm ml-3 py-0.5">
+                                <span className="text-gray-400">{skill.name}</span>
+                                <span className="text-fuchsia-400">New — Lv {skill.level || 1}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {changedStats.length === 0 && luManaGain === 0 && !luSkillLevelUps.some(n => n > 0) && luNewSkills.length === 0 && (
+                          <p className="text-gray-500 italic text-sm">No points allocated yet.</p>
+                        )}
+
+                        <div className="border-t border-fuchsia-900/60 pt-2 flex justify-between text-xs text-gray-500">
+                          <span>Points used</span>
+                          <span>{getLuPointsSpent()} / {pointsTotal} ({Math.max(0, pointsRemaining)} unspent)</span>
+                        </div>
+                      </div>
+
+                      <div className="flex gap-3 pt-1">
+                        <button onClick={() => setLevelUpStep(2)}
+                          className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg font-bold transition">
+                          ✏️ Modify
+                        </button>
+                        <button onClick={handleGMConfirmLevelUp}
+                          className="flex-1 py-3 bg-green-700 hover:bg-green-600 text-white font-bold rounded-lg transition">
+                          ✓ Confirm Level Up
+                        </button>
+                      </div>
+                      <button onClick={handleGMCancelLevelUp}
+                        className="w-full py-2 text-red-400 hover:text-red-300 text-sm transition border border-red-900/50 rounded-lg hover:border-red-700">
+                        ✕ Cancel Entire Level Up
+                      </button>
+                    </div>
+                  )
+                })()}
+
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
     </div>
   )
 }
