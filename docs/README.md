@@ -6,4 +6,4 @@ Main Features:
 - Real-Time Map (Markers, Current Locations, Travel Time Calculator)
 - Community Wiki (Post Categories, Private/Public Posts)
 
-Website currently hosted at basementos.xyz
+Website currently hosted [here](basementos.xyz)
