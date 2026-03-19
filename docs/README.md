@@ -1,5 +1,7 @@
 This is a passion project made for my text-based RPG I play with my friends.
 
-I worked with my OpenClaw assistant, Otto, to complete this project.
+Main Features:
 
-After the changes to how Claude subscriptions work with OpenClaw, I started working with Claude instead.
+- Character status (HP, Mana, XP, Inventory, Skills, Abilities, Level-up Handler)
+- Real-Time Map (Markers, Current Locations, Travel Time Calculator)
+- Community Wiki (Post Categories, Private/Public Posts)
