@@ -75,9 +75,10 @@ export default function Home() {
   const graveyard = allNonTames.filter(c => c.is_dead)
 
   owners.forEach(owner => {
-      const myTames = allTames.filter(t => 
-          (t.player_name && t.player_name === owner.name) || 
-          (t.job && owner.name.startsWith(t.job)) 
+      const firstName = owner.name?.split(' ')?.[0] ?? ''
+      const myTames = allTames.filter(t =>
+          (t.player_name && t.player_name === owner.name) ||
+          (t.job && firstName && t.job.startsWith(firstName))
       );
       owner.tames = myTames.sort((a, b) => {
           if (a.is_dead === b.is_dead) return 0;

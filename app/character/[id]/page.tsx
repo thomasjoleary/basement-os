@@ -29,7 +29,8 @@ export default function CharacterDetail() {
   const [loading, setLoading] = useState(true)
   const [session, setSession] = useState<any>(null)
   const [isGM, setIsGM] = useState(false)
-  const [profiles, setProfiles] = useState<any[]>([]) 
+  const [profiles, setProfiles] = useState<any[]>([])
+  const [refreshKey, setRefreshKey] = useState(0)
   
   // Edit State
   const [isEditing, setIsEditing] = useState(false)
@@ -157,7 +158,7 @@ export default function CharacterDetail() {
       setLoading(false)
     }
     if (id) init()
-  }, [id])
+  }, [id, refreshKey])
 
   async function handleSave() {
     const { error } = await supabase
@@ -188,7 +189,7 @@ export default function CharacterDetail() {
         setChar(formData) 
         setIsEditing(false)
         // Reload page to recalculate buffs
-        window.location.reload()
+        setRefreshKey(k => k + 1)
     }
   }
 
@@ -225,7 +226,7 @@ export default function CharacterDetail() {
             .update({ user_id: val })
             .in('id', tameIds)
           
-          console.log(`Updated ${tameIds.length} tames to new owner.`);
+
       }
 
       // Update local state
@@ -321,7 +322,7 @@ export default function CharacterDetail() {
       setChar({ ...char, is_active: newActiveState })
       setFormData({ ...formData, is_active: newActiveState })
       // Reload to recalculate owner's stats
-      window.location.reload()
+      setRefreshKey(k => k + 1)
     }
   }
 
@@ -409,7 +410,7 @@ export default function CharacterDetail() {
       },
     }).eq('id', id)
     if (error) { alert('Error initiating level up: ' + error.message) }
-    else { setShowLevelUpModal(false); window.location.reload() }
+    else { setShowLevelUpModal(false); setRefreshKey(k => k + 1) }
   }
 
   // Player: Submit their allocation for GM review
@@ -425,7 +426,7 @@ export default function CharacterDetail() {
       },
     }).eq('id', id)
     if (error) { alert('Error submitting allocation: ' + error.message) }
-    else { setShowLevelUpModal(false); window.location.reload() }
+    else { setShowLevelUpModal(false); setRefreshKey(k => k + 1) }
   }
 
   // GM: Confirm and apply the level up
@@ -468,7 +469,7 @@ export default function CharacterDetail() {
     }).eq('id', id)
 
     if (error) { alert('Error confirming level up: ' + error.message) }
-    else { setShowLevelUpModal(false); window.location.reload() }
+    else { setShowLevelUpModal(false); setRefreshKey(k => k + 1) }
   }
 
   // GM: Void the pending level up entirely
@@ -477,7 +478,7 @@ export default function CharacterDetail() {
       pending_levelup: null,
     }).eq('id', id)
     if (error) { alert('Error cancelling: ' + error.message) }
-    else { setShowLevelUpModal(false); window.location.reload() }
+    else { setShowLevelUpModal(false); setRefreshKey(k => k + 1) }
   }
 
   if (loading) return <div className="min-h-screen bg-gray-900 text-white p-8 text-center">Loading...</div>
@@ -1205,10 +1206,21 @@ export default function CharacterDetail() {
                                             </div>
                                             {(() => {
                                                 const canAfford = totalMana <= (char.mana_current ?? 0)
+                                                const unknownCount = resolvedWords.filter(w => !w.found).length
                                                 return (
-                                                    <div className={`flex items-center justify-between bg-gray-900 rounded px-3 py-2 border ${canAfford ? 'border-blue-900/50' : 'border-red-800/70'}`}>
-                                                        <span className="text-xs text-gray-400 uppercase tracking-wide font-semibold">Total Mana Cost</span>
-                                                        <span className={`font-bold font-mono text-lg ${canAfford ? 'text-blue-400' : 'text-red-400'}`}>{totalMana} MP</span>
+                                                    <div className="space-y-1.5">
+                                                        {unknownCount > 0 && (
+                                                            <div className="text-xs text-yellow-500 flex items-center gap-1">
+                                                                ⚠ {unknownCount} word{unknownCount > 1 ? 's' : ''} not recognized — cost may be higher
+                                                            </div>
+                                                        )}
+                                                        <div className={`flex items-center justify-between bg-gray-900 rounded px-3 py-2 border ${canAfford ? 'border-blue-900/50' : 'border-red-800/70'}`}>
+                                                            <span className="text-xs text-gray-400 uppercase tracking-wide font-semibold">Total Mana Cost</span>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className={`font-bold font-mono text-lg ${canAfford ? 'text-blue-400' : 'text-red-400'}`}>{totalMana} MP</span>
+                                                                <span className="text-xs text-gray-500">/ {char.mana_current ?? 0} available</span>
+                                                            </div>
+                                                        </div>
                                                     </div>
                                                 )
                                             })()}
