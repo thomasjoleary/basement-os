@@ -503,6 +503,9 @@ export default function CharacterDetail() {
                 </>
             ) : (
                 <>
+                    <Link href="/wiki" className="px-4 py-2 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition flex items-center gap-2">
+                        📖 Wiki
+                    </Link>
                     {/* GM: XP maxed, no pending level-up yet */}
                     {isGM && xpMaxed && !pendingLevelup && (
                         <button onClick={openGMInitiateModal} className="px-4 py-2 rounded bg-fuchsia-700 text-white hover:bg-fuchsia-600 transition font-bold flex items-center gap-2">

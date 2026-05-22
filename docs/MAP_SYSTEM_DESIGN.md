@@ -379,31 +379,37 @@ app/
 
 ---
 
-### Phase 4: Player Positions ⏳ NEXT
-**Goal:** Track player locations
+### Phase 4: Player Positions & Travel ✅ COMPLETE
+**Goal:** Track player locations and animate travel along routes
 
-1. Create table: `player_positions`
-2. GM: Click to set player position
-3. GM: View all player positions
-4. Player: See own position (pin/icon)
-5. Position history log (optional)
+**Completed:**
+- [x] `player_positions` table with RLS (GM sees all, players see own only)
+- [x] `active_travels` table — stores waypoint routes, speed, progress, status
+- [x] GM: Set player position by clicking map
+- [x] GM: View all player positions
+- [x] Player: See own position (pin/icon)
+- [x] Route planning — GM plots multi-waypoint paths on the map
+- [x] Travel controls — start, pause, resume travel along a route
+- [x] Travel time calculation based on route distance + speed (mph)
+- [x] Real-time travel animation via Supabase subscriptions (`travel_changes` channel)
+- [x] Distance tool integrated into route planning (`DistanceTool.tsx`)
 
-**Deliverables:**
-- Position placement UI
-- Player/GM position views
-- Privacy enforcement (RLS)
+**Key Files:**
+- `components/map/TravelControls.tsx` - Travel UI, route management, position sync
+- `components/map/DistanceTool.tsx` - Distance measurement along plotted routes
+- `components/map/PositionControls.tsx` - Position placement UI
 
 ---
 
-### Phase 5: Polish & Features
+### Phase 5: Polish & Features ⏳ PARTIAL
 **Goal:** UX improvements
 
-- Minimap for navigation
-- Search markers
-- Marker categories/filtering
-- Distance measurement tool
-- Travel time calculator
-- Export/share map view (screenshot)
+- ⬜ Minimap for navigation
+- ⬜ Search markers
+- [x] Marker categories/filtering (implemented in Phase 2)
+- [x] Distance measurement tool (implemented in Phase 4 via route planning)
+- [x] Travel time calculator (implemented in Phase 4)
+- ⬜ Export/share map view (screenshot)
 
 ---
 
@@ -580,12 +586,16 @@ async function importMarkers() {
 - [ ] Fog updates in real-time
 - [ ] Marker visibility tied to fog correctly
 
-### Phase 4 (Player Positions)
-- [ ] GM can set player positions
-- [ ] Players see own position only
-- [ ] GM sees all positions
-- [ ] Position updates persist
-- [ ] Real-time position sync works
+### Phase 4 (Player Positions & Travel)
+- [x] GM can set player positions
+- [x] Players see own position only
+- [x] GM sees all positions
+- [x] Position updates persist
+- [x] Real-time position sync works
+- [x] Route planning with multi-waypoint support
+- [x] Travel start / pause / resume
+- [x] Travel time calculated from distance + speed
+- [x] Distance tool integrated into route planning
 
 ---
 
