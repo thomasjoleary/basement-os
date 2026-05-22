@@ -44,6 +44,7 @@ export default function CharacterDetail() {
   const [wordSearch, setWordSearch] = useState('')
   const [minMana, setMinMana] = useState('')
   const [maxMana, setMaxMana] = useState('')
+  const [spellBuilderInput, setSpellBuilderInput] = useState('')
 
   // Level Up Modal
   const [showLevelUpModal, setShowLevelUpModal] = useState(false)
@@ -1171,6 +1172,52 @@ export default function CharacterDetail() {
                             )}
                         </div>
                         
+                        {/* Spell Builder */}
+                        {(() => {
+                            const typedWords = spellBuilderInput.trim().split(/\s+/).filter(Boolean)
+                            const resolvedWords = typedWords.map(tw => {
+                                const match = words.find(w => w.word.toLowerCase() === tw.toLowerCase())
+                                return match
+                                    ? { input: tw, meaning: match.meaning, mana_cost: match.mana_cost, found: true }
+                                    : { input: tw, meaning: '???', mana_cost: 0, found: false }
+                            })
+                            const totalMana = resolvedWords.reduce((sum, w) => sum + w.mana_cost, 0)
+                            return (
+                                <div className="mb-5 bg-purple-950/30 border border-purple-800/50 rounded-xl p-4">
+                                    <h3 className="text-sm font-bold text-purple-300 uppercase tracking-wider mb-3">✨ Spell Builder</h3>
+                                    <input
+                                        type="text"
+                                        placeholder="Type words of power separated by spaces..."
+                                        className="w-full bg-gray-900 border border-purple-700 rounded px-4 py-2 text-white placeholder-gray-500 focus:border-purple-400 focus:outline-none transition font-mono"
+                                        value={spellBuilderInput}
+                                        onChange={(e) => setSpellBuilderInput(e.target.value)}
+                                    />
+                                    {typedWords.length > 0 && (
+                                        <div className="mt-3 space-y-3">
+                                            <div className="flex flex-wrap gap-2">
+                                                {resolvedWords.map((rw, i) => (
+                                                    <div key={i} className={`bg-gray-900 rounded px-3 py-1.5 border ${rw.found ? 'border-purple-700' : 'border-gray-700'}`}>
+                                                        <div className={`font-mono font-bold text-sm ${rw.found ? 'text-purple-400' : 'text-gray-500'}`}>{rw.input}</div>
+                                                        <div className={`text-xs ${rw.found ? 'text-gray-400 italic' : 'text-red-500 italic'}`}>{rw.meaning}</div>
+                                                        {rw.found && <div className="text-xs text-blue-400 font-mono">{rw.mana_cost} MP</div>}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            {(() => {
+                                                const canAfford = totalMana <= (char.mana_current ?? 0)
+                                                return (
+                                                    <div className={`flex items-center justify-between bg-gray-900 rounded px-3 py-2 border ${canAfford ? 'border-blue-900/50' : 'border-red-800/70'}`}>
+                                                        <span className="text-xs text-gray-400 uppercase tracking-wide font-semibold">Total Mana Cost</span>
+                                                        <span className={`font-bold font-mono text-lg ${canAfford ? 'text-blue-400' : 'text-red-400'}`}>{totalMana} MP</span>
+                                                    </div>
+                                                )
+                                            })()}
+                                        </div>
+                                    )}
+                                </div>
+                            )
+                        })()}
+
                         {/* Search & Filter Bar */}
                         <div className="mb-4 space-y-3">
                             {/* Text Search */}
