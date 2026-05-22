@@ -101,6 +101,7 @@ export default function NoteDetail() {
             .eq('is_tame', false)
             .eq('is_npc', false)
             .eq('is_dead', false)
+            .not('user_id', 'is', null)
           
           // Map to player format with character name
           if (mainCharacters) {
