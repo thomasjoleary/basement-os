@@ -315,15 +315,79 @@ export default function CharacterDetail() {
       .from('characters')
       .update({ is_active: newActiveState })
       .eq('id', id)
-    
+
     if (error) {
       alert('Error toggling active state: ' + error.message)
-    } else {
-      setChar({ ...char, is_active: newActiveState })
-      setFormData({ ...formData, is_active: newActiveState })
-      // Reload to recalculate owner's stats
-      setRefreshKey(k => k + 1)
+      return
     }
+
+    // Recalculate the owner's HP max proportionally (handles no-change case internally)
+    await recalcOwnerHp(String(id), newActiveState)
+
+    setChar({ ...char, is_active: newActiveState })
+    setFormData({ ...formData, is_active: newActiveState })
+    setRefreshKey(k => k + 1)
+  }
+
+  async function recalcOwnerHp(tameId: string, tameNewActiveState: boolean) {
+    // Find the owner — try player_name (exact) first, then job prefix (ilike)
+    let owner: any = null
+
+    if (char.player_name) {
+      const { data } = await supabase
+        .from('characters')
+        .select('id, name, level, stats, hp_current, hp_max')
+        .eq('name', char.player_name)
+        .maybeSingle()
+      owner = data
+    }
+
+    if (!owner && char.job) {
+      const firstName = char.job.split(' ')[0]
+      const { data } = await supabase
+        .from('characters')
+        .select('id, name, level, stats, hp_current, hp_max')
+        .eq('is_tame', false)
+        .ilike('name', `${firstName}%`)
+        .limit(1)
+        .maybeSingle()
+      owner = data
+    }
+
+    if (!owner) return
+
+    // Fetch all tames linked to this owner (two queries to avoid .or() space-parsing issues)
+    const firstName = owner.name.split(' ')[0]
+    const [{ data: tamesByName }, { data: tamesByJob }] = await Promise.all([
+      supabase.from('characters').select('id, is_active, stat_buffs').eq('is_tame', true).eq('player_name', owner.name),
+      supabase.from('characters').select('id, is_active, stat_buffs').eq('is_tame', true).ilike('job', `${firstName}%`),
+    ])
+
+    const allTames = [...(tamesByName || []), ...(tamesByJob || [])]
+      .filter((t, i, arr) => arr.findIndex(x => x.id === t.id) === i)
+
+    // Sum fortitude buffs, applying the new active state for the tame being toggled
+    let fortitudeBuff = 0
+    allTames.forEach(tame => {
+      const active = tame.id === tameId ? tameNewActiveState : tame.is_active
+      if (active) fortitudeBuff += tame.stat_buffs?.fortitude || 0
+    })
+
+    const baseFortitude = owner.stats?.fortitude || 0
+    const newHpMax = owner.level * (25 + Math.floor((baseFortitude + fortitudeBuff) / 10))
+    const oldHpMax = owner.hp_max || 0
+
+    if (newHpMax === oldHpMax) return
+
+    const newHpCurrent = oldHpMax > 0
+      ? Math.max(0, Math.min(newHpMax, Math.round(owner.hp_current * (newHpMax / oldHpMax))))
+      : newHpMax
+
+    const { error: updateErr } = await supabase
+      .from('characters')
+      .update({ hp_max: newHpMax, hp_current: newHpCurrent })
+      .eq('id', owner.id)
+
   }
 
   // --- LEVEL UP HELPERS ---
