@@ -9,8 +9,12 @@ type Character = {
     name: string
     level: number
     xp_current: number
+    mana_max: number
     stats: Record<string, number>
     money: { gold: number; silver: number; copper: number }
+    abilities: { power_level?: number | string }[]
+    inventory: { power_level?: number | string }[]
+    skills: { name: string; level: number }[]
 }
 
 type WC = Record<string, number>
@@ -20,12 +24,9 @@ type Category = {
     label: string
     group: string
     emoji: string
-    // Primary display value (used for simple categories)
-    getValue: (char: Character, wc: WC) => number
-    // Multi-key sort; defaults to [getValue]
-    sortKeys?: (char: Character, wc: WC) => number[]
-    // Custom value column renderer; falls back to getValue
-    renderValue?: (char: Character, wc: WC) => React.ReactNode
+    getValue: (char: Character, wordCounts: WC, wordManaTotals: WC) => number
+    sortKeys?: (char: Character, wordCounts: WC, wordManaTotals: WC) => number[]
+    renderValue?: (char: Character, wordCounts: WC, wordManaTotals: WC) => React.ReactNode
     formatValue?: (value: number) => string
 }
 
@@ -66,6 +67,23 @@ const CATEGORIES: Category[] = [
         ),
     },
     { id: 'words', label: 'Words of Power', group: 'Words', emoji: '📖', getValue: (c, wc) => wc[c.id] ?? 0 },
+    {
+        id: 'power_level',
+        label: 'Power Level',
+        group: 'Power',
+        emoji: '⚡',
+        getValue: (c, _wc, manaTotals) => {
+            const levelPts  = (c.level ?? 0) * 100
+            const abPts     = (c.abilities ?? []).reduce((s: number, a: any) => s + (Number(a.power_level) || 0), 0)
+            const itemPts   = (c.inventory ?? []).reduce((s: number, a: any) => s + (Number(a.power_level) || 0), 0)
+            const statPts   = Object.values(c.stats ?? {}).reduce((s: number, v: any) => s + (Number(v) || 0), 0)
+            const manaPts   = (c.mana_max ?? 0) * 5
+            const skillPts  = (c.skills ?? []).reduce((s: number, sk: any) => s + (Number(sk.level) || 0) * 50, 0)
+            const wordPts   = (manaTotals[c.id] ?? 0) * 25
+            return levelPts + abPts + itemPts + statPts + manaPts + skillPts + wordPts
+        },
+        formatValue: (v) => v.toLocaleString(),
+    },
 ]
 
 const GROUPS = Array.from(new Set(CATEGORIES.map(c => c.group)))
@@ -77,6 +95,7 @@ export default function Leaderboard() {
     const [authorized, setAuthorized] = useState(false)
     const [characters, setCharacters] = useState<Character[]>([])
     const [wordCounts, setWordCounts] = useState<WC>({})
+    const [wordManaTotals, setWordManaTotals] = useState<WC>({})
     const [activeGroup, setActiveGroup] = useState(GROUPS[0])
     const [activeCategory, setActiveCategory] = useState(CATEGORIES[0].id)
 
@@ -97,22 +116,26 @@ export default function Leaderboard() {
             const [{ data: chars }, { data: cw }] = await Promise.all([
                 supabase
                     .from('characters')
-                    .select('id, name, level, xp_current, stats, money')
+                    .select('id, name, level, xp_current, mana_max, stats, money, abilities, inventory, skills')
                     .neq('is_tame', true)
                     .neq('is_npc', true)
                     .order('name'),
                 supabase
                     .from('character_words')
-                    .select('character_id'),
+                    .select('character_id, words_of_power(mana_cost)'),
             ])
 
             setCharacters(chars ?? [])
 
             const counts: WC = {}
+            const manaTotals: WC = {}
             for (const row of cw ?? []) {
-                counts[row.character_id] = (counts[row.character_id] ?? 0) + 1
+                const cid = row.character_id
+                counts[cid] = (counts[cid] ?? 0) + 1
+                manaTotals[cid] = (manaTotals[cid] ?? 0) + ((row.words_of_power as any)?.mana_cost ?? 0)
             }
             setWordCounts(counts)
+            setWordManaTotals(manaTotals)
             setLoading(false)
         }
         load()
@@ -130,7 +153,9 @@ export default function Leaderboard() {
     const category = CATEGORIES.find(c => c.id === activeCategory) ?? CATEGORIES[0]
 
     const getKeys = (char: Character) =>
-        category.sortKeys ? category.sortKeys(char, wordCounts) : [category.getValue(char, wordCounts)]
+        category.sortKeys
+            ? category.sortKeys(char, wordCounts, wordManaTotals)
+            : [category.getValue(char, wordCounts, wordManaTotals)]
 
     const sorted = [...characters]
         .map(char => ({ char, keys: getKeys(char) }))
@@ -226,7 +251,7 @@ export default function Leaderboard() {
                                 {char.name}
                             </div>
                             {category.renderValue
-                                ? category.renderValue(char, wordCounts)
+                                ? category.renderValue(char, wordCounts, wordManaTotals)
                                 : <div className="text-yellow-400 font-mono font-bold text-lg shrink-0">
                                     {category.formatValue ? category.formatValue(value) : value}
                                   </div>
