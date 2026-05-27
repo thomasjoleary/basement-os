@@ -13,30 +13,62 @@ type Character = {
     money: { gold: number; silver: number; copper: number }
 }
 
+type WC = Record<string, number>
+
 type Category = {
     id: string
     label: string
     group: string
     emoji: string
-    getValue: (char: Character, wordCounts: Record<string, number>) => number
+    // Primary display value (used for simple categories)
+    getValue: (char: Character, wc: WC) => number
+    // Multi-key sort; defaults to [getValue]
+    sortKeys?: (char: Character, wc: WC) => number[]
+    // Custom value column renderer; falls back to getValue
+    renderValue?: (char: Character, wc: WC) => React.ReactNode
     formatValue?: (value: number) => string
 }
 
 const CATEGORIES: Category[] = [
-    { id: 'strength',  label: 'Strength',       group: 'Stats',      emoji: '💪', getValue: (c) => c.stats?.strength  ?? 0 },
-    { id: 'speed',     label: 'Speed',           group: 'Stats',      emoji: '⚡', getValue: (c) => c.stats?.speed     ?? 0 },
-    { id: 'fortitude', label: 'Fortitude',       group: 'Stats',      emoji: '🛡️', getValue: (c) => c.stats?.fortitude ?? 0 },
-    { id: 'magic',     label: 'Magic',           group: 'Stats',      emoji: '🔮', getValue: (c) => c.stats?.magic     ?? 0 },
-    { id: 'level',     label: 'Level',           group: 'Level & XP', emoji: '⭐', getValue: (c) => c.level            ?? 0 },
-    { id: 'xp',        label: 'XP',              group: 'Level & XP', emoji: '✨', getValue: (c) => c.xp_current       ?? 0, formatValue: (v) => v.toLocaleString() },
-    { id: 'gold',      label: 'Gold',            group: 'Currency',   emoji: '🪙', getValue: (c) => c.money?.gold      ?? 0, formatValue: (v) => v.toLocaleString() },
-    { id: 'silver',    label: 'Silver',          group: 'Currency',   emoji: '🥈', getValue: (c) => c.money?.silver    ?? 0, formatValue: (v) => v.toLocaleString() },
-    { id: 'copper',    label: 'Copper',          group: 'Currency',   emoji: '🟤', getValue: (c) => c.money?.copper    ?? 0, formatValue: (v) => v.toLocaleString() },
-    { id: 'words',     label: 'Words of Power',  group: 'Magic',      emoji: '📖', getValue: (c, wc) => wc[c.id]       ?? 0 },
+    { id: 'strength',  label: 'Strength',  group: 'Stats', emoji: '💪', getValue: (c) => c.stats?.strength  ?? 0 },
+    { id: 'speed',     label: 'Speed',     group: 'Stats', emoji: '⚡', getValue: (c) => c.stats?.speed     ?? 0 },
+    { id: 'fortitude', label: 'Fortitude', group: 'Stats', emoji: '🛡️', getValue: (c) => c.stats?.fortitude ?? 0 },
+    { id: 'magic',     label: 'Magic',     group: 'Stats', emoji: '🔮', getValue: (c) => c.stats?.magic     ?? 0 },
+    {
+        id: 'level_xp',
+        label: 'Level',
+        group: 'Level & XP',
+        emoji: '⭐',
+        getValue: (c) => c.level ?? 0,
+        sortKeys: (c) => [c.level ?? 0, c.xp_current ?? 0],
+        renderValue: (c) => (
+            <div className="text-right shrink-0">
+                <div className="text-yellow-400 font-mono font-bold text-lg">Lv {c.level ?? 0}</div>
+                <div className="text-gray-500 text-xs font-mono">{(c.xp_current ?? 0).toLocaleString()} XP</div>
+            </div>
+        ),
+    },
+    {
+        id: 'currency',
+        label: 'Currency',
+        group: 'Currency',
+        emoji: '💰',
+        getValue: (c) => c.money?.gold ?? 0,
+        sortKeys: (c) => [c.money?.gold ?? 0, c.money?.silver ?? 0, c.money?.copper ?? 0],
+        renderValue: (c) => (
+            <div className="flex items-center gap-1.5 font-mono font-bold text-sm shrink-0">
+                <span className="text-yellow-400">{(c.money?.gold   ?? 0).toLocaleString()} G</span>
+                <span className="text-gray-600">|</span>
+                <span className="text-slate-300">{(c.money?.silver ?? 0).toLocaleString()} S</span>
+                <span className="text-gray-600">|</span>
+                <span className="text-amber-600">{(c.money?.copper ?? 0).toLocaleString()} C</span>
+            </div>
+        ),
+    },
+    { id: 'words', label: 'Words of Power', group: 'Words', emoji: '📖', getValue: (c, wc) => wc[c.id] ?? 0 },
 ]
 
 const GROUPS = Array.from(new Set(CATEGORIES.map(c => c.group)))
-
 const MEDALS = ['🥇', '🥈', '🥉']
 
 export default function Leaderboard() {
@@ -44,7 +76,7 @@ export default function Leaderboard() {
     const [loading, setLoading] = useState(true)
     const [authorized, setAuthorized] = useState(false)
     const [characters, setCharacters] = useState<Character[]>([])
-    const [wordCounts, setWordCounts] = useState<Record<string, number>>({})
+    const [wordCounts, setWordCounts] = useState<WC>({})
     const [activeGroup, setActiveGroup] = useState(GROUPS[0])
     const [activeCategory, setActiveCategory] = useState(CATEGORIES[0].id)
 
@@ -67,6 +99,7 @@ export default function Leaderboard() {
                     .from('characters')
                     .select('id, name, level, xp_current, stats, money')
                     .neq('is_tame', true)
+                    .neq('is_npc', true)
                     .order('name'),
                 supabase
                     .from('character_words')
@@ -75,7 +108,7 @@ export default function Leaderboard() {
 
             setCharacters(chars ?? [])
 
-            const counts: Record<string, number> = {}
+            const counts: WC = {}
             for (const row of cw ?? []) {
                 counts[row.character_id] = (counts[row.character_id] ?? 0) + 1
             }
@@ -96,13 +129,26 @@ export default function Leaderboard() {
     const categoriesInGroup = CATEGORIES.filter(c => c.group === activeGroup)
     const category = CATEGORIES.find(c => c.id === activeCategory) ?? CATEGORIES[0]
 
+    const getKeys = (char: Character) =>
+        category.sortKeys ? category.sortKeys(char, wordCounts) : [category.getValue(char, wordCounts)]
+
     const sorted = [...characters]
-        .map(char => ({ char, value: category.getValue(char, wordCounts) }))
-        .sort((a, b) => b.value - a.value)
+        .map(char => ({ char, keys: getKeys(char) }))
+        .sort((a, b) => {
+            for (let i = 0; i < Math.max(a.keys.length, b.keys.length); i++) {
+                const diff = (b.keys[i] ?? 0) - (a.keys[i] ?? 0)
+                if (diff !== 0) return diff
+            }
+            return 0
+        })
 
     let rank = 1
     const ranked = sorted.map((entry, i) => {
-        if (i > 0 && entry.value < sorted[i - 1].value) rank = i + 1
+        if (i > 0) {
+            const prev = sorted[i - 1]
+            const tied = entry.keys.every((v, j) => v === (prev.keys[j] ?? 0))
+            if (!tied) rank = i + 1
+        }
         return { ...entry, rank }
     })
 
@@ -133,7 +179,7 @@ export default function Leaderboard() {
                 ))}
             </div>
 
-            {/* Category selector within group */}
+            {/* Category selector within group (only shown when group has multiple) */}
             {categoriesInGroup.length > 1 && (
                 <div className="flex gap-2 flex-wrap mb-6">
                     {categoriesInGroup.map(cat => (
@@ -162,26 +208,32 @@ export default function Leaderboard() {
                 {ranked.length === 0 && (
                     <p className="text-gray-500 italic text-center py-8">No characters found.</p>
                 )}
-                {ranked.map(({ char, value, rank }) => (
-                    <a
-                        key={char.id}
-                        href={`/character/${char.id}`}
-                        className="flex items-center gap-4 bg-gray-900 border border-gray-800 hover:border-yellow-700 rounded-lg px-4 py-3 transition-colors group"
-                    >
-                        <div className="w-8 text-center shrink-0">
-                            {rank <= 3
-                                ? <span className="text-xl">{MEDALS[rank - 1]}</span>
-                                : <span className="text-gray-500 text-sm font-bold">#{rank}</span>
+                {ranked.map(({ char, keys, rank }) => {
+                    const value = keys[0]
+                    return (
+                        <a
+                            key={char.id}
+                            href={`/character/${char.id}`}
+                            className="flex items-center gap-4 bg-gray-900 border border-gray-800 hover:border-yellow-700 rounded-lg px-4 py-3 transition-colors group"
+                        >
+                            <div className="w-8 text-center shrink-0">
+                                {rank <= 3
+                                    ? <span className="text-xl">{MEDALS[rank - 1]}</span>
+                                    : <span className="text-gray-500 text-sm font-bold">#{rank}</span>
+                                }
+                            </div>
+                            <div className="flex-1 font-semibold text-white group-hover:text-yellow-300 transition-colors truncate">
+                                {char.name}
+                            </div>
+                            {category.renderValue
+                                ? category.renderValue(char, wordCounts)
+                                : <div className="text-yellow-400 font-mono font-bold text-lg shrink-0">
+                                    {category.formatValue ? category.formatValue(value) : value}
+                                  </div>
                             }
-                        </div>
-                        <div className="flex-1 font-semibold text-white group-hover:text-yellow-300 transition-colors truncate">
-                            {char.name}
-                        </div>
-                        <div className="text-yellow-400 font-mono font-bold text-lg shrink-0">
-                            {category.formatValue ? category.formatValue(value) : value}
-                        </div>
-                    </a>
-                ))}
+                        </a>
+                    )
+                })}
             </div>
         </div>
     )
