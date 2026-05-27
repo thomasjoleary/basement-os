@@ -1306,12 +1306,12 @@ export default function CharacterDetail() {
                             />
                             
                             {/* Mana Cost Range */}
-                            <div className="flex gap-3 items-center">
+                            <div className="flex gap-3 items-center min-w-0">
                                 <span className="text-sm text-gray-400 whitespace-nowrap">Mana Cost:</span>
                                 <input
                                     type="number"
                                     placeholder="Min"
-                                    className="flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none transition text-sm"
+                                    className="min-w-0 flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none transition text-sm"
                                     value={minMana}
                                     onChange={(e) => setMinMana(e.target.value)}
                                     min="0"
@@ -1320,7 +1320,7 @@ export default function CharacterDetail() {
                                 <input
                                     type="number"
                                     placeholder="Max"
-                                    className="flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none transition text-sm"
+                                    className="min-w-0 flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-2 text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none transition text-sm"
                                     value={maxMana}
                                     onChange={(e) => setMaxMana(e.target.value)}
                                     min="0"
