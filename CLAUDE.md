@@ -119,8 +119,25 @@ GM can cancel at any point, which nulls `pending_levelup`.
 
 ---
 
+## Leaderboard
+
+- Route: `app/leaderboard/page.tsx` — GM-only; non-GMs are redirected to `/`
+- Linked from the home page nav (GM section only)
+- Excludes tames (`is_tame: true`) and NPCs (`is_npc: true`)
+- Categories are defined in the `CATEGORIES` array at the top of the file — adding a new one requires a single entry there
+
+| Group | Category | Notes |
+|---|---|---|
+| Stats | Strength, Speed, Fortitude, Magic | From `stats` jsonb |
+| Level & XP | Level | Sorted by level; XP used as tiebreaker; both displayed per row |
+| Currency | Currency | Sorted by Gold → Silver → Copper; all three shown color-coded per row |
+| Words | Words of Power | Count from `character_words` join table |
+
+---
+
 ## Key Files
 - `app/character/[id]/page.tsx` — the main character sheet page (everything: view, edit, level-up modal)
+- `app/leaderboard/page.tsx` — GM-only leaderboard
 - `sql/add_pending_levelup.sql` — migration adding the `pending_levelup` column and player UPDATE RLS policy
 - `lib/supabase.ts` — Supabase client
 
@@ -129,3 +146,4 @@ GM can cancel at any point, which nulls `pending_levelup`.
 - Players can only see their own character's level-up allocation button
 - The level-up modal is an IIFE inside the JSX; `AllocationUI` is defined as a `const` inside it and must be called as `AllocationUI()` (not `<AllocationUI />`) to avoid React unmounting it on every keystroke
 - Tailwind 4 is in use — avoid any Tailwind features that require the compiler (use core utility classes only)
+- Inventory and ability descriptions support `[Title](url)` markdown link syntax, rendered via `renderDescription()` in `app/character/[id]/page.tsx`
