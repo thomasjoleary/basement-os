@@ -1055,6 +1055,14 @@ export default function CharacterDetail() {
                                         value={ab.description || ''}
                                         onChange={(e) => handleAbilityChange(i, 'description', e.target.value)}
                                     />
+                                    <input
+                                        type="number"
+                                        className="w-full bg-black text-purple-300 text-xs px-2 py-1 rounded border border-purple-900 mt-1"
+                                        placeholder="Power Level (GM only)"
+                                        value={ab.power_level ?? ''}
+                                        onChange={(e) => handleAbilityChange(i, 'power_level', e.target.value)}
+                                        min="0"
+                                    />
                                 </div>
                             </div>
                         ))}
@@ -1180,6 +1188,14 @@ export default function CharacterDetail() {
                                     placeholder="Item description..."
                                     value={item.description || ''}
                                     onChange={(e) => handleInventoryChange(i, 'description', e.target.value)}
+                                />
+                                <input
+                                    type="number"
+                                    className="w-full bg-black text-purple-300 text-xs px-2 py-1 rounded border border-purple-900 mt-1"
+                                    placeholder="Power Level (GM only)"
+                                    value={item.power_level ?? ''}
+                                    onChange={(e) => handleInventoryChange(i, 'power_level', e.target.value)}
+                                    min="0"
                                 />
                             </div>
                         ))}
