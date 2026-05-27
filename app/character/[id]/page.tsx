@@ -22,6 +22,24 @@ function getRarityColor(rarity: string): string {
     }
 }
 
+function renderDescription(text: string): React.ReactNode[] {
+    const parts: React.ReactNode[] = [];
+    // Matches [Title](url) or bare https?:// URLs
+    const pattern = /\[([^\]]+)\]\((https?:\/\/[^\)]+)\)|(https?:\/\/\S+)/g;
+    let last = 0, match: RegExpExecArray | null, key = 0;
+    while ((match = pattern.exec(text)) !== null) {
+        if (match.index > last) parts.push(text.slice(last, match.index));
+        if (match[1] && match[2]) {
+            parts.push(<a key={key++} href={match[2]} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline hover:text-blue-300">{match[1]}</a>);
+        } else {
+            parts.push(<a key={key++} href={match[3]} target="_blank" rel="noopener noreferrer" className="text-blue-400 underline hover:text-blue-300 break-all">{match[3]}</a>);
+        }
+        last = pattern.lastIndex;
+    }
+    if (last < text.length) parts.push(text.slice(last));
+    return parts;
+}
+
 export default function CharacterDetail() {
   const { id } = useParams()
   const router = useRouter()
@@ -1057,7 +1075,7 @@ export default function CharacterDetail() {
                                         <h3 className={`font-bold ${getRarityColor(ab.rarity)}`}>{ab.name}</h3>
                                         {ab.level && <span className="text-xs text-gray-500">Lv {ab.level}</span>}
                                     </div>
-                                    <p className="text-sm text-gray-400 mt-1 leading-relaxed">{ab.description}</p>
+                                    <p className="text-sm text-gray-400 mt-1 leading-relaxed break-words">{renderDescription(ab.description || '')}</p>
                                 </div>
                             ))
                         ) : <p className="text-gray-500 italic">No abilities listed.</p>}
@@ -1180,8 +1198,8 @@ export default function CharacterDetail() {
                                 <div key={i} className="bg-gray-900 p-3 rounded border border-gray-800 hover:border-gray-600 transition-colors">
                                     <div className={`font-medium ${getRarityColor(item.rarity)}`}>{item.name}</div>
                                     {item.description && (
-                                        <div className="mt-2 text-xs text-gray-400 italic bg-black/20 p-2 rounded border-l-2 border-blue-500">
-                                            {item.description}
+                                        <div className="mt-2 text-xs text-gray-400 italic bg-black/20 p-2 rounded border-l-2 border-blue-500 break-words">
+                                            {renderDescription(item.description)}
                                         </div>
                                     )}
                                 </div>
