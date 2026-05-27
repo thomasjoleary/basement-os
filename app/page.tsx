@@ -155,6 +155,9 @@ export default function Home() {
                 <a href="/words" className="bg-purple-900 border border-purple-700 px-6 py-2 rounded hover:bg-purple-800 transition-colors text-purple-200 font-bold flex items-center gap-2">
                     <span>✨</span> Words of Power
                 </a>
+                <a href="/leaderboard" className="bg-yellow-900 border border-yellow-700 px-6 py-2 rounded hover:bg-yellow-800 transition-colors text-yellow-200 font-bold flex items-center gap-2">
+                    <span>🏆</span> Leaderboard
+                </a>
                 <a href="/create" className="bg-blue-900 border border-blue-700 px-6 py-2 rounded hover:bg-blue-800 transition-colors text-blue-200 font-bold flex items-center gap-2">
                     <span>+</span> New Character
                 </a>
