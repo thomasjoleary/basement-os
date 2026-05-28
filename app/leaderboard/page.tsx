@@ -27,6 +27,8 @@ type Tame = {
 
 type WC = Record<string, number>
 
+type BreakdownRow = { label: string; pts: number }
+
 type Category = {
     id: string
     label: string
@@ -36,6 +38,7 @@ type Category = {
     sortKeys?: (char: Character, wordCounts: WC, wordManaTotals: WC, tamePowerLevels: WC) => number[]
     renderValue?: (char: Character, wordCounts: WC, wordManaTotals: WC, tamePowerLevels: WC) => React.ReactNode
     formatValue?: (value: number) => string
+    getBreakdown?: (char: Character, wordCounts: WC, wordManaTotals: WC, tamePowerLevels: WC) => BreakdownRow[]
 }
 
 function sumPL(items: { power_level?: number | string }[]): number {
@@ -96,6 +99,16 @@ const CATEGORIES: Category[] = [
             return levelPts + abPts + itemPts + statPts + manaPts + skillPts + wordPts + tamePts
         },
         formatValue: (v) => v.toLocaleString(),
+        getBreakdown: (c, _wc, manaTotals, tamePLs) => [
+            { label: `Level (${c.level ?? 0} × 100)`,       pts: (c.level ?? 0) * 100 },
+            { label: 'Abilities',                             pts: sumPL(c.abilities) },
+            { label: 'Items',                                 pts: sumPL(c.inventory) },
+            { label: 'Stats',                                 pts: Object.values(c.stats ?? {}).reduce((s: number, v: any) => s + (Number(v) || 0), 0) },
+            { label: `Mana (${c.mana_max ?? 0} × 5)`,       pts: (c.mana_max ?? 0) * 5 },
+            { label: 'Skills',                                pts: (c.skills ?? []).reduce((s: number, sk: any) => s + (Number(sk.level) || 0) * 50, 0) },
+            { label: 'Words',                                 pts: (manaTotals[c.id] ?? 0) * 25 },
+            { label: 'Tames',                                 pts: tamePLs[c.id] ?? 0 },
+        ].filter(r => r.pts > 0),
     },
 ]
 
@@ -112,6 +125,7 @@ export default function Leaderboard() {
     const [tamePowerLevels, setTamePowerLevels] = useState<WC>({})
     const [activeGroup, setActiveGroup] = useState(GROUPS[0])
     const [activeCategory, setActiveCategory] = useState(CATEGORIES[0].id)
+    const [expandedId, setExpandedId] = useState<string | null>(null)
 
     useEffect(() => {
         async function load() {
@@ -155,7 +169,6 @@ export default function Leaderboard() {
             setWordCounts(counts)
             setWordManaTotals(manaTotals)
 
-            // Map each player character id → sum of their tames' power levels
             const tamePLMap: WC = {}
             for (const char of chars ?? []) {
                 const firstName = char.name.split(' ')[0].toLowerCase()
@@ -176,6 +189,9 @@ export default function Leaderboard() {
         }
         load()
     }, [router])
+
+    // Collapse breakdown when switching categories
+    useEffect(() => { setExpandedId(null) }, [activeCategory])
 
     if (loading || !authorized) {
         return (
@@ -240,7 +256,7 @@ export default function Leaderboard() {
                 ))}
             </div>
 
-            {/* Category selector within group (only shown when group has multiple) */}
+            {/* Category selector within group */}
             {categoriesInGroup.length > 1 && (
                 <div className="flex gap-2 flex-wrap mb-6">
                     {categoriesInGroup.map(cat => (
@@ -262,6 +278,9 @@ export default function Leaderboard() {
             {/* Category header */}
             <div className="text-sm text-gray-500 uppercase tracking-widest font-semibold mb-3 mt-4">
                 {category.emoji} {category.label}
+                {category.getBreakdown && (
+                    <span className="ml-2 text-gray-600 normal-case tracking-normal font-normal text-xs">tap a row to expand</span>
+                )}
             </div>
 
             {/* Ranked list */}
@@ -271,12 +290,11 @@ export default function Leaderboard() {
                 )}
                 {ranked.map(({ char, keys, rank }) => {
                     const value = keys[0]
-                    return (
-                        <a
-                            key={char.id}
-                            href={`/character/${char.id}`}
-                            className="flex items-center gap-4 bg-gray-900 border border-gray-800 hover:border-yellow-700 rounded-lg px-4 py-3 transition-colors group"
-                        >
+                    const isExpanded = expandedId === char.id
+                    const breakdown = category.getBreakdown?.(char, wordCounts, wordManaTotals, tamePowerLevels)
+
+                    const rowContent = (
+                        <>
                             <div className="w-8 text-center shrink-0">
                                 {rank <= 3
                                     ? <span className="text-xl">{MEDALS[rank - 1]}</span>
@@ -292,6 +310,54 @@ export default function Leaderboard() {
                                     {category.formatValue ? category.formatValue(value) : value}
                                   </div>
                             }
+                            {breakdown && (
+                                <div className="shrink-0 text-gray-500 text-xs ml-1">{isExpanded ? '▲' : '▼'}</div>
+                            )}
+                        </>
+                    )
+
+                    if (breakdown) {
+                        return (
+                            <div key={char.id} className="rounded-lg border border-gray-800 overflow-hidden">
+                                <button
+                                    onClick={() => setExpandedId(isExpanded ? null : char.id)}
+                                    className="w-full flex items-center gap-4 bg-gray-900 hover:bg-gray-800 px-4 py-3 transition-colors group text-left"
+                                >
+                                    {rowContent}
+                                </button>
+                                {isExpanded && (
+                                    <div className="bg-gray-950 border-t border-gray-800 px-4 py-3">
+                                        <div className="space-y-1 mb-3">
+                                            {breakdown.map(row => (
+                                                <div key={row.label} className="flex justify-between text-sm">
+                                                    <span className="text-gray-400">{row.label}</span>
+                                                    <span className="text-gray-200 font-mono">{row.pts.toLocaleString()}</span>
+                                                </div>
+                                            ))}
+                                            <div className="flex justify-between text-sm font-bold border-t border-gray-700 pt-1 mt-1">
+                                                <span className="text-gray-300">Total</span>
+                                                <span className="text-yellow-400 font-mono">{value.toLocaleString()}</span>
+                                            </div>
+                                        </div>
+                                        <a
+                                            href={`/character/${char.id}`}
+                                            className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                                        >
+                                            View character sheet →
+                                        </a>
+                                    </div>
+                                )}
+                            </div>
+                        )
+                    }
+
+                    return (
+                        <a
+                            key={char.id}
+                            href={`/character/${char.id}`}
+                            className="flex items-center gap-4 bg-gray-900 border border-gray-800 hover:border-yellow-700 rounded-lg px-4 py-3 transition-colors group"
+                        >
+                            {rowContent}
                         </a>
                     )
                 })}
