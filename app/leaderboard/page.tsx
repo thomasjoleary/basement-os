@@ -21,7 +21,8 @@ type Tame = {
     player_name: string | null
     job: string | null
     abilities: { power_level?: number | string }[]
-    inventory: { power_level?: number | string }[]
+    stats: Record<string, number>
+    mana_max: number
 }
 
 type WC = Record<string, number>
@@ -138,7 +139,7 @@ export default function Leaderboard() {
                     .select('character_id, words_of_power(mana_cost)'),
                 supabase
                     .from('characters')
-                    .select('player_name, job, abilities, inventory')
+                    .select('player_name, job, abilities, stats, mana_max')
                     .eq('is_tame', true),
             ])
 
@@ -162,8 +163,12 @@ export default function Leaderboard() {
                     t.player_name === char.name ||
                     (t.job && t.job.toLowerCase().startsWith(firstName))
                 )
-                tamePLMap[char.id] = charTames.reduce((s: number, t: Tame) =>
-                    s + sumPL(t.abilities) + sumPL(t.inventory), 0)
+                tamePLMap[char.id] = charTames.reduce((s: number, t: Tame) => {
+                    const abPts   = sumPL(t.abilities)
+                    const statPts = Object.values(t.stats ?? {}).reduce((ss: number, v: any) => ss + (Number(v) || 0), 0)
+                    const manaPts = (t.mana_max ?? 0) * 5
+                    return s + abPts + statPts + manaPts
+                }, 0)
             }
             setTamePowerLevels(tamePLMap)
 
