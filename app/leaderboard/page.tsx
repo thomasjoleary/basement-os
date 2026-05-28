@@ -17,6 +17,14 @@ type Character = {
     skills: { name: string; level: number }[]
 }
 
+type Tame = {
+    player_name: string | null
+    job: string | null
+    abilities: { power_level?: number | string }[]
+    stats: Record<string, number>
+    mana_max: number
+}
+
 type WC = Record<string, number>
 
 type Category = {
@@ -24,10 +32,14 @@ type Category = {
     label: string
     group: string
     emoji: string
-    getValue: (char: Character, wordCounts: WC, wordManaTotals: WC) => number
-    sortKeys?: (char: Character, wordCounts: WC, wordManaTotals: WC) => number[]
-    renderValue?: (char: Character, wordCounts: WC, wordManaTotals: WC) => React.ReactNode
+    getValue: (char: Character, wordCounts: WC, wordManaTotals: WC, tamePowerLevels: WC) => number
+    sortKeys?: (char: Character, wordCounts: WC, wordManaTotals: WC, tamePowerLevels: WC) => number[]
+    renderValue?: (char: Character, wordCounts: WC, wordManaTotals: WC, tamePowerLevels: WC) => React.ReactNode
     formatValue?: (value: number) => string
+}
+
+function sumPL(items: { power_level?: number | string }[]): number {
+    return (items ?? []).reduce((s: number, a: any) => s + (Number(a.power_level) || 0), 0)
 }
 
 const CATEGORIES: Category[] = [
@@ -72,15 +84,16 @@ const CATEGORIES: Category[] = [
         label: 'Power Level',
         group: 'Power',
         emoji: '⚡',
-        getValue: (c, _wc, manaTotals) => {
-            const levelPts  = (c.level ?? 0) * 100
-            const abPts     = (c.abilities ?? []).reduce((s: number, a: any) => s + (Number(a.power_level) || 0), 0)
-            const itemPts   = (c.inventory ?? []).reduce((s: number, a: any) => s + (Number(a.power_level) || 0), 0)
-            const statPts   = Object.values(c.stats ?? {}).reduce((s: number, v: any) => s + (Number(v) || 0), 0)
-            const manaPts   = (c.mana_max ?? 0) * 5
-            const skillPts  = (c.skills ?? []).reduce((s: number, sk: any) => s + (Number(sk.level) || 0) * 50, 0)
-            const wordPts   = (manaTotals[c.id] ?? 0) * 25
-            return levelPts + abPts + itemPts + statPts + manaPts + skillPts + wordPts
+        getValue: (c, _wc, manaTotals, tamePowerLevels) => {
+            const levelPts = (c.level ?? 0) * 100
+            const abPts   = sumPL(c.abilities)
+            const itemPts = sumPL(c.inventory)
+            const statPts = Object.values(c.stats ?? {}).reduce((s: number, v: any) => s + (Number(v) || 0), 0)
+            const manaPts = (c.mana_max ?? 0) * 5
+            const skillPts = (c.skills ?? []).reduce((s: number, sk: any) => s + (Number(sk.level) || 0) * 50, 0)
+            const wordPts = (manaTotals[c.id] ?? 0) * 25
+            const tamePts = tamePowerLevels[c.id] ?? 0
+            return levelPts + abPts + itemPts + statPts + manaPts + skillPts + wordPts + tamePts
         },
         formatValue: (v) => v.toLocaleString(),
     },
@@ -96,6 +109,7 @@ export default function Leaderboard() {
     const [characters, setCharacters] = useState<Character[]>([])
     const [wordCounts, setWordCounts] = useState<WC>({})
     const [wordManaTotals, setWordManaTotals] = useState<WC>({})
+    const [tamePowerLevels, setTamePowerLevels] = useState<WC>({})
     const [activeGroup, setActiveGroup] = useState(GROUPS[0])
     const [activeCategory, setActiveCategory] = useState(CATEGORIES[0].id)
 
@@ -113,7 +127,7 @@ export default function Leaderboard() {
             if (profile?.role !== 'gm') { router.push('/'); return }
             setAuthorized(true)
 
-            const [{ data: chars }, { data: cw }] = await Promise.all([
+            const [{ data: chars }, { data: cw }, { data: tames }] = await Promise.all([
                 supabase
                     .from('characters')
                     .select('id, name, level, xp_current, mana_max, stats, money, abilities, inventory, skills')
@@ -123,6 +137,10 @@ export default function Leaderboard() {
                 supabase
                     .from('character_words')
                     .select('character_id, words_of_power(mana_cost)'),
+                supabase
+                    .from('characters')
+                    .select('player_name, job, abilities, stats, mana_max')
+                    .eq('is_tame', true),
             ])
 
             setCharacters(chars ?? [])
@@ -136,6 +154,24 @@ export default function Leaderboard() {
             }
             setWordCounts(counts)
             setWordManaTotals(manaTotals)
+
+            // Map each player character id → sum of their tames' power levels
+            const tamePLMap: WC = {}
+            for (const char of chars ?? []) {
+                const firstName = char.name.split(' ')[0].toLowerCase()
+                const charTames = (tames ?? []).filter((t: Tame) =>
+                    t.player_name === char.name ||
+                    (t.job && t.job.toLowerCase().startsWith(firstName))
+                )
+                tamePLMap[char.id] = charTames.reduce((s: number, t: Tame) => {
+                    const abPts   = sumPL(t.abilities)
+                    const statPts = Object.values(t.stats ?? {}).reduce((ss: number, v: any) => ss + (Number(v) || 0), 0)
+                    const manaPts = (t.mana_max ?? 0) * 5
+                    return s + abPts + statPts + manaPts
+                }, 0)
+            }
+            setTamePowerLevels(tamePLMap)
+
             setLoading(false)
         }
         load()
@@ -154,8 +190,8 @@ export default function Leaderboard() {
 
     const getKeys = (char: Character) =>
         category.sortKeys
-            ? category.sortKeys(char, wordCounts, wordManaTotals)
-            : [category.getValue(char, wordCounts, wordManaTotals)]
+            ? category.sortKeys(char, wordCounts, wordManaTotals, tamePowerLevels)
+            : [category.getValue(char, wordCounts, wordManaTotals, tamePowerLevels)]
 
     const sorted = [...characters]
         .map(char => ({ char, keys: getKeys(char) }))
@@ -251,7 +287,7 @@ export default function Leaderboard() {
                                 {char.name}
                             </div>
                             {category.renderValue
-                                ? category.renderValue(char, wordCounts, wordManaTotals)
+                                ? category.renderValue(char, wordCounts, wordManaTotals, tamePowerLevels)
                                 : <div className="text-yellow-400 font-mono font-bold text-lg shrink-0">
                                     {category.formatValue ? category.formatValue(value) : value}
                                   </div>
