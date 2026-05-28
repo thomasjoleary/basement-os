@@ -7,6 +7,17 @@ import Link from 'next/link'
 
 const RARITIES = ['Common', 'Uncommon', 'Rare', 'Very Rare', 'Legendary', 'Holy', 'Unique', 'Demonic'];
 
+const RARITY_POWER_LEVELS: Record<string, number> = {
+    'Common':    50,
+    'Uncommon':  100,
+    'Rare':      200,
+    'Very Rare': 350,
+    'Legendary': 500,
+    'Holy':      750,
+    'Unique':    1000,
+    'Demonic':   750,
+}
+
 function getRarityColor(rarity: string): string {
     const r = rarity ? rarity.toLowerCase() : 'common';
     switch (r) {
@@ -284,12 +295,18 @@ export default function CharacterDetail() {
 
   function handleAbilityChange(index: number, field: string, value: string) {
     const newAbilities = [...(formData.abilities || [])]
-    newAbilities[index] = { ...newAbilities[index], [field]: value }
+    const updated: any = { ...newAbilities[index], [field]: value }
+    if (field === 'rarity') {
+      const currentPL = Number(newAbilities[index].power_level)
+      const isDefault = !newAbilities[index].power_level || Object.values(RARITY_POWER_LEVELS).includes(currentPL)
+      if (isDefault) updated.power_level = RARITY_POWER_LEVELS[value] ?? RARITY_POWER_LEVELS['Common']
+    }
+    newAbilities[index] = updated
     setFormData({ ...formData, abilities: newAbilities })
   }
 
   function handleAddAbility() {
-    const newAbility = { name: "New Ability", rarity: "Common", description: "", level: null, type: "" }
+    const newAbility = { name: "New Ability", rarity: "Common", description: "", level: null, type: "", power_level: RARITY_POWER_LEVELS['Common'] }
     setFormData({ ...formData, abilities: [...(formData.abilities || []), newAbility] })
   }
 
@@ -626,7 +643,16 @@ export default function CharacterDetail() {
                         </span>
                     )}
                     {canEdit && (
-                        <button onClick={() => setIsEditing(true)} className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-500 transition flex items-center gap-2">
+                        <button onClick={() => {
+                            setFormData({
+                                ...formData,
+                                abilities: (formData.abilities || []).map((ab: any) => ({
+                                    ...ab,
+                                    power_level: ab.power_level ?? RARITY_POWER_LEVELS[ab.rarity] ?? RARITY_POWER_LEVELS['Common']
+                                }))
+                            })
+                            setIsEditing(true)
+                        }} className="px-4 py-2 rounded bg-blue-600 text-white hover:bg-blue-500 transition flex items-center gap-2">
                             <span>✏️</span> Edit Sheet
                         </button>
                     )}
