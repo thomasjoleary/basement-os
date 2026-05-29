@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
@@ -34,6 +34,7 @@ type Category = {
     label: string
     group: string
     emoji: string
+    isManualOrder?: boolean
     getValue: (char: Character, wordCounts: WC, wordManaTotals: WC, tamePowerLevels: WC) => number
     sortKeys?: (char: Character, wordCounts: WC, wordManaTotals: WC, tamePowerLevels: WC) => number[]
     renderValue?: (char: Character, wordCounts: WC, wordManaTotals: WC, tamePowerLevels: WC) => React.ReactNode
@@ -110,6 +111,14 @@ const CATEGORIES: Category[] = [
             { label: 'Tames',                                 pts: tamePLs[c.id] ?? 0 },
         ].filter(r => r.pts > 0),
     },
+    {
+        id: 'likeability',
+        label: 'Likeability',
+        group: 'Likeability',
+        emoji: '❤️',
+        isManualOrder: true,
+        getValue: () => 0, // not used; order is manual
+    },
 ]
 
 const GROUPS = Array.from(new Set(CATEGORIES.map(c => c.group)))
@@ -123,9 +132,12 @@ export default function Leaderboard() {
     const [wordCounts, setWordCounts] = useState<WC>({})
     const [wordManaTotals, setWordManaTotals] = useState<WC>({})
     const [tamePowerLevels, setTamePowerLevels] = useState<WC>({})
+    const [likeabilityOrder, setLikeabilityOrder] = useState<string[]>([])
     const [activeGroup, setActiveGroup] = useState(GROUPS[0])
     const [activeCategory, setActiveCategory] = useState(CATEGORIES[0].id)
     const [expandedId, setExpandedId] = useState<string | null>(null)
+    const [dragOverId, setDragOverId] = useState<string | null>(null)
+    const draggedIdRef = useRef<string | null>(null)
 
     useEffect(() => {
         async function load() {
@@ -141,7 +153,7 @@ export default function Leaderboard() {
             if (profile?.role !== 'gm') { router.push('/'); return }
             setAuthorized(true)
 
-            const [{ data: chars }, { data: cw }, { data: tames }] = await Promise.all([
+            const [{ data: chars }, { data: cw }, { data: tames }, { data: { user } }] = await Promise.all([
                 supabase
                     .from('characters')
                     .select('id, name, level, xp_current, mana_max, stats, money, abilities, inventory, skills')
@@ -155,6 +167,7 @@ export default function Leaderboard() {
                     .from('characters')
                     .select('player_name, job, abilities, stats, mana_max')
                     .eq('is_tame', true),
+                supabase.auth.getUser(),
             ])
 
             setCharacters(chars ?? [])
@@ -185,13 +198,50 @@ export default function Leaderboard() {
             }
             setTamePowerLevels(tamePLMap)
 
+            // Merge saved likeability order with current character list
+            const savedOrder: string[] = user?.user_metadata?.likeability_order ?? []
+            const allIds = (chars ?? []).map((c: Character) => c.id)
+            const merged = [
+                ...savedOrder.filter((id: string) => allIds.includes(id)),
+                ...allIds.filter((id: string) => !savedOrder.includes(id)),
+            ]
+            setLikeabilityOrder(merged)
+
             setLoading(false)
         }
         load()
     }, [router])
 
-    // Collapse breakdown when switching categories
     useEffect(() => { setExpandedId(null) }, [activeCategory])
+
+    async function saveOrder(order: string[]) {
+        setLikeabilityOrder(order)
+        await supabase.auth.updateUser({ data: { likeability_order: order } })
+    }
+
+    function handleDragStart(e: React.DragEvent, charId: string) {
+        draggedIdRef.current = charId
+        e.dataTransfer.effectAllowed = 'move'
+    }
+
+    function handleDragOver(e: React.DragEvent, charId: string) {
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        setDragOverId(charId)
+    }
+
+    function handleDrop(e: React.DragEvent, targetId: string) {
+        e.preventDefault()
+        const draggedId = draggedIdRef.current
+        if (!draggedId || draggedId === targetId) { setDragOverId(null); return }
+        const newOrder = [...likeabilityOrder]
+        const fromIdx = newOrder.indexOf(draggedId)
+        const toIdx = newOrder.indexOf(targetId)
+        newOrder.splice(fromIdx, 1)
+        newOrder.splice(toIdx, 0, draggedId)
+        saveOrder(newOrder)
+        setDragOverId(null)
+    }
 
     if (loading || !authorized) {
         return (
@@ -209,25 +259,32 @@ export default function Leaderboard() {
             ? category.sortKeys(char, wordCounts, wordManaTotals, tamePowerLevels)
             : [category.getValue(char, wordCounts, wordManaTotals, tamePowerLevels)]
 
-    const sorted = [...characters]
-        .map(char => ({ char, keys: getKeys(char) }))
-        .sort((a, b) => {
-            for (let i = 0; i < Math.max(a.keys.length, b.keys.length); i++) {
-                const diff = (b.keys[i] ?? 0) - (a.keys[i] ?? 0)
-                if (diff !== 0) return diff
-            }
-            return 0
-        })
-
-    let rank = 1
-    const ranked = sorted.map((entry, i) => {
-        if (i > 0) {
-            const prev = sorted[i - 1]
-            const tied = entry.keys.every((v, j) => v === (prev.keys[j] ?? 0))
-            if (!tied) rank = i + 1
-        }
-        return { ...entry, rank }
-    })
+    // For manual-order categories, use saved order directly
+    const ranked: { char: Character; keys: number[]; rank: number }[] = category.isManualOrder
+        ? likeabilityOrder
+            .map(id => characters.find(c => c.id === id))
+            .filter(Boolean)
+            .map((char, i) => ({ char: char!, keys: [i], rank: i + 1 }))
+        : (() => {
+            const sorted = [...characters]
+                .map(char => ({ char, keys: getKeys(char) }))
+                .sort((a, b) => {
+                    for (let i = 0; i < Math.max(a.keys.length, b.keys.length); i++) {
+                        const diff = (b.keys[i] ?? 0) - (a.keys[i] ?? 0)
+                        if (diff !== 0) return diff
+                    }
+                    return 0
+                })
+            let rank = 1
+            return sorted.map((entry, i) => {
+                if (i > 0) {
+                    const prev = sorted[i - 1]
+                    const tied = entry.keys.every((v, j) => v === (prev.keys[j] ?? 0))
+                    if (!tied) rank = i + 1
+                }
+                return { ...entry, rank }
+            })
+        })()
 
     return (
         <div className="min-h-screen bg-gray-950 text-white p-6 max-w-2xl mx-auto">
@@ -281,6 +338,9 @@ export default function Leaderboard() {
                 {category.getBreakdown && (
                     <span className="ml-2 text-gray-600 normal-case tracking-normal font-normal text-xs">tap a row to expand</span>
                 )}
+                {category.isManualOrder && (
+                    <span className="ml-2 text-gray-600 normal-case tracking-normal font-normal text-xs">drag to reorder</span>
+                )}
             </div>
 
             {/* Ranked list */}
@@ -292,30 +352,44 @@ export default function Leaderboard() {
                     const value = keys[0]
                     const isExpanded = expandedId === char.id
                     const breakdown = category.getBreakdown?.(char, wordCounts, wordManaTotals, tamePowerLevels)
+                    const isDragTarget = dragOverId === char.id
 
-                    const rowContent = (
-                        <>
-                            <div className="w-8 text-center shrink-0">
-                                {rank <= 3
-                                    ? <span className="text-xl">{MEDALS[rank - 1]}</span>
-                                    : <span className="text-gray-500 text-sm font-bold">#{rank}</span>
-                                }
+                    // Likeability — draggable rows
+                    if (category.isManualOrder) {
+                        return (
+                            <div
+                                key={char.id}
+                                draggable
+                                onDragStart={(e) => handleDragStart(e, char.id)}
+                                onDragOver={(e) => handleDragOver(e, char.id)}
+                                onDrop={(e) => handleDrop(e, char.id)}
+                                onDragLeave={() => setDragOverId(null)}
+                                onDragEnd={() => setDragOverId(null)}
+                                className={`flex items-center gap-4 bg-gray-900 border rounded-lg px-4 py-3 cursor-grab active:cursor-grabbing transition-colors ${
+                                    isDragTarget
+                                        ? 'border-yellow-500 bg-gray-800'
+                                        : 'border-gray-800 hover:border-gray-600'
+                                }`}
+                            >
+                                <div className="w-8 text-center shrink-0">
+                                    {rank <= 3
+                                        ? <span className="text-xl">{MEDALS[rank - 1]}</span>
+                                        : <span className="text-gray-500 text-sm font-bold">#{rank}</span>
+                                    }
+                                </div>
+                                <a
+                                    href={`/character/${char.id}`}
+                                    className="flex-1 font-semibold text-white hover:text-yellow-300 transition-colors truncate"
+                                    onClick={(e) => e.stopPropagation()}
+                                >
+                                    {char.name}
+                                </a>
+                                <span className="text-gray-600 text-lg select-none shrink-0" title="Drag to reorder">⠿</span>
                             </div>
-                            <div className="flex-1 font-semibold text-white group-hover:text-yellow-300 transition-colors truncate">
-                                {char.name}
-                            </div>
-                            {category.renderValue
-                                ? category.renderValue(char, wordCounts, wordManaTotals, tamePowerLevels)
-                                : <div className="text-yellow-400 font-mono font-bold text-lg shrink-0">
-                                    {category.formatValue ? category.formatValue(value) : value}
-                                  </div>
-                            }
-                            {breakdown && (
-                                <div className="shrink-0 text-gray-500 text-xs ml-1">{isExpanded ? '▲' : '▼'}</div>
-                            )}
-                        </>
-                    )
+                        )
+                    }
 
+                    // Power level — expandable rows
                     if (breakdown) {
                         return (
                             <div key={char.id} className="rounded-lg border border-gray-800 overflow-hidden">
@@ -323,7 +397,19 @@ export default function Leaderboard() {
                                     onClick={() => setExpandedId(isExpanded ? null : char.id)}
                                     className="w-full flex items-center gap-4 bg-gray-900 hover:bg-gray-800 px-4 py-3 transition-colors group text-left"
                                 >
-                                    {rowContent}
+                                    <div className="w-8 text-center shrink-0">
+                                        {rank <= 3
+                                            ? <span className="text-xl">{MEDALS[rank - 1]}</span>
+                                            : <span className="text-gray-500 text-sm font-bold">#{rank}</span>
+                                        }
+                                    </div>
+                                    <div className="flex-1 font-semibold text-white group-hover:text-yellow-300 transition-colors truncate">
+                                        {char.name}
+                                    </div>
+                                    <div className="text-yellow-400 font-mono font-bold text-lg shrink-0">
+                                        {category.formatValue ? category.formatValue(value) : value}
+                                    </div>
+                                    <div className="shrink-0 text-gray-500 text-xs ml-1">{isExpanded ? '▲' : '▼'}</div>
                                 </button>
                                 {isExpanded && (
                                     <div className="bg-gray-950 border-t border-gray-800 px-4 py-3">
@@ -351,13 +437,28 @@ export default function Leaderboard() {
                         )
                     }
 
+                    // Default — link rows
                     return (
                         <a
                             key={char.id}
                             href={`/character/${char.id}`}
                             className="flex items-center gap-4 bg-gray-900 border border-gray-800 hover:border-yellow-700 rounded-lg px-4 py-3 transition-colors group"
                         >
-                            {rowContent}
+                            <div className="w-8 text-center shrink-0">
+                                {rank <= 3
+                                    ? <span className="text-xl">{MEDALS[rank - 1]}</span>
+                                    : <span className="text-gray-500 text-sm font-bold">#{rank}</span>
+                                }
+                            </div>
+                            <div className="flex-1 font-semibold text-white group-hover:text-yellow-300 transition-colors truncate">
+                                {char.name}
+                            </div>
+                            {category.renderValue
+                                ? category.renderValue(char, wordCounts, wordManaTotals, tamePowerLevels)
+                                : <div className="text-yellow-400 font-mono font-bold text-lg shrink-0">
+                                    {category.formatValue ? category.formatValue(value) : value}
+                                  </div>
+                            }
                         </a>
                     )
                 })}
