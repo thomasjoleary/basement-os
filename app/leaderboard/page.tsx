@@ -13,7 +13,7 @@ type Character = {
     stats: Record<string, number>
     money: { gold: number; silver: number; copper: number }
     abilities: { power_level?: number | string }[]
-    inventory: { power_level?: number | string }[]
+    inventory: { power_level?: number | string; quantity?: string }[]
     skills: { name: string; level: number }[]
 }
 
@@ -48,6 +48,26 @@ type Category = {
 
 function sumPL(items: { power_level?: number | string }[]): number {
     return (items ?? []).reduce((s: number, a: any) => s + (Number(a.power_level) || 0), 0)
+}
+
+function parseQty(qty: string | undefined | null): number {
+    if (!qty) return 1
+    const s = String(qty).trim()
+    if (s.includes('/')) {
+        const [num, den] = s.split('/')
+        const result = parseFloat(num) / parseFloat(den)
+        return isNaN(result) ? 1 : result
+    }
+    const n = parseFloat(s)
+    return isNaN(n) ? 1 : n
+}
+
+function sumItemPL(items: { power_level?: number | string; quantity?: string }[]): number {
+    return (items ?? []).reduce((s: number, item: any) => {
+        const pl = Number(item.power_level) || 0
+        const qty = parseQty(item.quantity)
+        return s + pl * qty
+    }, 0)
 }
 
 function formatExpiry(expiresAt: string | null): string {
@@ -96,7 +116,7 @@ const CATEGORIES: Category[] = [
         id: 'power_level', label: 'Power Level', group: 'Power', emoji: '⚡',
         getValue: (c, _wc, manaTotals, tamePowerLevels) => {
             return (c.level ?? 0) * 100
-                + sumPL(c.abilities) + sumPL(c.inventory)
+                + sumPL(c.abilities) + sumItemPL(c.inventory)
                 + Object.values(c.stats ?? {}).reduce((s: number, v: any) => s + (Number(v) || 0), 0)
                 + (c.mana_max ?? 0) * 5
                 + (c.skills ?? []).reduce((s: number, sk: any) => s + (Number(sk.level) || 0) * 50, 0)
@@ -107,7 +127,7 @@ const CATEGORIES: Category[] = [
         getBreakdown: (c, _wc, manaTotals, tamePLs) => [
             { label: `Level (${c.level ?? 0} × 100)`,      pts: (c.level ?? 0) * 100 },
             { label: 'Abilities',                            pts: sumPL(c.abilities) },
-            { label: 'Items',                                pts: sumPL(c.inventory) },
+            { label: 'Items',                                pts: sumItemPL(c.inventory) },
             { label: 'Stats',                                pts: Object.values(c.stats ?? {}).reduce((s: number, v: any) => s + (Number(v) || 0), 0) },
             { label: `Mana (${c.mana_max ?? 0} × 5)`,      pts: (c.mana_max ?? 0) * 5 },
             { label: 'Skills',                               pts: (c.skills ?? []).reduce((s: number, sk: any) => s + (Number(sk.level) || 0) * 50, 0) },

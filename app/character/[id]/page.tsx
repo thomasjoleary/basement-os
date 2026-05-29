@@ -18,6 +18,17 @@ const RARITY_POWER_LEVELS: Record<string, number> = {
     'Demonic':   750,
 }
 
+const ITEM_RARITY_POWER_LEVELS: Record<string, number> = {
+    'Common':    0,
+    'Uncommon':  50,
+    'Rare':      100,
+    'Very Rare': 200,
+    'Legendary': 400,
+    'Holy':      600,
+    'Unique':    1000,
+    'Demonic':   600,
+}
+
 function getRarityColor(rarity: string): string {
     const r = rarity ? rarity.toLowerCase() : 'common';
     switch (r) {
@@ -284,12 +295,18 @@ export default function CharacterDetail() {
 
   function handleInventoryChange(index: number, field: string, value: string) {
     const newInventory = [...formData.inventory]
-    newInventory[index] = { ...newInventory[index], [field]: value }
+    const updated: any = { ...newInventory[index], [field]: value }
+    if (field === 'rarity') {
+      const currentPL = Number(newInventory[index].power_level)
+      const isDefault = newInventory[index].power_level === undefined || newInventory[index].power_level === null || newInventory[index].power_level === '' || Object.values(ITEM_RARITY_POWER_LEVELS).includes(currentPL)
+      if (isDefault) updated.power_level = ITEM_RARITY_POWER_LEVELS[value] ?? ITEM_RARITY_POWER_LEVELS['Common']
+    }
+    newInventory[index] = updated
     setFormData({ ...formData, inventory: newInventory })
   }
 
   function handleAddItem() {
-    const newItem = { name: "New Item", rarity: "Common", description: "", quantity: "1", unit: "", plural_name: "" }
+    const newItem = { name: "New Item", rarity: "Common", description: "", quantity: "1", unit: "", plural_name: "", power_level: ITEM_RARITY_POWER_LEVELS['Common'] }
     setFormData({ ...formData, inventory: [...(formData.inventory || []), newItem] })
   }
 
@@ -655,6 +672,12 @@ export default function CharacterDetail() {
                                 abilities: (formData.abilities || []).map((ab: any) => ({
                                     ...ab,
                                     power_level: ab.power_level ?? RARITY_POWER_LEVELS[ab.rarity] ?? RARITY_POWER_LEVELS['Common']
+                                })),
+                                inventory: (formData.inventory || []).map((item: any) => ({
+                                    ...item,
+                                    power_level: (item.power_level !== undefined && item.power_level !== null && item.power_level !== '')
+                                        ? item.power_level
+                                        : (ITEM_RARITY_POWER_LEVELS[item.rarity] ?? ITEM_RARITY_POWER_LEVELS['Common'])
                                 }))
                             })
                             setIsEditing(true)
