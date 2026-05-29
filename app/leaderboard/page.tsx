@@ -13,7 +13,7 @@ type Character = {
     stats: Record<string, number>
     money: { gold: number; silver: number; copper: number }
     abilities: { power_level?: number | string }[]
-    inventory: { power_level?: number | string }[]
+    inventory: { power_level?: number | string; quantity?: string }[]
     skills: { name: string; level: number }[]
 }
 
@@ -25,8 +25,12 @@ type Tame = {
     mana_max: number
 }
 
-type WC = Record<string, number>
+type PublishedConfig = {
+    categories: string[]
+    expires_at: string | null
+}
 
+type WC = Record<string, number>
 type BreakdownRow = { label: string; pts: number }
 
 type Category = {
@@ -46,16 +50,44 @@ function sumPL(items: { power_level?: number | string }[]): number {
     return (items ?? []).reduce((s: number, a: any) => s + (Number(a.power_level) || 0), 0)
 }
 
+function parseQty(qty: string | undefined | null): number {
+    if (!qty) return 1
+    const s = String(qty).trim()
+    if (s.includes('/')) {
+        const [num, den] = s.split('/')
+        const result = parseFloat(num) / parseFloat(den)
+        return isNaN(result) ? 1 : result
+    }
+    const n = parseFloat(s)
+    return isNaN(n) ? 1 : n
+}
+
+function sumItemPL(items: { power_level?: number | string; quantity?: string }[]): number {
+    return (items ?? []).reduce((s: number, item: any) => {
+        const pl = Number(item.power_level) || 0
+        const qty = parseQty(item.quantity)
+        return s + pl * qty
+    }, 0)
+}
+
+function formatExpiry(expiresAt: string | null): string {
+    if (!expiresAt) return 'Permanent'
+    const diff = new Date(expiresAt).getTime() - Date.now()
+    if (diff <= 0) return 'Expired'
+    const hours = Math.floor(diff / (1000 * 60 * 60))
+    const mins  = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))
+    if (hours >= 48) return `${Math.floor(hours / 24)}d`
+    if (hours >= 1)  return `${hours}h ${mins}m`
+    return `${mins}m`
+}
+
 const CATEGORIES: Category[] = [
     { id: 'strength',  label: 'Strength',  group: 'Stats', emoji: '💪', getValue: (c) => c.stats?.strength  ?? 0 },
     { id: 'speed',     label: 'Speed',     group: 'Stats', emoji: '⚡', getValue: (c) => c.stats?.speed     ?? 0 },
     { id: 'fortitude', label: 'Fortitude', group: 'Stats', emoji: '🛡️', getValue: (c) => c.stats?.fortitude ?? 0 },
     { id: 'magic',     label: 'Magic',     group: 'Stats', emoji: '🔮', getValue: (c) => c.stats?.magic     ?? 0 },
     {
-        id: 'level_xp',
-        label: 'Level',
-        group: 'Level & XP',
-        emoji: '⭐',
+        id: 'level_xp', label: 'Level', group: 'Level & XP', emoji: '⭐',
         getValue: (c) => c.level ?? 0,
         sortKeys: (c) => [c.level ?? 0, c.xp_current ?? 0],
         renderValue: (c) => (
@@ -66,10 +98,7 @@ const CATEGORIES: Category[] = [
         ),
     },
     {
-        id: 'currency',
-        label: 'Currency',
-        group: 'Currency',
-        emoji: '💰',
+        id: 'currency', label: 'Currency', group: 'Currency', emoji: '💰',
         getValue: (c) => c.money?.gold ?? 0,
         sortKeys: (c) => [c.money?.gold ?? 0, c.money?.silver ?? 0, c.money?.copper ?? 0],
         renderValue: (c) => (
@@ -84,56 +113,63 @@ const CATEGORIES: Category[] = [
     },
     { id: 'words', label: 'Words of Power', group: 'Words', emoji: '📖', getValue: (c, wc) => wc[c.id] ?? 0 },
     {
-        id: 'power_level',
-        label: 'Power Level',
-        group: 'Power',
-        emoji: '⚡',
+        id: 'power_level', label: 'Power Level', group: 'Power', emoji: '⚡',
         getValue: (c, _wc, manaTotals, tamePowerLevels) => {
-            const levelPts = (c.level ?? 0) * 100
-            const abPts   = sumPL(c.abilities)
-            const itemPts = sumPL(c.inventory)
-            const statPts = Object.values(c.stats ?? {}).reduce((s: number, v: any) => s + (Number(v) || 0), 0)
-            const manaPts = (c.mana_max ?? 0) * 5
-            const skillPts = (c.skills ?? []).reduce((s: number, sk: any) => s + (Number(sk.level) || 0) * 50, 0)
-            const wordPts = (manaTotals[c.id] ?? 0) * 25
-            const tamePts = tamePowerLevels[c.id] ?? 0
-            return levelPts + abPts + itemPts + statPts + manaPts + skillPts + wordPts + tamePts
+            return (c.level ?? 0) * 100
+                + sumPL(c.abilities) + sumItemPL(c.inventory)
+                + Object.values(c.stats ?? {}).reduce((s: number, v: any) => s + (Number(v) || 0), 0)
+                + (c.mana_max ?? 0) * 5
+                + (c.skills ?? []).reduce((s: number, sk: any) => s + (Number(sk.level) || 0) * 50, 0)
+                + (manaTotals[c.id] ?? 0) * 25
+                + (tamePowerLevels[c.id] ?? 0)
         },
         formatValue: (v) => v.toLocaleString(),
         getBreakdown: (c, _wc, manaTotals, tamePLs) => [
-            { label: `Level (${c.level ?? 0} × 100)`,       pts: (c.level ?? 0) * 100 },
-            { label: 'Abilities',                             pts: sumPL(c.abilities) },
-            { label: 'Items',                                 pts: sumPL(c.inventory) },
-            { label: 'Stats',                                 pts: Object.values(c.stats ?? {}).reduce((s: number, v: any) => s + (Number(v) || 0), 0) },
-            { label: `Mana (${c.mana_max ?? 0} × 5)`,       pts: (c.mana_max ?? 0) * 5 },
-            { label: 'Skills',                                pts: (c.skills ?? []).reduce((s: number, sk: any) => s + (Number(sk.level) || 0) * 50, 0) },
-            { label: 'Words',                                 pts: (manaTotals[c.id] ?? 0) * 25 },
-            { label: 'Tames',                                 pts: tamePLs[c.id] ?? 0 },
+            { label: `Level (${c.level ?? 0} × 100)`,      pts: (c.level ?? 0) * 100 },
+            { label: 'Abilities',                            pts: sumPL(c.abilities) },
+            { label: 'Items',                                pts: sumItemPL(c.inventory) },
+            { label: 'Stats',                                pts: Object.values(c.stats ?? {}).reduce((s: number, v: any) => s + (Number(v) || 0), 0) },
+            { label: `Mana (${c.mana_max ?? 0} × 5)`,      pts: (c.mana_max ?? 0) * 5 },
+            { label: 'Skills',                               pts: (c.skills ?? []).reduce((s: number, sk: any) => s + (Number(sk.level) || 0) * 50, 0) },
+            { label: 'Words',                                pts: (manaTotals[c.id] ?? 0) * 25 },
+            { label: 'Tames',                                pts: tamePLs[c.id] ?? 0 },
         ].filter(r => r.pts > 0),
     },
-    {
-        id: 'likeability',
-        label: 'Likeability',
-        group: 'Likeability',
-        emoji: '❤️',
-        isManualOrder: true,
-        getValue: () => 0, // not used; order is manual
-    },
+    { id: 'likeability', label: 'Likeability', group: 'Likeability', emoji: '❤️', isManualOrder: true, getValue: () => 0 },
 ]
 
-const GROUPS = Array.from(new Set(CATEGORIES.map(c => c.group)))
+const ALL_GROUPS = Array.from(new Set(CATEGORIES.map(c => c.group)))
 const MEDALS = ['🥇', '🥈', '🥉']
+
+const DURATIONS: { label: string; seconds: number | null }[] = [
+    { label: '1 hour',    seconds: 3600 },
+    { label: '4 hours',   seconds: 3600 * 4 },
+    { label: '8 hours',   seconds: 3600 * 8 },
+    { label: '24 hours',  seconds: 3600 * 24 },
+    { label: '3 days',    seconds: 3600 * 24 * 3 },
+    { label: '1 week',    seconds: 3600 * 24 * 7 },
+    { label: 'Permanent', seconds: null },
+]
 
 export default function Leaderboard() {
     const router = useRouter()
     const [loading, setLoading] = useState(true)
+    const [isGM, setIsGM] = useState(false)
     const [authorized, setAuthorized] = useState(false)
     const [characters, setCharacters] = useState<Character[]>([])
     const [wordCounts, setWordCounts] = useState<WC>({})
     const [wordManaTotals, setWordManaTotals] = useState<WC>({})
     const [tamePowerLevels, setTamePowerLevels] = useState<WC>({})
     const [likeabilityOrder, setLikeabilityOrder] = useState<string[]>([])
-    const [activeGroup, setActiveGroup] = useState(GROUPS[0])
+    const [publishedConfig, setPublishedConfig] = useState<PublishedConfig | null>(null)
+
+    // GM publish panel state
+    const [showPublishPanel, setShowPublishPanel] = useState(false)
+    const [draftCategories, setDraftCategories] = useState<string[]>([])
+    const [draftDuration, setDraftDuration] = useState<number | null>(3600 * 24)
+    const [publishing, setPublishing] = useState(false)
+
+    const [activeGroup, setActiveGroup] = useState(ALL_GROUPS[0])
     const [activeCategory, setActiveCategory] = useState(CATEGORIES[0].id)
     const [expandedId, setExpandedId] = useState<string | null>(null)
     const [dragOverId, setDragOverId] = useState<string | null>(null)
@@ -145,35 +181,26 @@ export default function Leaderboard() {
             if (!session) { router.push('/login'); return }
 
             const { data: profile } = await supabase
-                .from('profiles')
-                .select('role')
-                .eq('id', session.user.id)
-                .single()
+                .from('profiles').select('role').eq('id', session.user.id).single()
 
-            if (profile?.role !== 'gm') { router.push('/'); return }
+            const userIsGM = profile?.role === 'gm'
+            setIsGM(userIsGM)
             setAuthorized(true)
 
-            const [{ data: chars }, { data: cw }, { data: tames }, { data: { user } }] = await Promise.all([
+            const [{ data: chars }, { data: cw }, { data: tames }, { data: pub }, { data: { user } }] = await Promise.all([
                 supabase
                     .from('characters')
                     .select('id, name, level, xp_current, mana_max, stats, money, abilities, inventory, skills')
-                    .neq('is_tame', true)
-                    .neq('is_npc', true)
-                    .order('name'),
-                supabase
-                    .from('character_words')
-                    .select('character_id, words_of_power(mana_cost)'),
-                supabase
-                    .from('characters')
-                    .select('player_name, job, abilities, stats, mana_max')
-                    .eq('is_tame', true),
+                    .neq('is_tame', true).neq('is_npc', true).order('name'),
+                supabase.from('character_words').select('character_id, words_of_power(mana_cost)'),
+                supabase.from('characters').select('player_name, job, abilities, stats, mana_max').eq('is_tame', true),
+                supabase.from('published_leaderboard').select('*').eq('id', 1).maybeSingle(),
                 supabase.auth.getUser(),
             ])
 
             setCharacters(chars ?? [])
 
-            const counts: WC = {}
-            const manaTotals: WC = {}
+            const counts: WC = {}, manaTotals: WC = {}
             for (const row of cw ?? []) {
                 const cid = row.character_id
                 counts[cid] = (counts[cid] ?? 0) + 1
@@ -189,23 +216,31 @@ export default function Leaderboard() {
                     t.player_name === char.name ||
                     (t.job && t.job.toLowerCase().startsWith(firstName))
                 )
-                tamePLMap[char.id] = charTames.reduce((s: number, t: Tame) => {
-                    const abPts   = sumPL(t.abilities)
-                    const statPts = Object.values(t.stats ?? {}).reduce((ss: number, v: any) => ss + (Number(v) || 0), 0)
-                    const manaPts = (t.mana_max ?? 0) * 5
-                    return s + abPts + statPts + manaPts
-                }, 0)
+                tamePLMap[char.id] = charTames.reduce((s: number, t: Tame) =>
+                    s + sumPL(t.abilities)
+                    + Object.values(t.stats ?? {}).reduce((ss: number, v: any) => ss + (Number(v) || 0), 0)
+                    + (t.mana_max ?? 0) * 5, 0)
             }
             setTamePowerLevels(tamePLMap)
 
-            // Merge saved likeability order with current character list
+            // Published config
+            const isActive = pub && (!pub.expires_at || new Date(pub.expires_at) > new Date())
+            const activePub = isActive ? { categories: pub.categories, expires_at: pub.expires_at } : null
+            setPublishedConfig(activePub)
+
+            // Likeability order
             const savedOrder: string[] = user?.user_metadata?.likeability_order ?? []
             const allIds = (chars ?? []).map((c: Character) => c.id)
-            const merged = [
+            setLikeabilityOrder([
                 ...savedOrder.filter((id: string) => allIds.includes(id)),
                 ...allIds.filter((id: string) => !savedOrder.includes(id)),
-            ]
-            setLikeabilityOrder(merged)
+            ])
+
+            // For players, set active tab to first published category
+            if (!userIsGM && activePub && activePub.categories.length > 0) {
+                const firstCat = CATEGORIES.find(c => activePub.categories.includes(c.id))
+                if (firstCat) { setActiveGroup(firstCat.group); setActiveCategory(firstCat.id) }
+            }
 
             setLoading(false)
         }
@@ -223,24 +258,41 @@ export default function Leaderboard() {
         draggedIdRef.current = charId
         e.dataTransfer.effectAllowed = 'move'
     }
-
     function handleDragOver(e: React.DragEvent, charId: string) {
-        e.preventDefault()
-        e.dataTransfer.dropEffect = 'move'
-        setDragOverId(charId)
+        e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setDragOverId(charId)
     }
-
     function handleDrop(e: React.DragEvent, targetId: string) {
         e.preventDefault()
         const draggedId = draggedIdRef.current
         if (!draggedId || draggedId === targetId) { setDragOverId(null); return }
         const newOrder = [...likeabilityOrder]
-        const fromIdx = newOrder.indexOf(draggedId)
-        const toIdx = newOrder.indexOf(targetId)
-        newOrder.splice(fromIdx, 1)
-        newOrder.splice(toIdx, 0, draggedId)
-        saveOrder(newOrder)
-        setDragOverId(null)
+        const fromIdx = newOrder.indexOf(draggedId), toIdx = newOrder.indexOf(targetId)
+        newOrder.splice(fromIdx, 1); newOrder.splice(toIdx, 0, draggedId)
+        saveOrder(newOrder); setDragOverId(null)
+    }
+
+    function openPublishPanel() {
+        setDraftCategories(publishedConfig?.categories ?? [])
+        setShowPublishPanel(true)
+    }
+
+    async function publish() {
+        if (draftCategories.length === 0) return
+        setPublishing(true)
+        const expires_at = draftDuration ? new Date(Date.now() + draftDuration * 1000).toISOString() : null
+        const { data, error } = await supabase
+            .from('published_leaderboard')
+            .upsert({ id: 1, categories: draftCategories, expires_at, updated_at: new Date().toISOString() })
+            .select().single()
+        if (!error && data) setPublishedConfig({ categories: data.categories, expires_at: data.expires_at })
+        setPublishing(false); setShowPublishPanel(false)
+    }
+
+    async function unpublish() {
+        setPublishing(true)
+        await supabase.from('published_leaderboard').delete().eq('id', 1)
+        setPublishedConfig(null)
+        setPublishing(false); setShowPublishPanel(false)
     }
 
     if (loading || !authorized) {
@@ -251,15 +303,32 @@ export default function Leaderboard() {
         )
     }
 
-    const categoriesInGroup = CATEGORIES.filter(c => c.group === activeGroup)
-    const category = CATEGORIES.find(c => c.id === activeCategory) ?? CATEGORIES[0]
+    // Player: show empty state if nothing is published
+    if (!isGM && !publishedConfig) {
+        return (
+            <div className="min-h-screen bg-gray-950 text-white flex flex-col items-center justify-center gap-3 p-6 text-center">
+                <div className="text-5xl mb-2">🏆</div>
+                <h1 className="text-2xl font-bold text-gray-300">No leaderboards available</h1>
+                <p className="text-gray-500">Maybe ask for one?</p>
+                <a href="/" className="mt-4 text-sm text-gray-600 hover:text-gray-400 transition-colors">← Back to home</a>
+            </div>
+        )
+    }
+
+    // Determine which categories are visible (all for GM, published subset for players)
+    const displayCategories = isGM
+        ? CATEGORIES
+        : CATEGORIES.filter(c => publishedConfig!.categories.includes(c.id))
+    const displayGroups = Array.from(new Set(displayCategories.map(c => c.group)))
+
+    const category = displayCategories.find(c => c.id === activeCategory) ?? displayCategories[0]
+    const categoriesInGroup = displayCategories.filter(c => c.group === activeGroup)
 
     const getKeys = (char: Character) =>
         category.sortKeys
             ? category.sortKeys(char, wordCounts, wordManaTotals, tamePowerLevels)
             : [category.getValue(char, wordCounts, wordManaTotals, tamePowerLevels)]
 
-    // For manual-order categories, use saved order directly
     const ranked: { char: Character; keys: number[]; rank: number }[] = category.isManualOrder
         ? likeabilityOrder
             .map(id => characters.find(c => c.id === id))
@@ -277,30 +346,128 @@ export default function Leaderboard() {
                 })
             let rank = 1
             return sorted.map((entry, i) => {
-                if (i > 0) {
-                    const prev = sorted[i - 1]
-                    const tied = entry.keys.every((v, j) => v === (prev.keys[j] ?? 0))
-                    if (!tied) rank = i + 1
-                }
+                if (i > 0 && !entry.keys.every((v, j) => v === sorted[i - 1].keys[j])) rank = i + 1
                 return { ...entry, rank }
             })
         })()
 
     return (
         <div className="min-h-screen bg-gray-950 text-white p-6 max-w-2xl mx-auto">
-            <div className="flex items-center gap-4 mb-8">
+            <div className="flex items-center gap-4 mb-6">
                 <a href="/" className="text-gray-500 hover:text-white transition-colors text-sm">← Back</a>
                 <h1 className="text-3xl font-bold">🏆 Leaderboard</h1>
             </div>
 
+            {/* GM: Publish Panel */}
+            {isGM && (
+                <div className="mb-6 bg-gray-900 border border-gray-700 rounded-xl p-4">
+                    <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-semibold text-gray-200 text-sm">Publish to Players</span>
+                            {publishedConfig ? (
+                                <span className="text-green-400 text-xs">
+                                    ● Live · {publishedConfig.categories.length} {publishedConfig.categories.length === 1 ? 'category' : 'categories'} · Expires {formatExpiry(publishedConfig.expires_at)}
+                                </span>
+                            ) : (
+                                <span className="text-gray-500 text-xs">● Not published</span>
+                            )}
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                            {publishedConfig && !showPublishPanel && (
+                                <button onClick={() => { unpublish() }} className="text-xs text-red-400 hover:text-red-300 transition-colors px-2 py-1">
+                                    Unpublish
+                                </button>
+                            )}
+                            <button
+                                onClick={() => showPublishPanel ? setShowPublishPanel(false) : openPublishPanel()}
+                                className="text-xs bg-gray-700 hover:bg-gray-600 px-3 py-1.5 rounded transition-colors"
+                            >
+                                {showPublishPanel ? 'Cancel' : publishedConfig ? 'Edit' : 'Publish'}
+                            </button>
+                        </div>
+                    </div>
+
+                    {showPublishPanel && (
+                        <div className="mt-4 space-y-4 border-t border-gray-700 pt-4">
+                            {/* Category checkboxes */}
+                            <div>
+                                <div className="text-xs text-gray-500 uppercase tracking-wide mb-2">Categories</div>
+                                <div className="space-y-3">
+                                    {ALL_GROUPS.map(group => (
+                                        <div key={group}>
+                                            <div className="text-xs text-gray-600 mb-1">{group}</div>
+                                            {CATEGORIES.filter(c => c.group === group).map(cat => (
+                                                <label key={cat.id} className="flex items-center gap-2 text-sm py-0.5 cursor-pointer">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={draftCategories.includes(cat.id)}
+                                                        onChange={(e) => setDraftCategories(
+                                                            e.target.checked
+                                                                ? [...draftCategories, cat.id]
+                                                                : draftCategories.filter(id => id !== cat.id)
+                                                        )}
+                                                        className="accent-yellow-500"
+                                                    />
+                                                    <span className="text-gray-300">{cat.emoji} {cat.label}</span>
+                                                </label>
+                                            ))}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Duration */}
+                            <div>
+                                <div className="text-xs text-gray-500 uppercase tracking-wide mb-2">Visible for</div>
+                                <div className="flex flex-wrap gap-2">
+                                    {DURATIONS.map(d => (
+                                        <button
+                                            key={d.label}
+                                            onClick={() => setDraftDuration(d.seconds)}
+                                            className={`px-3 py-1 rounded text-xs transition-colors ${
+                                                draftDuration === d.seconds
+                                                    ? 'bg-yellow-600 text-white'
+                                                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+                                            }`}
+                                        >
+                                            {d.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Actions */}
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={publish}
+                                    disabled={draftCategories.length === 0 || publishing}
+                                    className="px-4 py-2 rounded bg-yellow-600 hover:bg-yellow-500 disabled:opacity-40 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors"
+                                >
+                                    {publishing ? 'Publishing…' : publishedConfig ? 'Update' : 'Publish'}
+                                </button>
+                                {publishedConfig && (
+                                    <button
+                                        onClick={unpublish}
+                                        disabled={publishing}
+                                        className="px-4 py-2 rounded bg-gray-800 hover:bg-red-900 text-red-400 text-sm transition-colors"
+                                    >
+                                        Unpublish
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
             {/* Group selector */}
             <div className="flex gap-2 flex-wrap mb-3">
-                {GROUPS.map(group => (
+                {displayGroups.map(group => (
                     <button
                         key={group}
                         onClick={() => {
                             setActiveGroup(group)
-                            setActiveCategory(CATEGORIES.find(c => c.group === group)!.id)
+                            setActiveCategory(displayCategories.find(c => c.group === group)!.id)
                         }}
                         className={`px-4 py-2 rounded font-semibold text-sm transition-colors ${
                             activeGroup === group
@@ -334,62 +501,47 @@ export default function Leaderboard() {
 
             {/* Category header */}
             <div className="text-sm text-gray-500 uppercase tracking-widest font-semibold mb-3 mt-4">
-                {category.emoji} {category.label}
-                {category.getBreakdown && (
-                    <span className="ml-2 text-gray-600 normal-case tracking-normal font-normal text-xs">tap a row to expand</span>
-                )}
-                {category.isManualOrder && (
-                    <span className="ml-2 text-gray-600 normal-case tracking-normal font-normal text-xs">drag to reorder</span>
-                )}
+                {category?.emoji} {category?.label}
+                {category?.getBreakdown && <span className="ml-2 text-gray-600 normal-case tracking-normal font-normal text-xs">tap a row to expand</span>}
+                {category?.isManualOrder && isGM && <span className="ml-2 text-gray-600 normal-case tracking-normal font-normal text-xs">drag to reorder</span>}
             </div>
 
             {/* Ranked list */}
             <div className="space-y-2">
-                {ranked.length === 0 && (
-                    <p className="text-gray-500 italic text-center py-8">No characters found.</p>
-                )}
+                {ranked.length === 0 && <p className="text-gray-500 italic text-center py-8">No characters found.</p>}
                 {ranked.map(({ char, keys, rank }) => {
                     const value = keys[0]
                     const isExpanded = expandedId === char.id
-                    const breakdown = category.getBreakdown?.(char, wordCounts, wordManaTotals, tamePowerLevels)
+                    const breakdown = category?.getBreakdown?.(char, wordCounts, wordManaTotals, tamePowerLevels)
                     const isDragTarget = dragOverId === char.id
 
-                    // Likeability — draggable rows
-                    if (category.isManualOrder) {
+                    // Likeability — draggable (GM) or static (player)
+                    if (category?.isManualOrder) {
                         return (
                             <div
                                 key={char.id}
-                                draggable
-                                onDragStart={(e) => handleDragStart(e, char.id)}
-                                onDragOver={(e) => handleDragOver(e, char.id)}
-                                onDrop={(e) => handleDrop(e, char.id)}
-                                onDragLeave={() => setDragOverId(null)}
-                                onDragEnd={() => setDragOverId(null)}
-                                className={`flex items-center gap-4 bg-gray-900 border rounded-lg px-4 py-3 cursor-grab active:cursor-grabbing transition-colors ${
-                                    isDragTarget
-                                        ? 'border-yellow-500 bg-gray-800'
-                                        : 'border-gray-800 hover:border-gray-600'
-                                }`}
+                                draggable={isGM}
+                                onDragStart={isGM ? (e) => handleDragStart(e, char.id) : undefined}
+                                onDragOver={isGM ? (e) => handleDragOver(e, char.id) : undefined}
+                                onDrop={isGM ? (e) => handleDrop(e, char.id) : undefined}
+                                onDragLeave={isGM ? () => setDragOverId(null) : undefined}
+                                onDragEnd={isGM ? () => setDragOverId(null) : undefined}
+                                className={`flex items-center gap-4 bg-gray-900 border rounded-lg px-4 py-3 transition-colors ${
+                                    isGM ? 'cursor-grab active:cursor-grabbing' : ''
+                                } ${isDragTarget ? 'border-yellow-500 bg-gray-800' : 'border-gray-800 hover:border-gray-600'}`}
                             >
                                 <div className="w-8 text-center shrink-0">
-                                    {rank <= 3
-                                        ? <span className="text-xl">{MEDALS[rank - 1]}</span>
-                                        : <span className="text-gray-500 text-sm font-bold">#{rank}</span>
-                                    }
+                                    {rank <= 3 ? <span className="text-xl">{MEDALS[rank - 1]}</span> : <span className="text-gray-500 text-sm font-bold">#{rank}</span>}
                                 </div>
-                                <a
-                                    href={`/character/${char.id}`}
-                                    className="flex-1 font-semibold text-white hover:text-yellow-300 transition-colors truncate"
-                                    onClick={(e) => e.stopPropagation()}
-                                >
+                                <a href={`/character/${char.id}`} className="flex-1 font-semibold text-white hover:text-yellow-300 transition-colors truncate" onClick={(e) => e.stopPropagation()}>
                                     {char.name}
                                 </a>
-                                <span className="text-gray-600 text-lg select-none shrink-0" title="Drag to reorder">⠿</span>
+                                {isGM && <span className="text-gray-600 text-lg select-none shrink-0" title="Drag to reorder">⠿</span>}
                             </div>
                         )
                     }
 
-                    // Power level — expandable rows
+                    // Power level — expandable
                     if (breakdown) {
                         return (
                             <div key={char.id} className="rounded-lg border border-gray-800 overflow-hidden">
@@ -398,17 +550,10 @@ export default function Leaderboard() {
                                     className="w-full flex items-center gap-4 bg-gray-900 hover:bg-gray-800 px-4 py-3 transition-colors group text-left"
                                 >
                                     <div className="w-8 text-center shrink-0">
-                                        {rank <= 3
-                                            ? <span className="text-xl">{MEDALS[rank - 1]}</span>
-                                            : <span className="text-gray-500 text-sm font-bold">#{rank}</span>
-                                        }
+                                        {rank <= 3 ? <span className="text-xl">{MEDALS[rank - 1]}</span> : <span className="text-gray-500 text-sm font-bold">#{rank}</span>}
                                     </div>
-                                    <div className="flex-1 font-semibold text-white group-hover:text-yellow-300 transition-colors truncate">
-                                        {char.name}
-                                    </div>
-                                    <div className="text-yellow-400 font-mono font-bold text-lg shrink-0">
-                                        {category.formatValue ? category.formatValue(value) : value}
-                                    </div>
+                                    <div className="flex-1 font-semibold text-white group-hover:text-yellow-300 transition-colors truncate">{char.name}</div>
+                                    <div className="text-yellow-400 font-mono font-bold text-lg shrink-0">{category.formatValue!(value)}</div>
                                     <div className="shrink-0 text-gray-500 text-xs ml-1">{isExpanded ? '▲' : '▼'}</div>
                                 </button>
                                 {isExpanded && (
@@ -425,38 +570,26 @@ export default function Leaderboard() {
                                                 <span className="text-yellow-400 font-mono">{value.toLocaleString()}</span>
                                             </div>
                                         </div>
-                                        <a
-                                            href={`/character/${char.id}`}
-                                            className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                                        >
-                                            View character sheet →
-                                        </a>
+                                        <a href={`/character/${char.id}`} className="text-xs text-blue-400 hover:text-blue-300 transition-colors">View character sheet →</a>
                                     </div>
                                 )}
                             </div>
                         )
                     }
 
-                    // Default — link rows
+                    // Default — link row
                     return (
-                        <a
-                            key={char.id}
-                            href={`/character/${char.id}`}
+                        <a key={char.id} href={`/character/${char.id}`}
                             className="flex items-center gap-4 bg-gray-900 border border-gray-800 hover:border-yellow-700 rounded-lg px-4 py-3 transition-colors group"
                         >
                             <div className="w-8 text-center shrink-0">
-                                {rank <= 3
-                                    ? <span className="text-xl">{MEDALS[rank - 1]}</span>
-                                    : <span className="text-gray-500 text-sm font-bold">#{rank}</span>
-                                }
+                                {rank <= 3 ? <span className="text-xl">{MEDALS[rank - 1]}</span> : <span className="text-gray-500 text-sm font-bold">#{rank}</span>}
                             </div>
-                            <div className="flex-1 font-semibold text-white group-hover:text-yellow-300 transition-colors truncate">
-                                {char.name}
-                            </div>
-                            {category.renderValue
+                            <div className="flex-1 font-semibold text-white group-hover:text-yellow-300 transition-colors truncate">{char.name}</div>
+                            {category?.renderValue
                                 ? category.renderValue(char, wordCounts, wordManaTotals, tamePowerLevels)
                                 : <div className="text-yellow-400 font-mono font-bold text-lg shrink-0">
-                                    {category.formatValue ? category.formatValue(value) : value}
+                                    {category?.formatValue ? category.formatValue(value) : value}
                                   </div>
                             }
                         </a>
