@@ -33,6 +33,12 @@ function getRarityColor(rarity: string): string {
     }
 }
 
+function formatItemDisplay(item: any): string {
+    const qty = item.quantity ?? '1'
+    const effectiveName = qty !== '1' && item.plural_name ? item.plural_name : item.name
+    return [qty, item.unit || null, effectiveName].filter(Boolean).join(' ')
+}
+
 function renderDescription(text: string): React.ReactNode[] {
     const parts: React.ReactNode[] = [];
     // Matches [Title](url) or bare https?:// URLs
@@ -283,7 +289,7 @@ export default function CharacterDetail() {
   }
 
   function handleAddItem() {
-    const newItem = { name: "New Item", rarity: "Common", description: "" }
+    const newItem = { name: "New Item", rarity: "Common", description: "", quantity: "1", unit: "", plural_name: "" }
     setFormData({ ...formData, inventory: [...(formData.inventory || []), newItem] })
   }
 
@@ -1188,26 +1194,46 @@ export default function CharacterDetail() {
                         {formData.inventory && formData.inventory.map((item: any, i: number) => (
                             <div key={i} className="bg-gray-900 p-3 rounded border border-gray-600">
                                 <div className="flex flex-col md:flex-row gap-2 mb-2">
-                                    <input 
-                                        className="flex-1 bg-black text-white px-2 py-1 rounded border border-gray-700" 
+                                    <input
+                                        className="flex-1 bg-black text-white px-2 py-1 rounded border border-gray-700"
                                         placeholder="Item Name"
-                                        value={item.name} 
+                                        value={item.name}
                                         onChange={(e) => handleInventoryChange(i, 'name', e.target.value)}
                                     />
-                                    <select 
+                                    <select
                                         className={`bg-black px-2 py-1 rounded border border-gray-700 text-xs font-bold ${getRarityColor(item.rarity)}`}
                                         value={item.rarity || 'Common'}
                                         onChange={(e) => handleInventoryChange(i, 'rarity', e.target.value)}
                                     >
                                         {RARITIES.map(r => <option key={r} value={r} className="text-white">{r}</option>)}
                                     </select>
-                                    <button 
+                                    <button
                                         onClick={() => handleRemoveItem(i)}
                                         className="bg-red-900/50 text-red-400 hover:bg-red-900 px-3 rounded border border-red-800 transition"
                                         title="Remove Item"
                                     >
                                         ✕
                                     </button>
+                                </div>
+                                <div className="flex gap-2 mb-2">
+                                    <input
+                                        className="w-20 bg-black text-white text-xs px-2 py-1 rounded border border-gray-700"
+                                        placeholder="Qty"
+                                        value={item.quantity ?? '1'}
+                                        onChange={(e) => handleInventoryChange(i, 'quantity', e.target.value)}
+                                    />
+                                    <input
+                                        className="w-28 bg-black text-gray-300 text-xs px-2 py-1 rounded border border-gray-700"
+                                        placeholder="Unit (optional)"
+                                        value={item.unit || ''}
+                                        onChange={(e) => handleInventoryChange(i, 'unit', e.target.value)}
+                                    />
+                                    <input
+                                        className="flex-1 bg-black text-gray-300 text-xs px-2 py-1 rounded border border-gray-700"
+                                        placeholder="Plural name (optional, e.g. swords)"
+                                        value={item.plural_name || ''}
+                                        onChange={(e) => handleInventoryChange(i, 'plural_name', e.target.value)}
+                                    />
                                 </div>
                                 <textarea
                                     className="w-full bg-black text-gray-400 text-xs px-2 py-1 rounded border border-gray-700 min-h-[60px]"
@@ -1238,7 +1264,7 @@ export default function CharacterDetail() {
                         {char.inventory && char.inventory.length > 0 ? (
                             char.inventory.map((item: any, i: number) => (
                                 <div key={i} className="bg-gray-900 p-3 rounded border border-gray-800 hover:border-gray-600 transition-colors">
-                                    <div className={`font-medium ${getRarityColor(item.rarity)}`}>{item.name}</div>
+                                    <div className={`font-medium ${getRarityColor(item.rarity)}`}>{formatItemDisplay(item)}</div>
                                     {item.description && (
                                         <div className="mt-2 text-xs text-gray-400 italic bg-black/20 p-2 rounded border-l-2 border-blue-500 break-words">
                                             {renderDescription(item.description)}
