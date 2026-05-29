@@ -193,7 +193,7 @@ export default function Leaderboard() {
                     .select('id, name, level, xp_current, mana_max, stats, money, abilities, inventory, skills')
                     .neq('is_tame', true).neq('is_npc', true).order('name'),
                 supabase.from('character_words').select('character_id, words_of_power(mana_cost)'),
-                supabase.from('characters').select('player_name, job, abilities, stats, mana_max').eq('is_tame', true),
+                supabase.from('characters').select('player_name, job, abilities, stats, mana_max').eq('is_tame', true).neq('is_dead', true),
                 supabase.from('published_leaderboard').select('*').eq('id', 1).maybeSingle(),
                 supabase.auth.getUser(),
             ])
