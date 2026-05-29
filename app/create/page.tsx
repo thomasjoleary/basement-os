@@ -14,6 +14,8 @@ export default function CreateCharacter() {
     type: 'NPC', // PC, NPC, Tame
     party: '',
     player_name: '', // For Tames (Owner Name) or PCs (Player Name)
+    tame_class: '',
+    species: '',
     hp: 100,
     stats: { strength: 0, speed: 0, fortitude: 0, magic: 0 }
   })
@@ -37,7 +39,9 @@ export default function CreateCharacter() {
         is_npc: form.type !== 'PC', // NPC or Tame are both "NPCs" technically
         is_tame: form.type === 'Tame',
         party: form.party || null,
-        player_name: form.player_name || null, // Stores Owner Name for Tames
+        player_name: form.player_name || null,
+        tame_class: form.type === 'Tame' ? (form.tame_class || null) : null,
+        species: form.type === 'Tame' ? (form.species || null) : null,
         tags: [form.type]
     }
 
@@ -104,25 +108,50 @@ export default function CreateCharacter() {
                 </div>
             </div>
 
+            {form.type === 'Tame' && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label className="block text-xs uppercase text-gray-500 mb-1">Tame Class</label>
+                        <input
+                            className="w-full bg-gray-900 border border-gray-600 rounded p-2"
+                            placeholder="e.g. Guardian"
+                            value={form.tame_class}
+                            onChange={e => setForm({...form, tame_class: e.target.value})}
+                        />
+                    </div>
+                    <div>
+                        <label className="block text-xs uppercase text-gray-500 mb-1">Species</label>
+                        <input
+                            className="w-full bg-gray-900 border border-gray-600 rounded p-2"
+                            placeholder="e.g. Wolf"
+                            value={form.species}
+                            onChange={e => setForm({...form, species: e.target.value})}
+                        />
+                    </div>
+                </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                     <label className="block text-xs uppercase text-gray-500 mb-1">Max HP</label>
-                    <input 
+                    <input
                         type="number"
                         className="w-full bg-gray-900 border border-gray-600 rounded p-2"
                         value={form.hp}
                         onChange={e => setForm({...form, hp: parseInt(e.target.value)})}
                     />
                 </div>
-                <div>
-                    <label className="block text-xs uppercase text-gray-500 mb-1">Party Name (Optional)</label>
-                    <input 
-                        className="w-full bg-gray-900 border border-gray-600 rounded p-2"
-                        placeholder="e.g. The Saviors"
-                        value={form.party}
-                        onChange={e => setForm({...form, party: e.target.value})}
-                    />
-                </div>
+                {form.type !== 'Tame' && (
+                    <div>
+                        <label className="block text-xs uppercase text-gray-500 mb-1">Party Name (Optional)</label>
+                        <input
+                            className="w-full bg-gray-900 border border-gray-600 rounded p-2"
+                            placeholder="e.g. The Saviors"
+                            value={form.party}
+                            onChange={e => setForm({...form, party: e.target.value})}
+                        />
+                    </div>
+                )}
             </div>
 
             {/* BASE STATS */}
