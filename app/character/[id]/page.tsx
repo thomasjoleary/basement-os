@@ -387,6 +387,29 @@ export default function CharacterDetail() {
     setRefreshKey(k => k + 1)
   }
 
+  async function toggleTameDead() {
+    const newDeadState = !char.is_dead
+    const updates: any = { is_dead: newDeadState }
+    if (newDeadState) updates.is_active = false
+    const { error } = await supabase
+      .from('characters')
+      .update(updates)
+      .eq('id', id)
+
+    if (error) {
+      alert('Error updating tame: ' + error.message)
+      return
+    }
+
+    if (newDeadState && char.is_active) {
+      await recalcOwnerHp(String(id), false)
+    }
+
+    setChar({ ...char, ...updates })
+    setFormData({ ...formData, ...updates })
+    setRefreshKey(k => k + 1)
+  }
+
   async function recalcOwnerHp(tameId: string, tameNewActiveState: boolean) {
     // Find the owner — try player_name (exact) first, then job prefix (ilike)
     let owner: any = null
@@ -954,16 +977,30 @@ export default function CharacterDetail() {
                 <div className="bg-gray-800 rounded-xl p-6 shadow border border-gray-700">
                     <div className="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
                         <h2 className="text-xl font-bold text-gray-200">Tame Buffs</h2>
-                        <button
-                            onClick={toggleTameActive}
-                            className={`px-3 py-1 rounded font-bold text-sm transition ${
-                                char.is_active 
-                                ? 'bg-green-900 text-green-300 border border-green-600 hover:bg-green-800' 
-                                : 'bg-gray-700 text-gray-400 border border-gray-600 hover:bg-gray-600'
-                            }`}
-                        >
-                            {char.is_active ? '✓ Active' : 'Inactive'}
-                        </button>
+                        <div className="flex items-center gap-2">
+                            {!char.is_dead && (
+                                <button
+                                    onClick={toggleTameActive}
+                                    className={`px-3 py-1 rounded font-bold text-sm transition ${
+                                        char.is_active
+                                        ? 'bg-green-900 text-green-300 border border-green-600 hover:bg-green-800'
+                                        : 'bg-gray-700 text-gray-400 border border-gray-600 hover:bg-gray-600'
+                                    }`}
+                                >
+                                    {char.is_active ? '✓ Active' : 'Inactive'}
+                                </button>
+                            )}
+                            <button
+                                onClick={toggleTameDead}
+                                className={`px-3 py-1 rounded font-bold text-sm transition ${
+                                    char.is_dead
+                                    ? 'bg-gray-700 text-gray-400 border border-gray-600 hover:bg-gray-600'
+                                    : 'bg-red-950 text-red-400 border border-red-800 hover:bg-red-900'
+                                }`}
+                            >
+                                {char.is_dead ? '🪦 Deceased' : '☠️ Mark Dead'}
+                            </button>
+                        </div>
                     </div>
                     
                     {isEditing ? (
