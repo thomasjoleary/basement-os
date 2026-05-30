@@ -50,6 +50,46 @@ function formatItemDisplay(item: any): string {
     return [qty, item.unit || null, effectiveName].filter(Boolean).join(' ')
 }
 
+function sumPL(items: any[]): number {
+    return (items ?? []).reduce((s: number, a: any) => s + (Number(a.power_level) || 0), 0)
+}
+
+function parseQty(qty: string | undefined | null): number {
+    if (!qty) return 1
+    const s = String(qty).trim()
+    if (s.includes('/')) {
+        const [num, den] = s.split('/')
+        const result = parseFloat(num) / parseFloat(den)
+        return isNaN(result) ? 1 : result
+    }
+    const n = parseFloat(s)
+    return isNaN(n) ? 1 : n
+}
+
+function sumItemPL(items: any[]): number {
+    return (items ?? []).reduce((s: number, item: any) => s + (Number(item.power_level) || 0) * parseQty(item.quantity), 0)
+}
+
+function calcPowerLevel(char: any, wordsManaTotal: number, linkedTames: any[]): number {
+    if (char.is_tame) {
+        return sumPL(char.abilities)
+            + Object.values(char.stats ?? {}).reduce((s: number, v: any) => s + (Number(v) || 0), 0)
+            + (char.mana_max ?? 0) * 5
+    }
+    const tamePL = linkedTames.reduce((s: number, t: any) =>
+        s + sumPL(t.abilities)
+        + Object.values(t.stats ?? {}).reduce((ss: number, v: any) => ss + (Number(v) || 0), 0)
+        + (t.mana_max ?? 0) * 5, 0)
+    return (char.level ?? 0) * 100
+        + sumPL(char.abilities)
+        + sumItemPL(char.inventory)
+        + Object.values(char.stats ?? {}).reduce((s: number, v: any) => s + (Number(v) || 0), 0)
+        + (char.mana_max ?? 0) * 5
+        + (char.skills ?? []).reduce((s: number, sk: any) => s + (Number(sk.level) || 0) * 50, 0)
+        + wordsManaTotal * 25
+        + tamePL
+}
+
 function renderDescription(text: string): React.ReactNode[] {
     const parts: React.ReactNode[] = [];
     // Matches [Title](url) or bare https?:// URLs
@@ -154,34 +194,29 @@ export default function CharacterDetail() {
         setChar(normalized)
         setFormData(normalized)
         
-        // Fetch active tames that belong to THIS character (master linkage)
-        // Tames are linked via player_name matching this character's name OR job starting with first name
+        // Fetch active linked tames (for buff display and PL calculation)
         const firstName = data.name?.split(' ')?.[0] ?? ''
         const { data: tames } = await supabase
           .from('characters')
-          .select('name, stat_buffs, is_active')
+          .select('name, stat_buffs, is_active, stats, abilities, mana_max')
           .eq('is_tame', true)
           .eq('is_active', true)
+          .neq('is_dead', true)
           .or(`player_name.eq.${data.name},job.ilike.${firstName}%`)
-        
-        if (tames && tames.length > 0) {
-          setActiveTames(tames)
-          // Calculate total stats (base + buffs)
-          const baseStats = normalized.stats || {}
-          const buffedStats = { ...baseStats }
-          
-          tames.forEach(tame => {
-            const buffs = tame.stat_buffs || {}
-            Object.keys(buffs).forEach(stat => {
-              buffedStats[stat] = (buffedStats[stat] || 0) + (buffs[stat] || 0)
-            })
+
+        const activeTameList = tames ?? []
+        setActiveTames(activeTameList)
+
+        // Calculate total stats from active tame buffs
+        const baseStats = normalized.stats || {}
+        const buffedStats = { ...baseStats }
+        activeTameList.forEach((tame: any) => {
+          const buffs = tame.stat_buffs || {}
+          Object.keys(buffs).forEach(stat => {
+            buffedStats[stat] = (buffedStats[stat] || 0) + (buffs[stat] || 0)
           })
-          
-          setTotalStats(buffedStats)
-        } else {
-          // No linked tames = no buffs, just use base stats
-          setTotalStats(normalized.stats || {})
-        }
+        })
+        setTotalStats(buffedStats)
       }
 
       // 3. If GM, fetch all profiles for assignment dropdown
@@ -894,9 +929,20 @@ export default function CharacterDetail() {
                     />
                 </div>
              </div>
+             {/* POWER LEVEL */}
+             {(() => {
+                 const wordsManaTotal = words.reduce((s: number, w: any) => s + (w.mana_cost ?? 0), 0)
+                 const pl = calcPowerLevel(char, wordsManaTotal, activeTames)
+                 return (
+                     <div className="w-full md:w-64 flex justify-between items-center py-1">
+                         <span className="text-xs uppercase font-bold text-gray-400">Power Level</span>
+                         <span className="text-yellow-400 font-mono font-bold">{pl.toLocaleString()}</span>
+                     </div>
+                 )
+             })()}
           </div>
         </div>
-        
+
         {/* TAGS */}
         <div className="flex flex-wrap gap-2 mt-4">
             {char.tags && char.tags.map((tag: string) => (
