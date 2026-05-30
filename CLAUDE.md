@@ -21,13 +21,14 @@ Key columns:
 | `mana_current` / `mana_max` | int | |
 | `stats` | jsonb | `{ strength, speed, fortitude, magic, ...custom }` |
 | `skills` | jsonb | `[{ name: string, level: number }]` |
-| `abilities` | jsonb | `[{ name, rarity, description, level, type }]` |
-| `inventory` | jsonb | `[{ name, rarity, description }]` |
+| `abilities` | jsonb | `[{ name, rarity, description, level, type, power_level }]` |
+| `inventory` | jsonb | `[{ name, rarity, description, quantity, unit, plural_name, power_level }]` — `quantity` is a string (supports fractions like `"1/8"`); `power_level` is per-unit (leaderboard multiplies by qty) |
 | `money` | jsonb | `{ copper, silver, gold }` |
 | `stat_buffs` | jsonb | Tame buffs received (not base stats) |
 | `is_tame` | bool | Tame characters have no XP/level system |
+| `is_dead` | bool | Dead characters appear in the Graveyard; dead tames are excluded from PL calc |
 | `is_npc` | bool | |
-| `is_active` | bool | For tames: whether buff is active |
+| `is_active` | bool | For tames: whether buff is active (only active tames contribute to PL) |
 | `player_name` | text | For tames: links to owner character's name |
 | `job` | text | For tames: job starts with owner's first name |
 | `tame_class` | text | Tame display |
@@ -115,6 +116,9 @@ GM can cancel at any point, which nulls `pending_levelup`.
 - Tames are characters with `is_tame: true`
 - Linked to a player character via `player_name == char.name` OR `job ILIKE 'FirstName%'`
 - Active tames (`is_active: true`) apply their `stat_buffs` to the linked player's displayed stats
+- Only **active, non-dead** tames count toward a player's Power Level
+- `tame_class` and `species` are set at creation and editable on the sheet
+- GM can mark a tame dead via the ☠️ button in the Tame Buffs section — automatically deactivates it and moves it to the graveyard
 - Ownership of tames cascades when the GM reassigns a player character
 
 ---
@@ -132,13 +136,41 @@ GM can cancel at any point, which nulls `pending_levelup`.
 | Level & XP | Level | Sorted by level; XP used as tiebreaker; both displayed per row |
 | Currency | Currency | Sorted by Gold → Silver → Copper; all three shown color-coded per row |
 | Words | Words of Power | Count from `character_words` join table |
+| Power | Power Level | Calculated score; expandable breakdown per player; GM-only |
+| Likeability | Likeability | GM drag-and-drop ordering; stored in Supabase auth user metadata |
+
+### Power Level Formula
+```
+(level × 100) + sumPL(abilities) + sumItemPL(inventory) + sum(stats) + (mana_max × 5)
+  + sum(skill.level × 50) + (wordManaCostTotal × 25) + sum(activeTamePowerLevels)
+```
+- `sumPL(abilities)` — sum of `power_level` fields on each ability
+- `sumItemPL(inventory)` — sum of `power_level × quantity` per item; `quantity` supports fractions (`"1/8"`)
+- Only **active, non-dead** tames are included
+- Tame own PL = `sumPL(abilities) + sum(stats) + (mana_max × 5)`
+
+### Default Power Levels by Rarity
+**Abilities:** Common 50 · Uncommon 100 · Rare 200 · Very Rare 350 · Legendary 500 · Holy 750 · Unique 1000 · Demonic 750
+
+**Inventory items:** Common 0 · Uncommon 50 · Rare 100 · Very Rare 200 · Legendary 400 · Holy 600 · Unique 1000 · Demonic 600
+
+Power level auto-fills when rarity is set; only overrides if the current value is still at a rarity default.
+
+### Published Leaderboard
+- GM can publish selected categories to players with an optional expiry (1h / 4h / 8h / 24h / 3d / 1w / Permanent)
+- Stored in the `published_leaderboard` singleton table (`id = 1`)
+- Players see only published, non-expired categories; empty state shown otherwise
+- SQL migration: `sql/add_published_leaderboard.sql`
 
 ---
 
 ## Key Files
-- `app/character/[id]/page.tsx` — the main character sheet page (everything: view, edit, level-up modal)
-- `app/leaderboard/page.tsx` — GM-only leaderboard
-- `sql/add_pending_levelup.sql` — migration adding the `pending_levelup` column and player UPDATE RLS policy
+- `app/character/[id]/page.tsx` — the main character sheet page (everything: view, edit, level-up modal, power level display)
+- `app/leaderboard/page.tsx` — leaderboard (GM: all categories + publish panel; players: published categories only)
+- `app/create/page.tsx` — new character creation form (includes tame_class/species fields for tames)
+- `sql/add_pending_levelup.sql` — migration: `pending_levelup` column + player UPDATE RLS policy
+- `sql/add_published_leaderboard.sql` — migration: `published_leaderboard` singleton table with RLS
+- `sql/character_words_leaderboard_read.sql` — migration: allows all authenticated users to read `character_words` (needed for leaderboard)
 - `lib/supabase.ts` — Supabase client
 
 ## UI Notes
@@ -147,3 +179,5 @@ GM can cancel at any point, which nulls `pending_levelup`.
 - The level-up modal is an IIFE inside the JSX; `AllocationUI` is defined as a `const` inside it and must be called as `AllocationUI()` (not `<AllocationUI />`) to avoid React unmounting it on every keystroke
 - Tailwind 4 is in use — avoid any Tailwind features that require the compiler (use core utility classes only)
 - Inventory and ability descriptions support `[Title](url)` markdown link syntax, rendered via `renderDescription()` in `app/character/[id]/page.tsx`
+- Power level is displayed in the character sheet header (below HP/Mana/XP bars) via `calcPowerLevel()` in `app/character/[id]/page.tsx`
+- `formatItemDisplay(item)` renders inventory items as `[qty] [unit] [name/plural_name]`
