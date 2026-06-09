@@ -716,7 +716,7 @@ export default function CharacterDetail() {
                     <Link href="/wiki" className="px-4 py-2 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition flex items-center gap-2">
                         📖 Wiki
                     </Link>
-                    {isGM && !char.is_tame && (
+                    {isGM && (
                         <button onClick={() => { setRestHours('8'); setRestMinutes('0'); setShowRestModal(true) }} className="px-4 py-2 rounded bg-indigo-700 text-white hover:bg-indigo-600 transition flex items-center gap-2">
                             💤 Rest
                         </button>
