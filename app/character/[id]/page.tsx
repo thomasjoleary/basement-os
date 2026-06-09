@@ -133,6 +133,11 @@ export default function CharacterDetail() {
   const [maxMana, setMaxMana] = useState('')
   const [spellBuilderInput, setSpellBuilderInput] = useState('')
 
+  // Rest Modal
+  const [showRestModal, setShowRestModal] = useState(false)
+  const [restHours, setRestHours] = useState('8')
+  const [restMinutes, setRestMinutes] = useState('0')
+
   // Level Up Modal
   const [showLevelUpModal, setShowLevelUpModal] = useState(false)
   const [levelUpStep, setLevelUpStep] = useState<1 | 2 | 3>(1)
@@ -506,6 +511,29 @@ export default function CharacterDetail() {
 
   }
 
+  async function handleRest() {
+    const totalMinutes = (parseInt(restHours) || 0) * 60 + (parseInt(restMinutes) || 0)
+    const fraction = Math.min(1, totalMinutes / 480)
+    const hpGain = Math.floor(fraction * (char.hp_max || 0))
+    const manaGain = Math.floor(fraction * (char.mana_max || 0))
+    const newHp = Math.min(char.hp_max || 0, (char.hp_current || 0) + hpGain)
+    const newMana = Math.min(char.mana_max || 0, (char.mana_current || 0) + manaGain)
+
+    const { error } = await supabase
+      .from('characters')
+      .update({ hp_current: newHp, mana_current: newMana })
+      .eq('id', id)
+
+    if (error) {
+      alert('Error saving rest: ' + error.message)
+      return
+    }
+
+    setChar({ ...char, hp_current: newHp, mana_current: newMana })
+    setFormData({ ...formData, hp_current: newHp, mana_current: newMana })
+    setShowRestModal(false)
+  }
+
   // --- LEVEL UP HELPERS ---
 
   const XP_MAX_TABLE: { [key: number]: number } = {
@@ -688,6 +716,11 @@ export default function CharacterDetail() {
                     <Link href="/wiki" className="px-4 py-2 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition flex items-center gap-2">
                         📖 Wiki
                     </Link>
+                    {isGM && (
+                        <button onClick={() => { setRestHours('8'); setRestMinutes('0'); setShowRestModal(true) }} className="px-4 py-2 rounded bg-indigo-700 text-white hover:bg-indigo-600 transition flex items-center gap-2">
+                            💤 Rest
+                        </button>
+                    )}
                     {/* GM: XP maxed, no pending level-up yet */}
                     {isGM && xpMaxed && !pendingLevelup && (
                         <button onClick={openGMInitiateModal} className="px-4 py-2 rounded bg-fuchsia-700 text-white hover:bg-fuchsia-600 transition font-bold flex items-center gap-2">
@@ -1564,6 +1597,64 @@ export default function CharacterDetail() {
 
         </div>
       </div>
+
+      {/* ===================== REST MODAL ===================== */}
+      {showRestModal && (() => {
+        const totalMinutes = (parseInt(restHours) || 0) * 60 + (parseInt(restMinutes) || 0)
+        const fraction = Math.min(1, totalMinutes / 480)
+        const hpGain = Math.floor(fraction * (char.hp_max || 0))
+        const manaGain = Math.floor(fraction * (char.mana_max || 0))
+        const newHp = Math.min(char.hp_max || 0, (char.hp_current || 0) + hpGain)
+        const newMana = Math.min(char.mana_max || 0, (char.mana_current || 0) + manaGain)
+        return (
+          <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+            <div className="bg-gray-800 border border-gray-600 rounded-xl p-6 w-full max-w-sm shadow-2xl">
+              <h2 className="text-xl font-bold text-white mb-4">💤 Rest</h2>
+              <div className="flex items-center gap-3 mb-5">
+                <div className="flex flex-col items-center gap-1">
+                  <label className="text-xs text-gray-400 uppercase font-bold">Hours</label>
+                  <input
+                    type="number" min="0" max="8"
+                    className="w-20 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-center text-white text-lg"
+                    value={restHours}
+                    onChange={e => setRestHours(e.target.value)}
+                  />
+                </div>
+                <span className="text-gray-400 text-xl mt-4">:</span>
+                <div className="flex flex-col items-center gap-1">
+                  <label className="text-xs text-gray-400 uppercase font-bold">Minutes</label>
+                  <input
+                    type="number" min="0" max="59"
+                    className="w-20 bg-gray-900 border border-gray-600 rounded px-2 py-1 text-center text-white text-lg"
+                    value={restMinutes}
+                    onChange={e => setRestMinutes(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="bg-gray-900 rounded-lg p-3 mb-5 space-y-2 text-sm">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-400">Rest fraction</span>
+                  <span className="text-white font-mono">{Math.round(fraction * 100)}%</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-red-400">HP</span>
+                  <span className="text-white">{char.hp_current} → <span className="font-bold text-green-400">{newHp}</span> <span className="text-gray-500 text-xs">(+{hpGain} / {char.hp_max} max)</span></span>
+                </div>
+                {(char.mana_max || 0) > 0 && (
+                  <div className="flex justify-between items-center">
+                    <span className="text-blue-400">Mana</span>
+                    <span className="text-white">{char.mana_current} → <span className="font-bold text-green-400">{newMana}</span> <span className="text-gray-500 text-xs">(+{manaGain} / {char.mana_max} max)</span></span>
+                  </div>
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setShowRestModal(false)} className="flex-1 px-4 py-2 rounded bg-gray-700 text-gray-300 hover:bg-gray-600 transition">Cancel</button>
+                <button onClick={handleRest} disabled={totalMinutes === 0} className="flex-1 px-4 py-2 rounded bg-indigo-600 text-white hover:bg-indigo-500 transition font-bold disabled:opacity-40 disabled:cursor-not-allowed">Apply</button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* ===================== LEVEL UP MODAL ===================== */}
       {showLevelUpModal && char && levelUpModalMode && (() => {
