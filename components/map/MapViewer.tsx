@@ -256,176 +256,35 @@ export default function MapViewer({ isGM }: MapViewerProps) {
   
   const travelTotalDistance = travelSegmentDistances.reduce((sum, dist) => sum + dist, 0)
 
+  const [sheetOpen, setSheetOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState<'layers' | 'tools' | 'fog'>('layers')
+
+  // Active mode label for the status banner
+  const activeMode = isMarkerCreating
+    ? '+ Click map to place marker'
+    : isPositionPlacing
+    ? '📍 Click map to set position'
+    : isDistanceMeasuring
+    ? '📏 Click map to add waypoints'
+    : isPlanningTravel
+    ? '🚶 Click map to plot route'
+    : isFogEditing
+    ? '🌫️ Click map to add fog points'
+    : null
+
   return (
     <div className="relative w-full h-[calc(100vh-73px)]">
-      {/* Controls */}
-      <div className="absolute top-4 left-4 z-[2100] bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-3 space-y-2">
-        <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            id="markers"
-            checked={showMarkers}
-            onChange={(e) => setShowMarkers(e.target.checked)}
-            className="w-4 h-4 accent-red-600 cursor-pointer"
-          />
-          <label htmlFor="markers" className="text-sm font-medium cursor-pointer select-none">
-            Show Markers
-          </label>
+      {/* Active mode banner */}
+      {activeMode && (
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[2200] bg-gray-900/95 border border-gray-600 rounded-full px-4 py-1.5 text-sm text-white font-medium shadow-lg pointer-events-none">
+          {activeMode}
         </div>
-        
-        {showMarkers && (
-          <div className="flex items-center gap-2 pl-4">
-            <input
-              type="checkbox"
-              id="filters"
-              checked={showFilters}
-              onChange={(e) => setShowFilters(e.target.checked)}
-              className="w-4 h-4 accent-red-600 cursor-pointer"
-            />
-            <label htmlFor="filters" className="text-sm font-medium cursor-pointer select-none">
-              Filter Types
-            </label>
-          </div>
-        )}
-        
-        {showMarkers && showFilters && (
-          <div className="pl-4 space-y-1 max-h-40 overflow-y-auto border-l-2 border-gray-700 ml-2">
-            {MARKER_TYPES.map(({ type, label, icon }) => (
-              <div key={type} className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id={`filter-${type}`}
-                  checked={markerFilters.length === 0 || markerFilters.includes(type)}
-                  onChange={(e) => {
-                    if (e.target.checked) {
-                      // If was filtering, add this type
-                      if (markerFilters.length > 0) {
-                        setMarkerFilters([...markerFilters, type])
-                      }
-                    } else {
-                      // Start filtering, or remove this type
-                      if (markerFilters.length === 0) {
-                        // First uncheck - filter to everything except this
-                        setMarkerFilters(MARKER_TYPES.filter(t => t.type !== type).map(t => t.type))
-                      } else {
-                        setMarkerFilters(markerFilters.filter(t => t !== type))
-                      }
-                    }
-                  }}
-                  className="w-3 h-3 accent-red-600 cursor-pointer"
-                />
-                <label htmlFor={`filter-${type}`} className="text-xs cursor-pointer select-none flex items-center gap-1">
-                  <span>{icon}</span> {label}
-                </label>
-              </div>
-            ))}
-            {markerFilters.length > 0 && (
-              <button
-                onClick={() => setMarkerFilters([])}
-                className="text-xs text-red-400 hover:text-red-300 mt-1"
-              >
-                Reset filters
-              </button>
-            )}
-          </div>
-        )}
-        
-        {/* Fog toggle - GM only (players always have fog enabled) */}
-        {isGM && (
-          <div className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              id="fog"
-              checked={showFog}
-              onChange={(e) => setShowFog(e.target.checked)}
-              className="w-4 h-4 accent-red-600 cursor-pointer"
-            />
-            <label htmlFor="fog" className="text-sm font-medium cursor-pointer select-none">
-              Show Fog
-            </label>
-          </div>
-        )}
-        
-        {/* Player Positions toggle */}
-        <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            id="positions"
-            checked={showPositions}
-            onChange={(e) => setShowPositions(e.target.checked)}
-            className="w-4 h-4 accent-red-600 cursor-pointer"
-          />
-          <label htmlFor="positions" className="text-sm font-medium cursor-pointer select-none">
-            Show Positions
-          </label>
-        </div>
-        
-        <div className="flex items-center gap-2">
-          <input
-            type="checkbox"
-            id="biomes"
-            checked={showBiomes}
-            onChange={(e) => setShowBiomes(e.target.checked)}
-            className="w-4 h-4 accent-red-600 cursor-pointer"
-          />
-          <label htmlFor="biomes" className="text-sm font-medium cursor-pointer select-none">
-            Show Biomes
-          </label>
-        </div>
-        
-        {showBiomes && (
-          <div className="flex items-center gap-2 pl-4">
-            <input
-              type="checkbox"
-              id="legend"
-              checked={showLegend}
-              onChange={(e) => setShowLegend(e.target.checked)}
-              className="w-4 h-4 accent-red-600 cursor-pointer"
-            />
-            <label htmlFor="legend" className="text-sm font-medium cursor-pointer select-none">
-              Show Legend
-            </label>
-          </div>
-        )}
-        
-        {/* GM: Add Marker button */}
-        {isGM && (
-          <div className="pt-2 border-t border-gray-700 mt-2">
-            <button
-              onClick={() => {
-                const newState = !isMarkerCreating
-                setIsMarkerCreating(newState)
-                if (isMarkerCreating) {
-                  setCreateMarkerPos(null)
-                }
-                // Auto-exit other modes when entering marker creation
-                if (newState) {
-                  setIsFogEditing(false)
-                  setIsPositionPlacing(false)
-                  setIsDistanceMeasuring(false)
-                }
-              }}
-              className={`w-full px-3 py-1.5 text-sm rounded font-medium transition ${
-                isMarkerCreating
-                  ? 'bg-green-600 hover:bg-green-500 text-white'
-                  : 'bg-gray-700 hover:bg-gray-600 text-gray-200'
-              }`}
-            >
-              {isMarkerCreating ? '✓ Click Map to Place' : '+ Add Marker'}
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Zoom Instructions */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-[2100] bg-gray-800/90 border border-gray-700 rounded-lg px-4 py-2 text-xs text-gray-400">
-        <span className="font-bold text-gray-300">Controls:</span> Scroll to zoom • Drag to pan
-      </div>
+      )}
 
       {/* Hovered Biome Display */}
       {showBiomes && hoveredBiome !== null && (
-        <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-[2100] bg-gray-800/95 border border-gray-600 rounded-lg px-4 py-2 flex items-center gap-3">
-          <div 
+        <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[2100] bg-gray-800/95 border border-gray-600 rounded-lg px-4 py-2 flex items-center gap-3">
+          <div
             className="w-5 h-5 rounded border border-gray-500"
             style={{ backgroundColor: BIOMES[hoveredBiome]?.color || '#000' }}
           />
@@ -437,7 +296,7 @@ export default function MapViewer({ isGM }: MapViewerProps) {
 
       {/* Selected Marker Popup */}
       {selectedMarker && (
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[1001] bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 min-w-[300px] max-w-[400px]">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[2300] bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 min-w-[300px] max-w-[90vw]">
           <div className="flex justify-between items-start mb-2">
             <div className="flex items-center gap-2">
               {/* Icon - clickable for GM to edit */}
@@ -673,151 +532,250 @@ export default function MapViewer({ isGM }: MapViewerProps) {
         </div>
       )}
 
-      {/* Distance Tool (GM and Players) */}
-      <div className="absolute top-4 right-4 z-[2100] w-64">
-        <DistanceTool
-          isActive={isDistanceMeasuring}
-          onToggle={(active) => {
-            setIsDistanceMeasuring(active)
-            if (!active) {
-              setDistanceWaypoints([])  // Clear waypoints when deactivating
-            }
-            // Auto-exit other modes
-            if (active) {
-              setIsFogEditing(false)
-              setIsPositionPlacing(false)
-              setIsMarkerCreating(false)
-            }
-          }}
-          waypoints={distanceWaypoints}
-          onClearWaypoints={() => setDistanceWaypoints([])}
-          onUndoLastWaypoint={() => setDistanceWaypoints(prev => prev.slice(0, -1))}
-          onUpdateWaypoint={(index, x, y) => {
-            setDistanceWaypoints(prev => {
-              const updated = [...prev]
-              updated[index] = { x, y }
-              return updated
-            })
-          }}
-          totalDistance={totalDistance}
-          segmentDistances={segmentDistances}
-        />
+      {/* Bottom Sheet */}
+      <div className={`absolute bottom-0 left-0 right-0 z-[2100] bg-gray-900 border-t border-gray-700 rounded-t-2xl shadow-2xl transition-transform duration-300 ${sheetOpen ? 'translate-y-0' : 'translate-y-[calc(100%-44px)]'}`}>
+        {/* Handle / tab bar */}
+        <button
+          className="w-full flex flex-col items-center pt-2 pb-1 focus:outline-none"
+          onClick={() => setSheetOpen(o => !o)}
+          aria-label={sheetOpen ? 'Close controls' : 'Open controls'}
+        >
+          <div className="w-10 h-1 rounded-full bg-gray-600 mb-2" />
+          <div className="flex items-center gap-3 pb-1">
+            {(['layers', 'tools', ...(isGM ? ['fog'] : [])] as const).map(tab => (
+              <button
+                key={tab}
+                onClick={(e) => { e.stopPropagation(); setActiveTab(tab as any); setSheetOpen(true) }}
+                className={`px-3 py-1 rounded-full text-xs font-semibold capitalize transition ${
+                  activeTab === tab && sheetOpen
+                    ? 'bg-red-600 text-white'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+              >
+                {tab === 'layers' ? '🗺️ Layers' : tab === 'tools' ? '🛠️ Tools' : '🌫️ Fog'}
+              </button>
+            ))}
+          </div>
+        </button>
+
+        {/* Sheet content */}
+        {sheetOpen && (
+          <div className="px-4 pb-6 overflow-y-auto max-h-[60vh]">
+
+            {/* LAYERS TAB */}
+            {activeTab === 'layers' && (
+              <div className="space-y-3 pt-2">
+                <div className="grid grid-cols-2 gap-2">
+                  {[
+                    { id: 'markers', label: 'Markers', checked: showMarkers, onChange: setShowMarkers },
+                    { id: 'positions', label: 'Positions', checked: showPositions, onChange: setShowPositions },
+                    { id: 'biomes', label: 'Biomes', checked: showBiomes, onChange: setShowBiomes },
+                    ...(isGM ? [{ id: 'fog', label: 'Fog of War', checked: showFog, onChange: setShowFog }] : []),
+                    ...(showBiomes ? [{ id: 'legend', label: 'Biome Legend', checked: showLegend, onChange: setShowLegend }] : []),
+                  ].map(({ id, label, checked, onChange }) => (
+                    <label key={id} className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer select-none transition ${checked ? 'bg-red-900/30 border-red-700 text-white' : 'bg-gray-800 border-gray-700 text-gray-400'}`}>
+                      <input type="checkbox" id={id} checked={checked} onChange={(e) => onChange(e.target.checked)} className="w-4 h-4 accent-red-600" />
+                      <span className="text-sm font-medium">{label}</span>
+                    </label>
+                  ))}
+                </div>
+
+                {showMarkers && (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-xs text-gray-400 uppercase tracking-wide">Filter Marker Types</span>
+                      {markerFilters.length > 0 && (
+                        <button onClick={() => setMarkerFilters([])} className="text-xs text-red-400 hover:text-red-300">Reset</button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {MARKER_TYPES.map(({ type, label, icon }) => {
+                        const active = markerFilters.length === 0 || markerFilters.includes(type)
+                        return (
+                          <label key={type} className={`flex items-center gap-2 px-2 py-1.5 rounded border cursor-pointer select-none text-xs transition ${active ? 'bg-gray-700 border-gray-500 text-white' : 'bg-gray-800 border-gray-700 text-gray-500'}`}>
+                            <input
+                              type="checkbox"
+                              checked={active}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  if (markerFilters.length > 0) setMarkerFilters([...markerFilters, type])
+                                } else {
+                                  if (markerFilters.length === 0) {
+                                    setMarkerFilters(MARKER_TYPES.filter(t => t.type !== type).map(t => t.type))
+                                  } else {
+                                    setMarkerFilters(markerFilters.filter(t => t !== type))
+                                  }
+                                }
+                              }}
+                              className="w-3 h-3 accent-red-600"
+                            />
+                            <span>{icon}</span> {label}
+                          </label>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {isGM && (
+                  <button
+                    onClick={() => {
+                      const newState = !isMarkerCreating
+                      setIsMarkerCreating(newState)
+                      if (isMarkerCreating) setCreateMarkerPos(null)
+                      if (newState) {
+                        setIsFogEditing(false)
+                        setIsPositionPlacing(false)
+                        setIsDistanceMeasuring(false)
+                      }
+                      setSheetOpen(false)
+                    }}
+                    className={`w-full px-3 py-2.5 text-sm rounded-lg font-medium transition ${
+                      isMarkerCreating ? 'bg-green-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'
+                    }`}
+                  >
+                    {isMarkerCreating ? '✓ Placing — tap map' : '+ Add Marker'}
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* TOOLS TAB */}
+            {activeTab === 'tools' && (
+              <div className="pt-2 space-y-4">
+                <DistanceTool
+                  isActive={isDistanceMeasuring}
+                  onToggle={(active) => {
+                    setIsDistanceMeasuring(active)
+                    if (!active) setDistanceWaypoints([])
+                    if (active) {
+                      setIsFogEditing(false)
+                      setIsPositionPlacing(false)
+                      setIsMarkerCreating(false)
+                      setSheetOpen(false)
+                    }
+                  }}
+                  waypoints={distanceWaypoints}
+                  onClearWaypoints={() => setDistanceWaypoints([])}
+                  onUndoLastWaypoint={() => setDistanceWaypoints(prev => prev.slice(0, -1))}
+                  onUpdateWaypoint={(index, x, y) => {
+                    setDistanceWaypoints(prev => {
+                      const updated = [...prev]
+                      updated[index] = { x, y }
+                      return updated
+                    })
+                  }}
+                  totalDistance={totalDistance}
+                  segmentDistances={segmentDistances}
+                />
+
+                {isGM && (
+                  <>
+                    <div className="border-t border-gray-700" />
+                    <TravelControls
+                      isGM={isGM}
+                      isPlanningTravel={isPlanningTravel}
+                      onTogglePlanning={(planning) => {
+                        setIsPlanningTravel(planning)
+                        if (!planning) setTravelWaypoints([])
+                        if (planning) {
+                          setIsFogEditing(false)
+                          setIsPositionPlacing(false)
+                          setIsMarkerCreating(false)
+                          setIsDistanceMeasuring(false)
+                          setSheetOpen(false)
+                        }
+                      }}
+                      travelWaypoints={travelWaypoints}
+                      onClearWaypoints={() => setTravelWaypoints([])}
+                      selectedCharacterId={selectedTravelCharacter}
+                      onSelectCharacter={setSelectedTravelCharacter}
+                      segmentDistances={travelSegmentDistances}
+                      totalDistance={travelTotalDistance}
+                    />
+                    <div className="border-t border-gray-700" />
+                    <PositionControls
+                      isGM={isGM}
+                      selectedCharacterId={selectedPositionCharacter}
+                      onSelectCharacter={(id) => {
+                        setSelectedPositionCharacter(id)
+                        setIsPositionPlacing(false)
+                      }}
+                      isPlacing={isPositionPlacing}
+                      onTogglePlacing={(placing) => {
+                        setIsPositionPlacing(placing)
+                        if (placing) {
+                          setIsFogEditing(false)
+                          setIsDistanceMeasuring(false)
+                          setIsMarkerCreating(false)
+                          setSheetOpen(false)
+                        }
+                      }}
+                    />
+                  </>
+                )}
+              </div>
+            )}
+
+            {/* FOG TAB (GM only) */}
+            {activeTab === 'fog' && isGM && (
+              <div className="pt-2">
+                <FogControls
+                  isGM={isGM}
+                  selectedCharacterId={selectedFogCharacter}
+                  onSelectCharacter={(id) => {
+                    setSelectedFogCharacter(id)
+                    setSelectedPolygonId(null)
+                    setIsFogEditing(false)
+                  }}
+                  selectedPolygonId={selectedPolygonId}
+                  onSelectPolygon={(id) => {
+                    setSelectedPolygonId(id)
+                    setIsFogEditing(false)
+                  }}
+                  isEditing={isFogEditing}
+                  onToggleEditing={(editing) => {
+                    setIsFogEditing(editing)
+                    if (editing) {
+                      setIsPositionPlacing(false)
+                      setIsDistanceMeasuring(false)
+                      setIsMarkerCreating(false)
+                      setSheetOpen(false)
+                    }
+                  }}
+                  onClearPolygon={async () => {
+                    if (selectedPolygonId && confirm('Clear all points in this fog polygon?')) {
+                      await supabase
+                        .from('player_fog_polygons')
+                        .update({ polygon: [] })
+                        .eq('id', selectedPolygonId)
+                    }
+                  }}
+                  onUndoPoint={async () => {
+                    if (!selectedPolygonId) return
+                    const { data } = await supabase
+                      .from('player_fog_polygons')
+                      .select('id, polygon')
+                      .eq('id', selectedPolygonId)
+                      .single()
+                    if (data && data.polygon && data.polygon.length > 0) {
+                      await supabase
+                        .from('player_fog_polygons')
+                        .update({ polygon: data.polygon.slice(0, -1) })
+                        .eq('id', data.id)
+                    }
+                  }}
+                />
+              </div>
+            )}
+
+          </div>
+        )}
       </div>
-
-      {/* GM Travel Controls */}
-      {isGM && (
-        <div className="absolute bottom-4 left-4 z-[2100] w-80">
-          <TravelControls
-            isGM={isGM}
-            isPlanningTravel={isPlanningTravel}
-            onTogglePlanning={(planning) => {
-              setIsPlanningTravel(planning)
-              if (!planning) {
-                setTravelWaypoints([])
-              }
-              // Auto-exit other modes
-              if (planning) {
-                setIsFogEditing(false)
-                setIsPositionPlacing(false)
-                setIsMarkerCreating(false)
-                setIsDistanceMeasuring(false)
-              }
-            }}
-            travelWaypoints={travelWaypoints}
-            onClearWaypoints={() => setTravelWaypoints([])}
-            selectedCharacterId={selectedTravelCharacter}
-            onSelectCharacter={setSelectedTravelCharacter}
-            segmentDistances={travelSegmentDistances}
-            totalDistance={travelTotalDistance}
-          />
-        </div>
-      )}
-
-      {/* GM Position Controls */}
-      {isGM && (
-        <div className="absolute bottom-4 right-4 z-[2100] w-64">
-          <PositionControls
-            isGM={isGM}
-            selectedCharacterId={selectedPositionCharacter}
-            onSelectCharacter={(id) => {
-              setSelectedPositionCharacter(id)
-              setIsPositionPlacing(false)  // Reset placement mode when changing character
-            }}
-            isPlacing={isPositionPlacing}
-            onTogglePlacing={(placing) => {
-              setIsPositionPlacing(placing)
-              // Auto-exit other modes when entering position placement
-              if (placing) {
-                setIsFogEditing(false)
-                setIsDistanceMeasuring(false)
-                setIsMarkerCreating(false)
-              }
-            }}
-          />
-        </div>
-      )}
-
-      {/* GM Fog Controls - only show when fog is enabled */}
-      {isGM && showFog && (
-        <FogControls
-            isGM={isGM}
-            selectedCharacterId={selectedFogCharacter}
-            onSelectCharacter={(id) => {
-              setSelectedFogCharacter(id)
-              setSelectedPolygonId(null)  // Reset polygon selection when changing character
-              setIsFogEditing(false)  // Reset editing when changing character
-            }}
-            selectedPolygonId={selectedPolygonId}
-            onSelectPolygon={(id) => {
-              setSelectedPolygonId(id)
-              setIsFogEditing(false)  // Reset editing when changing polygon
-            }}
-            isEditing={isFogEditing}
-            onToggleEditing={(editing) => {
-              setIsFogEditing(editing)
-              // Auto-exit other modes when entering fog editing
-              if (editing) {
-                setIsPositionPlacing(false)
-                setIsDistanceMeasuring(false)
-                setIsMarkerCreating(false)
-              }
-            }}
-            onClearPolygon={async () => {
-            if (selectedPolygonId && confirm('Clear all points in this fog polygon?')) {
-              await supabase
-                .from('player_fog_polygons')
-                .update({ polygon: [] })
-                .eq('id', selectedPolygonId)
-              // Supabase real-time subscription will automatically update the display
-            }
-          }}
-          onUndoPoint={async () => {
-            if (!selectedPolygonId) return
-            
-            // Get current polygon
-            const { data } = await supabase
-              .from('player_fog_polygons')
-              .select('id, polygon')
-              .eq('id', selectedPolygonId)
-              .single()
-            
-            if (data && data.polygon && data.polygon.length > 0) {
-              const newPoints = data.polygon.slice(0, -1)  // Remove last point
-              
-              await supabase
-                .from('player_fog_polygons')
-                .update({ polygon: newPoints })
-                .eq('id', data.id)
-              // Supabase real-time subscription will automatically update the display
-              // No need to force refresh - this keeps us in edit mode!
-            }
-          }}
-          />
-      )}
 
       {/* Create Marker Modal */}
       {createMarkerPos && (
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[1001] bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 min-w-[320px]">
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[2400] bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-4 min-w-[320px] max-w-[90vw]">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-lg font-bold text-white">Create Marker</h3>
             <button 
