@@ -191,7 +191,7 @@ export default function FogControls({
   if (!isGM) return null
 
   return (
-    <div className="absolute top-4 right-4 z-[2100] bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-4 w-80 max-h-[90vh] overflow-y-auto">
+    <div>
       <h3 className="text-sm font-bold text-gray-300 mb-3 uppercase tracking-wide flex items-center gap-2">
         🌫️ Fog of War
       </h3>
@@ -379,3 +379,4 @@ export default function FogControls({
     </div>
   )
 }
+

@@ -759,8 +759,11 @@ export default function LeafletMap({
   // Render player positions
   useEffect(() => {
     if (!mapInstance || !leafletLib || !positionsLayerGroup) return
-    if (!showPositions) return
-    
+    if (!showPositions) {
+      positionsLayerGroup.clearLayers()
+      return
+    }
+
     // Clear existing positions
     positionsLayerGroup.clearLayers()
     
