@@ -63,6 +63,7 @@ export default function MapViewer({ isGM }: MapViewerProps) {
   const [showLegend, setShowLegend] = useState(false)
   const [showMarkers, setShowMarkers] = useState(true)
   const [showFilters, setShowFilters] = useState(false)
+  const [scaleByPopulation, setScaleByPopulation] = useState(false)
   const [markerFilters, setMarkerFilters] = useState<string[]>([])  // Empty = show all
   const [hoveredBiome, setHoveredBiome] = useState<number | null>(null)
   const [selectedMarker, setSelectedMarker] = useState<any>(null)
@@ -538,6 +539,7 @@ export default function MapViewer({ isGM }: MapViewerProps) {
       <div className="hidden md:block absolute top-4 left-4 z-[2100] bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-3 space-y-2">
         {[
           { id: 'dt-markers', label: 'Show Markers', checked: showMarkers, onChange: setShowMarkers },
+          ...(showMarkers ? [{ id: 'dt-pop-scale', label: 'Scale by Pop.', checked: scaleByPopulation, onChange: setScaleByPopulation }] : []),
           { id: 'dt-positions', label: 'Show Positions', checked: showPositions, onChange: setShowPositions },
           { id: 'dt-biomes', label: 'Show Biomes', checked: showBiomes, onChange: setShowBiomes },
           ...(isGM ? [{ id: 'dt-fog', label: 'Show Fog', checked: showFog, onChange: setShowFog }] : []),
@@ -735,6 +737,7 @@ export default function MapViewer({ isGM }: MapViewerProps) {
                 <div className="grid grid-cols-2 gap-2">
                   {[
                     { id: 'markers', label: 'Markers', checked: showMarkers, onChange: setShowMarkers },
+                    ...(showMarkers ? [{ id: 'pop-scale', label: 'Scale by Pop.', checked: scaleByPopulation, onChange: setScaleByPopulation }] : []),
                     { id: 'positions', label: 'Positions', checked: showPositions, onChange: setShowPositions },
                     { id: 'biomes', label: 'Biomes', checked: showBiomes, onChange: setShowBiomes },
                     ...(isGM ? [{ id: 'fog', label: 'Fog of War', checked: showFog, onChange: setShowFog }] : []),
@@ -1101,6 +1104,7 @@ export default function MapViewer({ isGM }: MapViewerProps) {
         travelWaypoints={travelWaypoints}
         travelCurrentPosition={currentTravelPosition}
         activeTravels={activeTravels}
+        scaleByPopulation={scaleByPopulation}
         onBiomeHover={setHoveredBiome}
         onMarkerClick={setSelectedMarker}
         onMapClick={(x, y) => {
