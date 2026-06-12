@@ -46,6 +46,7 @@ interface LeafletMapProps {
   onBiomeHover?: (biomeId: number | null) => void
   onMarkerClick?: (marker: any) => void
   onMapClick?: (x: number, y: number) => void  // Normalized coords
+  scaleByPopulation?: boolean
 }
 
 // Store map and layer references globally for this component
@@ -108,9 +109,10 @@ export default function LeafletMap({
   travelWaypoints = [],
   travelCurrentPosition = null,
   activeTravels = [],
-  onBiomeHover, 
+  onBiomeHover,
   onMarkerClick,
-  onMapClick
+  onMapClick,
+  scaleByPopulation = false,
 }: LeafletMapProps) {
   const initializedRef = useRef(false)
   const lookupLoadedRef = useRef(false)
@@ -692,13 +694,21 @@ export default function LeafletMap({
     
     const L = leafletLib
     const sizes: Record<string, number> = { small: 16, medium: 24, large: 32 }
-    
+
+    const popSize = (marker: any): number => {
+      const pop = marker.population
+      if (!pop || !['city', 'town'].includes(marker.type)) return sizes[marker.size] || 24
+      // Log scale: 200 pop → 12px, 35 000 pop → 42px
+      const t = (Math.log(Math.max(pop, 200)) - Math.log(200)) / (Math.log(35000) - Math.log(200))
+      return Math.round(12 + t * 30)
+    }
+
     filteredMarkers.forEach(marker => {
       // Convert normalized coords to map coords
       const x = marker.x * MAP_WIDTH  // lng
       const y = (1 - marker.y) * MAP_HEIGHT  // lat (flip Y)
-      
-      const size = sizes[marker.size] || 24
+
+      const size = scaleByPopulation ? popSize(marker) : (sizes[marker.size] || 24)
       
       // Create custom icon with emoji
       const icon = L.divIcon({
@@ -741,7 +751,7 @@ export default function LeafletMap({
     })
     
     console.log(`Rendered ${filteredMarkers.length} markers`)
-  }, [showMarkers, markers, markerFilters, onMarkerClick, isFogEditing, isGM, playerCharacterId, fogPolygons, fogLoaded, playerVisibleMarkers])
+  }, [showMarkers, markers, markerFilters, onMarkerClick, isFogEditing, isGM, playerCharacterId, fogPolygons, fogLoaded, playerVisibleMarkers, scaleByPopulation])
   
   // Disable marker interaction during fog editing
   useEffect(() => {
