@@ -702,8 +702,8 @@ export default function CharacterDetail() {
   const xpMaxed = !char.is_tame && char.xp_max > 0 && char.xp_current >= char.xp_max
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-4 md:p-8 font-sans">
-      <div className="flex justify-between items-center mb-6">
+    <div className="min-h-screen bg-gray-900 text-white font-sans">
+      <div className="sticky top-0 z-10 bg-gray-900 border-b border-gray-700/50 px-4 md:px-8 py-3 flex justify-between items-center">
         <Link href="/" className="text-gray-400 hover:text-white inline-block">← Back to Dashboard</Link>
         <div className="flex gap-2">
             {isEditing ? (
@@ -780,6 +780,7 @@ export default function CharacterDetail() {
             )}
         </div>
       </div>
+      <div className="p-4 md:p-8">
 
       {/* HEADER */}
       <div className="bg-gray-800 rounded-xl p-6 shadow-xl border border-gray-700 mb-6">
@@ -2046,6 +2047,7 @@ export default function CharacterDetail() {
         )
       })()}
 
+      </div>
     </div>
   )
 }
