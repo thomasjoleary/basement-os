@@ -532,8 +532,175 @@ export default function MapViewer({ isGM }: MapViewerProps) {
         </div>
       )}
 
+      {/* ── Desktop panels (md and up) ─────────────────────────────── */}
+
+      {/* Desktop: Top-left layers panel */}
+      <div className="hidden md:block absolute top-4 left-4 z-[2100] bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-3 space-y-2">
+        {[
+          { id: 'dt-markers', label: 'Show Markers', checked: showMarkers, onChange: setShowMarkers },
+          { id: 'dt-positions', label: 'Show Positions', checked: showPositions, onChange: setShowPositions },
+          { id: 'dt-biomes', label: 'Show Biomes', checked: showBiomes, onChange: setShowBiomes },
+          ...(isGM ? [{ id: 'dt-fog', label: 'Show Fog', checked: showFog, onChange: setShowFog }] : []),
+        ].map(({ id, label, checked, onChange }) => (
+          <div key={id} className="flex items-center gap-2">
+            <input type="checkbox" id={id} checked={checked} onChange={(e) => onChange(e.target.checked)} className="w-4 h-4 accent-red-600 cursor-pointer" />
+            <label htmlFor={id} className="text-sm font-medium cursor-pointer select-none">{label}</label>
+          </div>
+        ))}
+        {showBiomes && (
+          <div className="flex items-center gap-2 pl-4">
+            <input type="checkbox" id="dt-legend" checked={showLegend} onChange={(e) => setShowLegend(e.target.checked)} className="w-4 h-4 accent-red-600 cursor-pointer" />
+            <label htmlFor="dt-legend" className="text-sm font-medium cursor-pointer select-none">Show Legend</label>
+          </div>
+        )}
+        {showMarkers && (
+          <div className="flex items-center gap-2 pl-4">
+            <input type="checkbox" id="dt-filters" checked={showFilters} onChange={(e) => setShowFilters(e.target.checked)} className="w-4 h-4 accent-red-600 cursor-pointer" />
+            <label htmlFor="dt-filters" className="text-sm font-medium cursor-pointer select-none">Filter Types</label>
+          </div>
+        )}
+        {showMarkers && showFilters && (
+          <div className="pl-4 space-y-1 max-h-40 overflow-y-auto border-l-2 border-gray-700 ml-2">
+            {MARKER_TYPES.map(({ type, label, icon }) => (
+              <div key={type} className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id={`dt-filter-${type}`}
+                  checked={markerFilters.length === 0 || markerFilters.includes(type)}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      if (markerFilters.length > 0) setMarkerFilters([...markerFilters, type])
+                    } else {
+                      if (markerFilters.length === 0) {
+                        setMarkerFilters(MARKER_TYPES.filter(t => t.type !== type).map(t => t.type))
+                      } else {
+                        setMarkerFilters(markerFilters.filter(t => t !== type))
+                      }
+                    }
+                  }}
+                  className="w-3 h-3 accent-red-600 cursor-pointer"
+                />
+                <label htmlFor={`dt-filter-${type}`} className="text-xs cursor-pointer select-none flex items-center gap-1">
+                  <span>{icon}</span> {label}
+                </label>
+              </div>
+            ))}
+            {markerFilters.length > 0 && (
+              <button onClick={() => setMarkerFilters([])} className="text-xs text-red-400 hover:text-red-300 mt-1">Reset filters</button>
+            )}
+          </div>
+        )}
+        {isGM && (
+          <div className="pt-2 border-t border-gray-700">
+            <button
+              onClick={() => {
+                const newState = !isMarkerCreating
+                setIsMarkerCreating(newState)
+                if (isMarkerCreating) setCreateMarkerPos(null)
+                if (newState) { setIsFogEditing(false); setIsPositionPlacing(false); setIsDistanceMeasuring(false) }
+              }}
+              className={`w-full px-3 py-1.5 text-sm rounded font-medium transition ${isMarkerCreating ? 'bg-green-600 hover:bg-green-500 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-200'}`}
+            >
+              {isMarkerCreating ? '✓ Click Map to Place' : '+ Add Marker'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Desktop: Top-right column — Distance Tool + Fog Controls */}
+      <div className="hidden md:flex absolute top-4 right-4 z-[2100] flex-col gap-3 w-72 max-h-[calc(100vh-120px)] overflow-y-auto">
+        <DistanceTool
+          isActive={isDistanceMeasuring}
+          onToggle={(active) => {
+            setIsDistanceMeasuring(active)
+            if (!active) setDistanceWaypoints([])
+            if (active) { setIsFogEditing(false); setIsPositionPlacing(false); setIsMarkerCreating(false) }
+          }}
+          waypoints={distanceWaypoints}
+          onClearWaypoints={() => setDistanceWaypoints([])}
+          onUndoLastWaypoint={() => setDistanceWaypoints(prev => prev.slice(0, -1))}
+          onUpdateWaypoint={(index, x, y) => {
+            setDistanceWaypoints(prev => { const u = [...prev]; u[index] = { x, y }; return u })
+          }}
+          totalDistance={totalDistance}
+          segmentDistances={segmentDistances}
+        />
+        {isGM && showFog && (
+          <div className="bg-gray-800 border border-gray-700 rounded-lg shadow-lg p-4">
+            <FogControls
+              isGM={isGM}
+              selectedCharacterId={selectedFogCharacter}
+              onSelectCharacter={(id) => { setSelectedFogCharacter(id); setSelectedPolygonId(null); setIsFogEditing(false) }}
+              selectedPolygonId={selectedPolygonId}
+              onSelectPolygon={(id) => { setSelectedPolygonId(id); setIsFogEditing(false) }}
+              isEditing={isFogEditing}
+              onToggleEditing={(editing) => {
+                setIsFogEditing(editing)
+                if (editing) { setIsPositionPlacing(false); setIsDistanceMeasuring(false); setIsMarkerCreating(false) }
+              }}
+              onClearPolygon={async () => {
+                if (selectedPolygonId && confirm('Clear all points in this fog polygon?')) {
+                  await supabase.from('player_fog_polygons').update({ polygon: [] }).eq('id', selectedPolygonId)
+                }
+              }}
+              onUndoPoint={async () => {
+                if (!selectedPolygonId) return
+                const { data } = await supabase.from('player_fog_polygons').select('id, polygon').eq('id', selectedPolygonId).single()
+                if (data && data.polygon && data.polygon.length > 0) {
+                  await supabase.from('player_fog_polygons').update({ polygon: data.polygon.slice(0, -1) }).eq('id', data.id)
+                }
+              }}
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Desktop: Bottom-left Travel Controls */}
+      {isGM && (
+        <div className="hidden md:block absolute bottom-4 left-4 z-[2100] w-80">
+          <TravelControls
+            isGM={isGM}
+            isPlanningTravel={isPlanningTravel}
+            onTogglePlanning={(planning) => {
+              setIsPlanningTravel(planning)
+              if (!planning) setTravelWaypoints([])
+              if (planning) { setIsFogEditing(false); setIsPositionPlacing(false); setIsMarkerCreating(false); setIsDistanceMeasuring(false) }
+            }}
+            travelWaypoints={travelWaypoints}
+            onClearWaypoints={() => setTravelWaypoints([])}
+            selectedCharacterId={selectedTravelCharacter}
+            onSelectCharacter={setSelectedTravelCharacter}
+            segmentDistances={travelSegmentDistances}
+            totalDistance={travelTotalDistance}
+          />
+        </div>
+      )}
+
+      {/* Desktop: Bottom-right Position Controls */}
+      {isGM && (
+        <div className="hidden md:block absolute bottom-4 right-4 z-[2100] w-64">
+          <PositionControls
+            isGM={isGM}
+            selectedCharacterId={selectedPositionCharacter}
+            onSelectCharacter={(id) => { setSelectedPositionCharacter(id); setIsPositionPlacing(false) }}
+            isPlacing={isPositionPlacing}
+            onTogglePlacing={(placing) => {
+              setIsPositionPlacing(placing)
+              if (placing) { setIsFogEditing(false); setIsDistanceMeasuring(false); setIsMarkerCreating(false) }
+            }}
+          />
+        </div>
+      )}
+
+      {/* Desktop: pan/zoom hint */}
+      <div className="hidden md:block absolute bottom-4 left-1/2 -translate-x-1/2 z-[2100] bg-gray-800/90 border border-gray-700 rounded-lg px-4 py-2 text-xs text-gray-400 pointer-events-none">
+        <span className="font-bold text-gray-300">Controls:</span> Scroll to zoom • Drag to pan
+      </div>
+
+      {/* ── Mobile bottom sheet (hidden on md+) ─────────────────────── */}
+
       {/* Bottom Sheet */}
-      <div className={`absolute bottom-0 left-0 right-0 z-[2100] bg-gray-900 border-t border-gray-700 rounded-t-2xl shadow-2xl transition-transform duration-300 ${sheetOpen ? 'translate-y-0' : 'translate-y-[calc(100%-44px)]'}`}>
+      <div className={`md:hidden absolute bottom-0 left-0 right-0 z-[2100] bg-gray-900 border-t border-gray-700 rounded-t-2xl shadow-2xl transition-transform duration-300 ${sheetOpen ? 'translate-y-0' : 'translate-y-[calc(100%-44px)]'}`}>
         {/* Handle / tab bar */}
         <button
           className="w-full flex flex-col items-center pt-2 pb-1 focus:outline-none"
