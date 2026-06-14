@@ -6,6 +6,7 @@ import { supabase } from '@/lib/supabase'
 
 type Character = {
     id: string
+    user_id: string | null
     name: string
     level: number
     xp_current: number
@@ -155,6 +156,7 @@ export default function Leaderboard() {
     const router = useRouter()
     const [loading, setLoading] = useState(true)
     const [isGM, setIsGM] = useState(false)
+    const [currentUserId, setCurrentUserId] = useState<string | null>(null)
     const [authorized, setAuthorized] = useState(false)
     const [characters, setCharacters] = useState<Character[]>([])
     const [wordCounts, setWordCounts] = useState<WC>({})
@@ -185,12 +187,13 @@ export default function Leaderboard() {
 
             const userIsGM = profile?.role === 'gm'
             setIsGM(userIsGM)
+            setCurrentUserId(session.user.id)
             setAuthorized(true)
 
             const [{ data: chars }, { data: cw }, { data: tames }, { data: pub }, { data: { user } }] = await Promise.all([
                 supabase
                     .from('characters')
-                    .select('id, name, level, xp_current, mana_max, stats, money, abilities, inventory, skills')
+                    .select('id, user_id, name, level, xp_current, mana_max, stats, money, abilities, inventory, skills')
                     .neq('is_tame', true).neq('is_npc', true).order('name'),
                 supabase.from('character_words').select('character_id, words_of_power(mana_cost)'),
                 supabase.from('characters').select('player_name, job, abilities, stats, mana_max').eq('is_tame', true).eq('is_active', true).neq('is_dead', true),
@@ -533,9 +536,13 @@ export default function Leaderboard() {
                                 <div className="w-8 text-center shrink-0">
                                     {rank <= 3 ? <span className="text-xl">{MEDALS[rank - 1]}</span> : <span className="text-gray-500 text-sm font-bold">#{rank}</span>}
                                 </div>
-                                <a href={`/character/${char.id}`} className="flex-1 font-semibold text-white hover:text-yellow-300 transition-colors truncate" onClick={(e) => e.stopPropagation()}>
-                                    {char.name}
-                                </a>
+                                {isGM || char.user_id === currentUserId ? (
+                                    <a href={`/character/${char.id}`} className="flex-1 font-semibold text-white hover:text-yellow-300 transition-colors truncate" onClick={(e) => e.stopPropagation()}>
+                                        {char.name}
+                                    </a>
+                                ) : (
+                                    <span className="flex-1 font-semibold text-white truncate">{char.name}</span>
+                                )}
                                 {isGM && <span className="text-gray-600 text-lg select-none shrink-0" title="Drag to reorder">⠿</span>}
                             </div>
                         )
@@ -570,29 +577,43 @@ export default function Leaderboard() {
                                                 <span className="text-yellow-400 font-mono">{value.toLocaleString()}</span>
                                             </div>
                                         </div>
-                                        <a href={`/character/${char.id}`} className="text-xs text-blue-400 hover:text-blue-300 transition-colors">View character sheet →</a>
+                                        {(isGM || char.user_id === currentUserId) && (
+                                            <a href={`/character/${char.id}`} className="text-xs text-blue-400 hover:text-blue-300 transition-colors">View character sheet →</a>
+                                        )}
                                     </div>
                                 )}
                             </div>
                         )
                     }
 
-                    // Default — link row
-                    return (
-                        <a key={char.id} href={`/character/${char.id}`}
-                            className="flex items-center gap-4 bg-gray-900 border border-gray-800 hover:border-yellow-700 rounded-lg px-4 py-3 transition-colors group"
-                        >
+                    // Default — link row (only clickable for GM or own character)
+                    const canLink = isGM || char.user_id === currentUserId
+                    const rowContent = (
+                        <>
                             <div className="w-8 text-center shrink-0">
                                 {rank <= 3 ? <span className="text-xl">{MEDALS[rank - 1]}</span> : <span className="text-gray-500 text-sm font-bold">#{rank}</span>}
                             </div>
-                            <div className="flex-1 font-semibold text-white group-hover:text-yellow-300 transition-colors truncate">{char.name}</div>
+                            <div className={`flex-1 font-semibold text-white truncate ${canLink ? 'group-hover:text-yellow-300 transition-colors' : ''}`}>{char.name}</div>
                             {category?.renderValue
                                 ? category.renderValue(char, wordCounts, wordManaTotals, tamePowerLevels)
                                 : <div className="text-yellow-400 font-mono font-bold text-lg shrink-0">
                                     {category?.formatValue ? category.formatValue(value) : value}
                                   </div>
                             }
+                        </>
+                    )
+                    return canLink ? (
+                        <a key={char.id} href={`/character/${char.id}`}
+                            className="flex items-center gap-4 bg-gray-900 border border-gray-800 hover:border-yellow-700 rounded-lg px-4 py-3 transition-colors group"
+                        >
+                            {rowContent}
                         </a>
+                    ) : (
+                        <div key={char.id}
+                            className="flex items-center gap-4 bg-gray-900 border border-gray-800 rounded-lg px-4 py-3"
+                        >
+                            {rowContent}
+                        </div>
                     )
                 })}
             </div>
