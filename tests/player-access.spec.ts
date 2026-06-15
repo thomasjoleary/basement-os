@@ -7,12 +7,21 @@ const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 const PLAYER_EMAIL = process.env.PLAYER_EMAIL!
 const PLAYER_PASSWORD = process.env.PLAYER_PASSWORD!
 
-async function loginViaUI(page: Page) {
-  await page.goto(`${BASE_URL}/login`)
-  await page.fill('input[type="email"]', PLAYER_EMAIL)
-  await page.fill('input[type="password"]', PLAYER_PASSWORD)
-  await page.click('button[type="submit"]')
-  await page.waitForURL(`${BASE_URL}/`, { timeout: 15000 })
+// Supabase JS v2 stores the session in localStorage under this key
+const projectRef = new URL(SUPABASE_URL).hostname.split('.')[0]
+const AUTH_STORAGE_KEY = `sb-${projectRef}-auth-token`
+
+let savedSession: object
+
+async function injectSession(page: Page) {
+  // Navigate to the app first to establish the domain context for localStorage
+  await page.goto(BASE_URL)
+  await page.evaluate(
+    ({ key, session }) => localStorage.setItem(key, JSON.stringify(session)),
+    { key: AUTH_STORAGE_KEY, session: savedSession }
+  )
+  // Reload so the Supabase client picks up the injected session
+  await page.reload()
 }
 
 test.describe('Player character sheet access', () => {
@@ -29,6 +38,7 @@ test.describe('Player character sheet access', () => {
     })
     if (error || !authData.user) throw new Error(`Auth setup failed: ${error?.message}`)
     playerUserId = authData.user.id
+    savedSession = authData.session!
 
     // Find a character owned by this player
     const { data: own } = await supabase
@@ -53,7 +63,7 @@ test.describe('Player character sheet access', () => {
   })
 
   test.beforeEach(async ({ page }) => {
-    await loginViaUI(page)
+    await injectSession(page)
   })
 
   test('player can view their own character sheet', async ({ page }) => {
@@ -64,12 +74,11 @@ test.describe('Player character sheet access', () => {
     await expect(page).toHaveURL(new RegExp(`/character/${ownCharacterId}`))
   })
 
-  test('player cannot view another player\'s character sheet', async ({ page }) => {
+  test("player cannot view another player's character sheet", async ({ page }) => {
     if (!otherCharacterId) {
       test.skip(true, 'No other player character found in the database')
     }
     await page.goto(`${BASE_URL}/character/${otherCharacterId}`)
-    // The page redirects back to home for unauthorized access
     await expect(page).toHaveURL(`${BASE_URL}/`, { timeout: 10000 })
   })
 })
