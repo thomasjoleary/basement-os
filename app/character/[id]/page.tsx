@@ -269,6 +269,7 @@ export default function CharacterDetail() {
             skills: formData.skills,
             is_active: formData.is_active,
             stat_buffs: formData.stat_buffs,
+            name: formData.name,
             tame_class: formData.tame_class || null,
             species: formData.species || null,
             money: formData.money || { copper: 0, silver: 0, gold: 0 }
@@ -792,7 +793,16 @@ export default function CharacterDetail() {
       <div className="bg-gray-800 rounded-xl p-6 shadow-xl border border-gray-700 mb-6">
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
-            <h1 className="text-4xl font-bold text-red-500">{char.name}</h1>
+            {isEditing ? (
+              <input
+                type="text"
+                className="text-4xl font-bold text-red-500 bg-gray-900 border border-gray-600 rounded px-2 py-1 w-full"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+              />
+            ) : (
+              <h1 className="text-4xl font-bold text-red-500">{char.name}</h1>
+            )}
             <div className="text-xl text-gray-300 mt-1 flex items-center gap-2">
               {!char.is_tame && (
                 <>
