@@ -173,6 +173,12 @@ export default function CharacterDetail() {
       
       if (error) console.error(error)
       else {
+        // Block non-GM players from viewing another player's character sheet
+        if (!userIsGM && data.user_id !== null && data.user_id !== session?.user?.id) {
+          router.replace('/')
+          return
+        }
+
         // Ensure default stats exist (strength, speed, fortitude, magic)
         const defaultStats = {
           strength: 0,
