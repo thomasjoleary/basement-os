@@ -25,11 +25,15 @@ jobs:
       - name: Wait for Vercel deployment
         id: vercel
         run: |
-          echo "Waiting for Vercel deployment of commit $GITHUB_SHA..."
+          # On pull_request events GITHUB_SHA is the auto-generated merge commit,
+          # not the branch head — Vercel deploys the branch head, so use the PR
+          # head SHA when available and fall back to GITHUB_SHA for push events.
+          COMMIT_SHA="${PR_HEAD_SHA:-$GITHUB_SHA}"
+          echo "Waiting for Vercel deployment of commit $COMMIT_SHA..."
           for i in $(seq 1 30); do
             URL=$(curl -sf "https://api.vercel.com/v6/deployments?projectId=$VERCEL_PROJECT_ID&limit=20" \
               -H "Authorization: Bearer $VERCEL_TOKEN" | \
-              jq -r --arg sha "$GITHUB_SHA" \
+              jq -r --arg sha "$COMMIT_SHA" \
               '.deployments[] | select(.meta.githubCommitSha == $sha and .readyState == "READY") | "https://" + .url' \
               | head -1)
             if [ -n "$URL" ]; then
@@ -45,6 +49,7 @@ jobs:
         env:
           VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
           VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
       - name: Run E2E tests
         env:
