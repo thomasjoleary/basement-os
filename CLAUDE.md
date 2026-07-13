@@ -164,6 +164,27 @@ Power level auto-fills when rarity is set; only overrides if the current value i
 
 ---
 
+## Battlefield (tactical combat grid)
+
+A per-encounter tactical map of 5ft squares. **Phase 1 is GM-only** (RLS blocks players); player visibility + fog of war is Phase 2 (not built yet).
+
+- Route: `app/battlefields/page.tsx` (list + create) · `app/battlefields/[id]/page.tsx` (editor)
+- Grid renderer: `components/battlefield/BattlefieldGrid.tsx` (pan/zoom/pinch, token drag, measure, movement-range, stacking)
+- Types/constants: `lib/battlefield.ts`
+- SQL migration: `sql/005_create_battlefields.sql` — **must be run in Supabase** before use
+
+### Data model
+- **`battlefields`**: `cols`/`rows` (size in 5ft squares, 1–100), `bg_color`, `border_type` (`'indoor'`|`'outdoor'` — drives border styling so players know where they can flee), `gm_notes` (private), `round`, `turn_entity_id` (whose turn), `is_archived`
+- **`battlefield_entities`**: `kind` (`player`|`tame`|`enemy`|`object`|`wall`|`door`), `character_id` (nullable link to `characters`), `x`/`y`/`width`/`height` (in squares), `color`, `icon`, `hp/mana_current/max`, `move_ft`, `conditions` (jsonb string[]), `initiative`, `hidden_until_revealed` (reserved for Phase 2 fog), `notes`
+- Both tables are on the Supabase realtime publication; the editor also subscribes to `characters` UPDATEs for live vitals
+
+### Behavior
+- **HP/mana**: player/tame tokens are `character_id`-linked and read **live** from the character sheet (`resolveVitals()` in `lib/battlefield.ts`); enemies/objects use their own manual `hp/mana_*` fields
+- Multiple creatures can share a square — `BattlefieldGrid` fans/shrinks stacked creature tokens (mounts, tiny creatures)
+- Extras: initiative/turn tracker (`round` + `turn_entity_id`, "Next turn" wraps and increments round), toggleable status conditions (`CONDITIONS` in `lib/battlefield.ts`), distance measure + movement-range highlight (5e "every square = 5ft", `move_ft`)
+- Walls/doors/objects are cell-based tokens (v1 simplification — not edge-drawn)
+- Linked from home nav (visible to all; list is empty for players until Phase 2)
+
 ## Key Files
 - `app/character/[id]/page.tsx` — the main character sheet page (everything: view, edit, level-up modal, power level display)
 - `app/leaderboard/page.tsx` — leaderboard (GM: all categories + publish panel; players: published categories only)
