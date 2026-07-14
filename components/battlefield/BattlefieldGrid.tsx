@@ -18,7 +18,7 @@ const MIN_SCALE = 0.25
 const MAX_SCALE = 3
 const CLICK_SLOP = 4 // px of movement below which a press counts as a click
 
-type Tool = 'select' | 'pan' | 'measure'
+type Tool = 'select' | 'pan' | 'measure' | 'fog'
 type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
 
 interface Props {
@@ -33,9 +33,13 @@ interface Props {
   onInspect: (id: string) => void
   onMoveEntities: (moves: { id: string; x: number; y: number }[]) => void
   onResizeEntity: (id: string, box: { x: number; y: number; width: number; height: number }) => void
-  // Phase 2 (fog) — optional.
+  // Phase 2 (fog)
   fogVisibleCells?: Set<string> | null
   hiddenEntityIds?: Set<string>
+  fogDisplay?: 'none' | 'player' | 'edit' // player = opaque black outside; edit = translucent + tint
+  fogReveal?: boolean                     // when painting with the fog tool: true reveals, false hides
+  fogShape?: 'rect' | 'brush'
+  onPaintCells?: (cells: string[], reveal: boolean) => void
 }
 
 const CREATURE_KINDS = new Set(['player', 'tame', 'enemy'])
@@ -54,6 +58,10 @@ export default function BattlefieldGrid({
   onResizeEntity,
   fogVisibleCells = null,
   hiddenEntityIds,
+  fogDisplay = 'none',
+  fogReveal = true,
+  fogShape = 'rect',
+  onPaintCells,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
@@ -94,6 +102,10 @@ export default function BattlefieldGrid({
   const [measure, setMeasure] = useState<{ ax: number; ay: number; bx: number; by: number } | null>(null)
   const measuring = useRef(false)
 
+  // Fog painting
+  const fogPaintRef = useRef<{ shape: 'rect' | 'brush'; reveal: boolean; start: { x: number; y: number } } | null>(null)
+  const [fogPreview, setFogPreview] = useState<Set<string> | null>(null)
+
   const width = battlefield.cols * CELL
   const height = battlefield.rows * CELL
 
@@ -105,6 +117,24 @@ export default function BattlefieldGrid({
     },
     [pan, scale]
   )
+
+  const cellAt = useCallback(
+    (clientX: number, clientY: number) => {
+      const { sx, sy } = toStage(clientX, clientY)
+      return {
+        cx: Math.max(0, Math.min(battlefield.cols - 1, Math.floor(sx / CELL))),
+        cy: Math.max(0, Math.min(battlefield.rows - 1, Math.floor(sy / CELL))),
+      }
+    },
+    [toStage, battlefield.cols, battlefield.rows]
+  )
+
+  const rectCells = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+    const set = new Set<string>()
+    for (let gx = Math.min(a.x, b.x); gx <= Math.max(a.x, b.x); gx++)
+      for (let gy = Math.min(a.y, b.y); gy <= Math.max(a.y, b.y); gy++) set.add(`${gx},${gy}`)
+    return set
+  }
 
   // ---- Zoom -------------------------------------------------------------
   const zoomAt = useCallback((factor: number, cx: number, cy: number) => {
@@ -158,6 +188,13 @@ export default function BattlefieldGrid({
       return
     }
 
+    if (tool === 'fog' && isGM && onPaintCells) {
+      const { cx, cy } = cellAt(e.clientX, e.clientY)
+      fogPaintRef.current = { shape: fogShape, reveal: fogReveal, start: { x: cx, y: cy } }
+      setFogPreview(new Set([`${cx},${cy}`]))
+      return
+    }
+
     if (pointers.current.size === 2) {
       const pts = [...pointers.current.values()]
       const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)
@@ -200,6 +237,16 @@ export default function BattlefieldGrid({
       return
     }
 
+    if (fogPaintRef.current) {
+      const { cx, cy } = cellAt(e.clientX, e.clientY)
+      if (fogPaintRef.current.shape === 'brush') {
+        setFogPreview(prev => { const s = new Set(prev); s.add(`${cx},${cy}`); return s })
+      } else {
+        setFogPreview(rectCells(fogPaintRef.current.start, { x: cx, y: cy }))
+      }
+      return
+    }
+
     if (pinchStart.current && pointers.current.size >= 2) {
       const pts = [...pointers.current.values()]
       const dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y)
@@ -225,6 +272,14 @@ export default function BattlefieldGrid({
   const onBgPointerUp = (e: React.PointerEvent) => {
     pointers.current.delete(e.pointerId)
     if (pointers.current.size < 2) pinchStart.current = null
+
+    if (fogPaintRef.current) {
+      const reveal = fogPaintRef.current.reveal
+      fogPaintRef.current = null
+      if (fogPreview && fogPreview.size && onPaintCells) onPaintCells([...fogPreview], reveal)
+      setFogPreview(null)
+      return
+    }
 
     if (marqueeRef.current && marquee) {
       const moved = Math.hypot(e.clientX - marqueeRef.current.startClient.x, e.clientY - marqueeRef.current.startClient.y) > CLICK_SLOP
@@ -503,13 +558,28 @@ export default function BattlefieldGrid({
               return <div key={`r-${key}`} className="absolute pointer-events-none" style={{ left: gx * CELL, top: gy * CELL, width: CELL, height: CELL, background: 'rgba(59,130,246,0.22)', boxShadow: 'inset 0 0 0 1px rgba(59,130,246,0.4)' }} />
             })}
 
-          {/* Fog (Phase 2) */}
-          {fogVisibleCells &&
+          {/* Fog: black-out (player) or translucent shroud (GM edit) outside the visible set */}
+          {fogDisplay !== 'none' && fogVisibleCells &&
             Array.from({ length: battlefield.cols * battlefield.rows }).map((_, idx) => {
               const gx = idx % battlefield.cols
               const gy = Math.floor(idx / battlefield.cols)
               if (fogVisibleCells.has(`${gx},${gy}`)) return null
-              return <div key={`f-${idx}`} className="absolute pointer-events-none" style={{ left: gx * CELL, top: gy * CELL, width: CELL, height: CELL, background: '#020617' }} />
+              return <div key={`f-${idx}`} className="absolute pointer-events-none" style={{
+                left: gx * CELL, top: gy * CELL, width: CELL, height: CELL,
+                background: fogDisplay === 'player' ? '#020617' : 'rgba(2,6,23,0.6)',
+                zIndex: fogDisplay === 'player' ? 45 : 1,
+              }} />
+            })}
+
+          {/* Fog paint preview (GM) */}
+          {fogPreview &&
+            [...fogPreview].map(key => {
+              const [gx, gy] = key.split(',').map(Number)
+              return <div key={`fp-${key}`} className="absolute pointer-events-none" style={{
+                left: gx * CELL, top: gy * CELL, width: CELL, height: CELL, zIndex: 46,
+                background: fogReveal ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.45)',
+                boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.3)',
+              }} />
             })}
 
           {/* Entities */}

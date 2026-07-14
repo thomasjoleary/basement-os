@@ -9,6 +9,7 @@ import {
   Battlefield,
   BattlefieldEntity,
   BattlefieldPreset,
+  BattlefieldVisibility,
   CharacterLite,
   EntityKind,
   TOKEN_COLORS,
@@ -17,15 +18,20 @@ import {
   kindMeta,
   entityName,
   resolveVitals,
+  footprintVisible,
 } from '@/lib/battlefield'
 
-type Tab = 'add' | 'inspect' | 'initiative' | 'settings' | 'notes'
-type Tool = 'select' | 'pan' | 'measure'
+type Tab = 'add' | 'inspect' | 'initiative' | 'fog' | 'settings' | 'notes'
+type Tool = 'select' | 'pan' | 'measure' | 'fog'
 const CREATURE_KINDS = new Set<EntityKind>(['player', 'tame', 'enemy'])
 
 interface FullChar extends CharacterLite {
   is_npc?: boolean
   is_dead?: boolean
+  user_id?: string | null
+  party?: string | null
+  player_name?: string | null
+  job?: string | null
 }
 
 export default function BattlefieldEditorPage() {
@@ -39,12 +45,24 @@ export default function BattlefieldEditorPage() {
   const [entities, setEntities] = useState<BattlefieldEntity[]>([])
   const [allChars, setAllChars] = useState<FullChar[]>([])
   const [presets, setPresets] = useState<BattlefieldPreset[]>([])
+  const [gmNotes, setGmNotes] = useState('')
+  const [visibility, setVisibility] = useState<BattlefieldVisibility[]>([])
+  const [reveals, setReveals] = useState<{ id: string; character_id: string; entity_id: string }[]>([])
+
+  // Player (non-GM) fogged view, loaded via the RPC
+  const [playerView, setPlayerView] = useState<{ battlefield: Battlefield; entities: BattlefieldEntity[]; visibleCells: Set<string> } | null>(null)
 
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [tool, setTool] = useState<Tool>('select')
   const [rangeEntityId, setRangeEntityId] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('add')
   const [sheetOpen, setSheetOpen] = useState(false)
+
+  // Fog editing (GM): whose fog we're painting, and how
+  const [fogCharId, setFogCharId] = useState<string | null>(null)
+  const [fogReveal, setFogReveal] = useState(true)
+  const [fogShape, setFogShape] = useState<'rect' | 'brush'>('rect')
+  const [previewAs, setPreviewAs] = useState<string | null>(null)
 
   const charMap = useMemo(() => {
     const m: Record<string, CharacterLite> = {}
@@ -54,31 +72,74 @@ export default function BattlefieldEditorPage() {
 
   const selected = selectedIds.length === 1 ? entities.find(e => e.id === selectedIds[0]) ?? null : null
 
+  // ---- Player load via RPC ----------------------------------------------
+  async function loadPlayer() {
+    const { data } = await supabase.rpc('get_player_battlefield', { bf: id })
+    if (!data) { setPlayerView(null); return }
+    const bf = data.battlefield as Battlefield
+    const ents = (data.entities as Partial<BattlefieldEntity>[]).map(e => ({
+      battlefield_id: id, notes: '', created_at: '', updated_at: '',
+      hp_current: null, hp_max: null, mana_current: null, mana_max: null,
+      hidden_until_revealed: false, ...e,
+    })) as BattlefieldEntity[]
+    setPlayerView({ battlefield: bf, entities: ents, visibleCells: new Set((data.visible_cells as string[]) ?? []) })
+  }
+
   // ---- Load -------------------------------------------------------------
   useEffect(() => {
     async function init() {
       const { data: { session } } = await supabase.auth.getSession()
+      let gm = false
       if (session) {
         const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single()
-        setIsGM(profile?.role === 'gm')
+        gm = profile?.role === 'gm'
+        setIsGM(gm)
       }
-      const [{ data: bf }, { data: ents }, { data: chars }, { data: pres }] = await Promise.all([
+
+      if (!gm) {
+        await loadPlayer()
+        setLoading(false)
+        return
+      }
+
+      const [{ data: bf }, { data: ents }, { data: chars }, { data: pres }, { data: notes }, { data: vis }, { data: rev }] = await Promise.all([
         supabase.from('battlefields').select('*').eq('id', id).single(),
         supabase.from('battlefield_entities').select('*').eq('battlefield_id', id),
-        supabase.from('characters').select('id,name,hp_current,hp_max,mana_current,mana_max,is_tame,is_npc,is_dead'),
+        supabase.from('characters').select('id,name,hp_current,hp_max,mana_current,mana_max,is_tame,is_npc,is_dead,user_id,party,player_name,job'),
         supabase.from('battlefield_presets').select('*'),
+        supabase.from('battlefield_gm_notes').select('notes').eq('battlefield_id', id).maybeSingle(),
+        supabase.from('battlefield_visibility').select('*').eq('battlefield_id', id),
+        supabase.from('battlefield_entity_reveals').select('id,character_id,entity_id').eq('battlefield_id', id),
       ])
       if (bf) setBattlefield(bf as Battlefield)
       if (ents) setEntities(ents as BattlefieldEntity[])
       if (chars) setAllChars(chars as FullChar[])
       if (pres) setPresets(pres as BattlefieldPreset[])
+      if (notes) setGmNotes(notes.notes ?? '')
+      if (vis) setVisibility(vis as BattlefieldVisibility[])
+      if (rev) setReveals(rev)
       setLoading(false)
     }
     init()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
-  // ---- Realtime ---------------------------------------------------------
+  // ---- Realtime: player path (ping -> refetch RPC) ----------------------
   useEffect(() => {
+    if (isGM) return
+    const channel = supabase
+      .channel(`bf-player-${id}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'battlefields', filter: `id=eq.${id}` }, () => { loadPlayer() })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'battlefield_visibility', filter: `battlefield_id=eq.${id}` }, () => { loadPlayer() })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'characters' }, () => { loadPlayer() })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, isGM])
+
+  // ---- Realtime: GM path (direct table sync) ----------------------------
+  useEffect(() => {
+    if (!isGM) return
     const channel = supabase
       .channel(`battlefield-${id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'battlefield_entities', filter: `battlefield_id=eq.${id}` }, payload => {
@@ -110,9 +171,18 @@ export default function BattlefieldEditorPage() {
           return next
         })
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'battlefield_visibility', filter: `battlefield_id=eq.${id}` }, payload => {
+        setVisibility(prev => {
+          if (payload.eventType === 'DELETE') return prev.filter(v => v.id !== (payload.old as { id: string }).id)
+          const row = payload.new as BattlefieldVisibility
+          const idx = prev.findIndex(v => v.id === row.id)
+          if (idx === -1) return [...prev, row]
+          const next = [...prev]; next[idx] = row; return next
+        })
+      })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
-  }, [id])
+  }, [id, isGM])
 
   // ---- Mutations --------------------------------------------------------
   async function patchBattlefield(patch: Partial<Battlefield>) {
@@ -215,6 +285,62 @@ export default function BattlefieldEditorPage() {
     })
   }
 
+  // ---- GM notes (separate table) ----------------------------------------
+  async function patchGmNotes(text: string) {
+    setGmNotes(text)
+    await supabase.from('battlefield_gm_notes').upsert({ battlefield_id: id, notes: text, updated_at: new Date().toISOString() })
+  }
+
+  // ---- Visibility / fog -------------------------------------------------
+  function visRow(charId: string) {
+    return visibility.find(v => v.character_id === charId)
+  }
+
+  async function upsertVisibility(charId: string, patch: { granted?: boolean; visible_cells?: string[] }) {
+    const existing = visRow(charId)
+    const merged = {
+      battlefield_id: id,
+      character_id: charId,
+      granted: patch.granted ?? existing?.granted ?? false,
+      visible_cells: patch.visible_cells ?? existing?.visible_cells ?? [],
+    }
+    // optimistic
+    setVisibility(prev => {
+      const i = prev.findIndex(v => v.character_id === charId)
+      if (i === -1) return [...prev, { id: `tmp-${charId}`, updated_at: '', ...merged } as BattlefieldVisibility]
+      const next = [...prev]; next[i] = { ...next[i], ...merged }; return next
+    })
+    const { data } = await supabase.from('battlefield_visibility').upsert(merged, { onConflict: 'battlefield_id,character_id' }).select().single()
+    if (data) setVisibility(prev => prev.map(v => (v.character_id === charId ? (data as BattlefieldVisibility) : v)))
+  }
+
+  function paintCells(charId: string, cells: string[], reveal: boolean) {
+    const current = new Set(visRow(charId)?.visible_cells ?? [])
+    if (reveal) cells.forEach(c => current.add(c))
+    else cells.forEach(c => current.delete(c))
+    upsertVisibility(charId, { visible_cells: [...current] })
+  }
+
+  function revealWholeGrid(charId: string, reveal: boolean) {
+    if (!battlefield) return
+    if (!reveal) { upsertVisibility(charId, { visible_cells: [] }); return }
+    const all: string[] = []
+    for (let x = 0; x < battlefield.cols; x++) for (let y = 0; y < battlefield.rows; y++) all.push(`${x},${y}`)
+    upsertVisibility(charId, { visible_cells: all })
+  }
+
+  async function setEntityRevealed(entityId: string, charId: string, revealed: boolean) {
+    if (revealed) {
+      const tmp = { id: `tmp-${entityId}-${charId}`, character_id: charId, entity_id: entityId }
+      setReveals(prev => (prev.some(r => r.entity_id === entityId && r.character_id === charId) ? prev : [...prev, tmp]))
+      const { data } = await supabase.from('battlefield_entity_reveals').insert({ battlefield_id: id, entity_id: entityId, character_id: charId }).select('id,character_id,entity_id').single()
+      if (data) setReveals(prev => prev.map(r => (r.id === tmp.id ? data : r)))
+    } else {
+      setReveals(prev => prev.filter(r => !(r.entity_id === entityId && r.character_id === charId)))
+      await supabase.from('battlefield_entity_reveals').delete().eq('entity_id', entityId).eq('character_id', charId)
+    }
+  }
+
   function openTab(t: Tab) {
     setTab(t)
     setSheetOpen(true)
@@ -242,12 +368,58 @@ export default function BattlefieldEditorPage() {
   if (loading) {
     return <div className="min-h-screen bg-gray-900 flex items-center justify-center"><p className="text-white text-xl animate-pulse">Loading battlefield…</p></div>
   }
+
+  // Player (non-GM) fogged, read-only view
+  if (!isGM) {
+    if (!playerView) {
+      return (
+        <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center text-center px-6">
+          <p className="text-4xl mb-4">⚔️</p>
+          <p className="text-white text-lg mb-2">This battlefield isn&apos;t shared with you.</p>
+          <p className="text-gray-500 mb-6">Your GM will open it up when your character is in the fight.</p>
+          <Link href="/battlefields" className="text-red-400 hover:text-red-300">← Back to battlefields</Link>
+        </div>
+      )
+    }
+    const pTool: Tool = tool === 'pan' ? 'pan' : 'select'
+    return (
+      <main className="h-screen flex flex-col bg-gray-900 text-white overflow-hidden">
+        <div className="bg-gray-800 border-b border-gray-700 px-3 sm:px-5 py-2.5 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3 min-w-0">
+            <Link href="/battlefields" className="text-gray-400 hover:text-white shrink-0">←</Link>
+            <h1 className="text-base sm:text-lg font-bold text-red-500 font-mono truncate">{playerView.battlefield.name}</h1>
+          </div>
+          <span className="text-xs text-gray-400 shrink-0">Round {playerView.battlefield.round}</span>
+        </div>
+        <div className="flex-1 relative min-w-0">
+          <BattlefieldGrid
+            battlefield={playerView.battlefield}
+            entities={playerView.entities}
+            characters={{}}
+            isGM={false}
+            selectedIds={[]}
+            tool={pTool}
+            onSelectionChange={() => {}}
+            onInspect={() => {}}
+            onMoveEntities={() => {}}
+            onResizeEntity={() => {}}
+            fogDisplay="player"
+            fogVisibleCells={playerView.visibleCells}
+          />
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 bg-gray-800/95 border border-gray-600 rounded-full px-2 py-1.5 shadow-lg">
+            <ToolBtn active={pTool === 'select'} onClick={() => setTool('select')} title="Look">↖️</ToolBtn>
+            <ToolBtn active={pTool === 'pan'} onClick={() => setTool('pan')} title="Pan">✋</ToolBtn>
+          </div>
+        </div>
+      </main>
+    )
+  }
+
   if (!battlefield) {
     return (
       <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center text-center px-6">
         <p className="text-4xl mb-4">⚔️</p>
-        <p className="text-white text-lg mb-2">This battlefield isn&apos;t available to you.</p>
-        <p className="text-gray-500 mb-6">Player visibility is coming soon — your GM will share battlefields you&apos;re part of.</p>
+        <p className="text-white text-lg mb-2">This battlefield isn&apos;t available.</p>
         <Link href="/battlefields" className="text-red-400 hover:text-red-300">← Back to battlefields</Link>
       </div>
     )
@@ -275,6 +447,17 @@ export default function BattlefieldEditorPage() {
       saveEnemyPreset={saveEnemyPreset}
       deletePreset={deletePreset}
       placeEnemyPreset={placeEnemyPreset}
+      visibility={visibility}
+      reveals={reveals}
+      gmNotes={gmNotes}
+      patchGmNotes={patchGmNotes}
+      upsertVisibility={upsertVisibility}
+      revealWholeGrid={revealWholeGrid}
+      setEntityRevealed={setEntityRevealed}
+      fogCharId={fogCharId}
+      setFogCharId={cid => { setFogCharId(cid); setPreviewAs(null); if (cid) setTool('fog') }}
+      previewAs={previewAs}
+      setPreviewAs={cid => { setPreviewAs(cid); if (cid) setTool('select') }}
       onDeleteBattlefield={async () => {
         if (!confirm('Delete this battlefield and everything on it?')) return
         await supabase.from('battlefields').delete().eq('id', id)
@@ -282,6 +465,22 @@ export default function BattlefieldEditorPage() {
       }}
     />
   )
+
+  // Fog overlay config for the GM grid
+  let fogDisplay: 'none' | 'edit' | 'player' = 'none'
+  let fogCells: Set<string> | null = null
+  let hiddenIds: Set<string> | undefined
+  if (previewAs) {
+    const v = visibility.find(x => x.character_id === previewAs)
+    fogCells = new Set(v?.visible_cells ?? [])
+    const revealed = new Set(reveals.filter(r => r.character_id === previewAs).map(r => r.entity_id))
+    hiddenIds = new Set(entities.filter(e => !footprintVisible(e, fogCells!) || (e.hidden_until_revealed && !revealed.has(e.id))).map(e => e.id))
+    fogDisplay = 'player'
+  } else if (tool === 'fog' && fogCharId) {
+    const v = visibility.find(x => x.character_id === fogCharId)
+    fogCells = new Set(v?.visible_cells ?? [])
+    fogDisplay = 'edit'
+  }
 
   return (
     <main className="h-screen flex flex-col bg-gray-900 text-white overflow-hidden">
@@ -312,13 +511,47 @@ export default function BattlefieldEditorPage() {
             onInspect={entId => { setSelectedIds([entId]); setTab('inspect'); setSheetOpen(true) }}
             onMoveEntities={moveEntities}
             onResizeEntity={(entId, box) => patchEntity(entId, box)}
+            fogDisplay={fogDisplay}
+            fogVisibleCells={fogCells}
+            hiddenEntityIds={hiddenIds}
+            fogReveal={fogReveal}
+            fogShape={fogShape}
+            onPaintCells={(cells, reveal) => { if (fogCharId) paintCells(fogCharId, cells, reveal) }}
           />
+
+          {/* Fog paint sub-toolbar */}
+          {tool === 'fog' && !previewAs && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1.5 bg-gray-800/95 border border-gray-600 rounded-full px-3 py-1.5 shadow-lg text-sm">
+              {fogCharId ? (
+                <>
+                  <span className="text-gray-400">Painting:</span>
+                  <span className="font-bold">{charMap[fogCharId]?.name ?? 'player'}</span>
+                  <div className="w-px h-5 bg-gray-600 mx-1" />
+                  <button onClick={() => setFogReveal(true)} className={`px-2 py-0.5 rounded ${fogReveal ? 'bg-green-700' : 'bg-gray-700'}`}>Reveal</button>
+                  <button onClick={() => setFogReveal(false)} className={`px-2 py-0.5 rounded ${!fogReveal ? 'bg-red-700' : 'bg-gray-700'}`}>Hide</button>
+                  <div className="w-px h-5 bg-gray-600 mx-1" />
+                  <button onClick={() => setFogShape('rect')} className={`px-2 py-0.5 rounded ${fogShape === 'rect' ? 'bg-red-700' : 'bg-gray-700'}`} title="Rectangle">▭</button>
+                  <button onClick={() => setFogShape('brush')} className={`px-2 py-0.5 rounded ${fogShape === 'brush' ? 'bg-red-700' : 'bg-gray-700'}`} title="Brush">🖌️</button>
+                </>
+              ) : (
+                <button onClick={() => openTab('fog')} className="text-gray-300">Pick a player in the Fog panel →</button>
+              )}
+            </div>
+          )}
+
+          {previewAs && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 bg-purple-900/90 border border-purple-500 rounded-full px-3 py-1.5 shadow-lg text-sm">
+              <span>👁️ Seeing as <b>{charMap[previewAs]?.name ?? 'player'}</b></span>
+              <button onClick={() => setPreviewAs(null)} className="px-2 py-0.5 rounded bg-purple-700 hover:bg-purple-600">Exit</button>
+            </div>
+          )}
 
           {/* Floating toolbar */}
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 bg-gray-800/95 border border-gray-600 rounded-full px-2 py-1.5 shadow-lg">
             <ToolBtn active={tool === 'select'} onClick={() => setTool('select')} title="Select (marquee, move, resize)">↖️</ToolBtn>
             <ToolBtn active={tool === 'pan'} onClick={() => setTool('pan')} title="Pan / move view">✋</ToolBtn>
             {isGM && <ToolBtn active={tool === 'measure'} onClick={() => setTool('measure')} title="Measure distance">📏</ToolBtn>}
+            {isGM && <ToolBtn active={tool === 'fog'} onClick={() => { setTool('fog'); openTab('fog') }} title="Fog of war">🌫️</ToolBtn>}
             <div className="w-px h-6 bg-gray-600 mx-1" />
             {isGM && <ToolBtn active={tab === 'add' && sheetOpen} onClick={() => openTab('add')} title="Add">➕</ToolBtn>}
             <ToolBtn active={tab === 'inspect' && sheetOpen} onClick={() => openTab('inspect')} title="Inspect">🔍</ToolBtn>
@@ -372,6 +605,7 @@ function TabRow({ tab, setTab, isGM }: { tab: Tab; setTab: (t: Tab) => void; isG
     { id: 'add', label: 'Add', gmOnly: true },
     { id: 'inspect', label: 'Inspect' },
     { id: 'initiative', label: 'Turns' },
+    { id: 'fog', label: 'Fog', gmOnly: true },
     { id: 'settings', label: 'Setup', gmOnly: true },
     { id: 'notes', label: 'Notes', gmOnly: true },
   ]
@@ -415,12 +649,25 @@ interface PanelProps {
   deletePreset: (id: string) => void
   placeEnemyPreset: (p: BattlefieldPreset) => void
   onDeleteBattlefield: () => void
+  // Phase 2
+  visibility: BattlefieldVisibility[]
+  reveals: { id: string; character_id: string; entity_id: string }[]
+  gmNotes: string
+  patchGmNotes: (text: string) => void
+  upsertVisibility: (charId: string, patch: { granted?: boolean; visible_cells?: string[] }) => void
+  revealWholeGrid: (charId: string, reveal: boolean) => void
+  setEntityRevealed: (entityId: string, charId: string, revealed: boolean) => void
+  fogCharId: string | null
+  setFogCharId: (id: string | null) => void
+  previewAs: string | null
+  setPreviewAs: (id: string | null) => void
 }
 
 function PanelContent(p: PanelProps) {
   if (p.tab === 'add' && p.isGM) return <AddPanel {...p} />
   if (p.tab === 'inspect') return <InspectPanel {...p} />
   if (p.tab === 'initiative') return <InitiativePanel {...p} />
+  if (p.tab === 'fog' && p.isGM) return <FogPanel {...p} />
   if (p.tab === 'settings' && p.isGM) return <SettingsPanel {...p} />
   if (p.tab === 'notes' && p.isGM) return <NotesPanel {...p} />
   return <p className="text-gray-500 text-sm">Nothing here.</p>
@@ -531,7 +778,7 @@ function AddPanel({ battlefield, entities, allChars, addEntity, presets, deleteP
 
 // -------- Inspect --------------------------------------------------------
 function InspectPanel(p: PanelProps) {
-  const { selected: e, selectedIds, entities, isGM, charMap, patchEntity, deleteEntities, battlefield, rangeEntityId, setRangeEntityId, saveCharacterDefault, saveEnemyPreset } = p
+  const { selected: e, selectedIds, entities, isGM, charMap, patchEntity, deleteEntities, battlefield, rangeEntityId, setRangeEntityId, saveCharacterDefault, saveEnemyPreset, visibility, reveals, setEntityRevealed } = p
 
   // Multiple selected -> bulk actions
   if (selectedIds.length > 1) {
@@ -660,6 +907,36 @@ function InspectPanel(p: PanelProps) {
             <textarea defaultValue={e.notes} key={`n-${e.id}`} rows={2} onBlur={ev => patchEntity(e.id, { notes: ev.target.value })}
               className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 resize-none" />
           </Field>
+
+          {/* Fog: hide this token even in a revealed square, reveal per player */}
+          <div className="rounded border border-gray-700 bg-gray-900/40 p-2 space-y-2">
+            <label className="flex items-center justify-between cursor-pointer">
+              <span className="text-xs text-gray-300">🌫️ Hidden until revealed</span>
+              <input type="checkbox" checked={e.hidden_until_revealed} onChange={ev => patchEntity(e.id, { hidden_until_revealed: ev.target.checked })} />
+            </label>
+            {e.hidden_until_revealed && (() => {
+              const sharedChars = visibility.filter(v => v.granted).map(v => v.character_id)
+              if (sharedChars.length === 0) return <p className="text-[11px] text-gray-600">No players share this battlefield yet (see the Fog tab).</p>
+              return (
+                <div className="space-y-1">
+                  {sharedChars.map(cid => {
+                    const revealed = reveals.some(r => r.entity_id === e.id && r.character_id === cid)
+                    return (
+                      <div key={cid} className="flex items-center justify-between text-xs">
+                        <span className="truncate">{charMap[cid]?.name ?? 'player'}</span>
+                        <button onClick={() => setEntityRevealed(e.id, cid, !revealed)}
+                          className={`px-2 py-0.5 rounded border ${revealed ? 'bg-green-800 border-green-600' : 'bg-gray-700 border-gray-600'}`}>
+                          {revealed ? 'Seen ✓' : 'Reveal'}
+                        </button>
+                      </div>
+                    )
+                  })}
+                  <button onClick={() => sharedChars.forEach(cid => setEntityRevealed(e.id, cid, true))}
+                    className="w-full mt-1 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs">Reveal to all</button>
+                </div>
+              )
+            })()}
+          </div>
 
           {/* Presets */}
           {linked && (
@@ -829,17 +1106,55 @@ function SettingsPanel({ battlefield, patchBattlefield, onDeleteBattlefield }: P
   )
 }
 
+// -------- Fog ------------------------------------------------------------
+function FogPanel({ entities, charMap, visibility, upsertVisibility, revealWholeGrid, fogCharId, setFogCharId, previewAs, setPreviewAs, battlefield }: PanelProps) {
+  const seen = new Set<string>()
+  const list = entities.filter(e => e.kind === 'player' && e.character_id && !seen.has(e.character_id) && seen.add(e.character_id))
+  if (list.length === 0) return <p className="text-gray-500 text-sm">Place player-character tokens on the battlefield first — then share and reveal their view here.</p>
+  const total = battlefield.cols * battlefield.rows
+  return (
+    <div className="space-y-3 text-sm">
+      <p className="text-xs text-gray-500">Each player only sees squares you reveal for them. Visibility is per-player — never shared.</p>
+      {list.map(e => {
+        const cid = e.character_id as string
+        const v = visibility.find(x => x.character_id === cid)
+        const granted = v?.granted ?? false
+        const cells = v?.visible_cells?.length ?? 0
+        const editing = fogCharId === cid
+        return (
+          <div key={cid} className={`rounded border p-2 ${editing ? 'border-red-500 bg-red-900/10' : 'border-gray-700 bg-gray-800/40'}`}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-bold truncate">{charMap[cid]?.name ?? e.label}</span>
+              <button onClick={() => upsertVisibility(cid, { granted: !granted })}
+                className={`px-2 py-0.5 rounded text-xs font-bold border shrink-0 ${granted ? 'bg-green-800 border-green-600' : 'bg-gray-700 border-gray-600'}`}>
+                {granted ? 'Shared ✓' : 'Share'}
+              </button>
+            </div>
+            <div className="text-[11px] text-gray-500 mt-1">{cells} / {total} squares revealed</div>
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              <button onClick={() => setFogCharId(editing ? null : cid)} className={`px-2 py-1 rounded text-xs font-bold ${editing ? 'bg-red-700' : 'bg-gray-700 hover:bg-gray-600'}`}>{editing ? 'Painting…' : '🖌️ Paint fog'}</button>
+              <button onClick={() => revealWholeGrid(cid, true)} className="px-2 py-1 rounded text-xs bg-gray-700 hover:bg-gray-600">Reveal all</button>
+              <button onClick={() => revealWholeGrid(cid, false)} className="px-2 py-1 rounded text-xs bg-gray-700 hover:bg-gray-600">Hide all</button>
+              <button onClick={() => setPreviewAs(previewAs === cid ? null : cid)} className={`px-2 py-1 rounded text-xs ${previewAs === cid ? 'bg-purple-700' : 'bg-gray-700 hover:bg-gray-600'}`}>👁️ {previewAs === cid ? 'Previewing' : 'Preview'}</button>
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 // -------- Notes ----------------------------------------------------------
-function NotesPanel({ battlefield, patchBattlefield }: PanelProps) {
+function NotesPanel({ battlefield, gmNotes, patchGmNotes }: PanelProps) {
   return (
     <div className="space-y-2 text-sm">
       <div className="flex items-center gap-2 text-xs text-gray-500"><span>🔒</span> Private to you (GM only)</div>
       <textarea
-        defaultValue={battlefield.gm_notes}
+        defaultValue={gmNotes}
         key={`gmn-${battlefield.id}`}
         rows={16}
         placeholder="Ambush on round 3… trap under the rug… enemy weaknesses…"
-        onBlur={e => patchBattlefield({ gm_notes: e.target.value })}
+        onBlur={e => patchGmNotes(e.target.value)}
         className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2 resize-none leading-relaxed"
       />
     </div>

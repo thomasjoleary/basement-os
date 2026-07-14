@@ -9,13 +9,35 @@ export interface Battlefield {
   rows: number
   bg_color: string
   border_type: 'indoor' | 'outdoor'
-  gm_notes: string
   round: number
   turn_entity_id: string | null
   is_archived: boolean
   created_by: string | null
   created_at: string
   updated_at: string
+}
+
+// Per-player-character fog grant for a battlefield.
+export interface BattlefieldVisibility {
+  id: string
+  battlefield_id: string
+  character_id: string
+  granted: boolean
+  visible_cells: string[] // "x,y" strings
+  updated_at: string
+}
+
+// Cells (as "x,y" strings) a footprint occupies.
+export function footprintCells(x: number, y: number, width: number, height: number): string[] {
+  const cells: string[] = []
+  for (let gx = x; gx < x + width; gx++) for (let gy = y; gy < y + height; gy++) cells.push(`${gx},${gy}`)
+  return cells
+}
+
+// Does a footprint overlap any cell in the visible set?
+export function footprintVisible(e: { x: number; y: number; width: number; height: number }, visible: Set<string>): boolean {
+  for (let gx = e.x; gx < e.x + e.width; gx++) for (let gy = e.y; gy < e.y + e.height; gy++) if (visible.has(`${gx},${gy}`)) return true
+  return false
 }
 
 export interface BattlefieldEntity {

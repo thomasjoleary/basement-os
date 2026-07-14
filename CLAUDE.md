@@ -166,12 +166,12 @@ Power level auto-fills when rarity is set; only overrides if the current value i
 
 ## Battlefield (tactical combat grid)
 
-A per-encounter tactical map of 5ft squares. **Phase 1 is GM-only** (RLS blocks players); player visibility + fog of war is Phase 2 (not built yet).
+A per-encounter tactical map of 5ft squares. GM authoring + **player fog-of-war view** (Phase 2) are both built.
 
-- Route: `app/battlefields/page.tsx` (list + create) · `app/battlefields/[id]/page.tsx` (editor)
-- Grid renderer: `components/battlefield/BattlefieldGrid.tsx` (pan/zoom/pinch, token drag, marquee multi-select, resize handles, measure, movement-range, stacking)
+- Route: `app/battlefields/page.tsx` (list + create) · `app/battlefields/[id]/page.tsx` (editor + player view)
+- Grid renderer: `components/battlefield/BattlefieldGrid.tsx` (pan/zoom/pinch, token drag, marquee multi-select, resize handles, measure, movement-range, stacking, fog display + fog painting)
 - Types/constants: `lib/battlefield.ts`
-- SQL migrations (run both, in order): `sql/005_create_battlefields.sql`, `sql/006_battlefield_presets.sql` — **must be run in Supabase** before use
+- SQL migrations (run in order): `sql/005_create_battlefields.sql`, `sql/006_battlefield_presets.sql`, `sql/007_battlefield_visibility.sql` — **must be run in Supabase** before use
 
 ### Data model
 - **`battlefields`**: `cols`/`rows` (size in 5ft squares, 1–100), `bg_color`, `border_type` (`'indoor'`|`'outdoor'` — drives border styling so players know where they can flee), `gm_notes` (private), `round`, `turn_entity_id` (whose turn), `is_archived`
@@ -193,8 +193,17 @@ A per-encounter tactical map of 5ft squares. **Phase 1 is GM-only** (RLS blocks 
 
 ### Presets (`battlefield_presets`, GM-only, `sql/006`)
 - `preset_kind='character_default'` — one saved token look (size/color/icon/speed) per character, keyed by `character_id`; **auto-applied** when that character/tame is placed. Saved from the linked token's Inspect panel ("Save as … default"). ★ in the Add list marks characters that have one
-- `preset_kind='enemy'` — reusable enemy tokens grouped by `folder`, shown as the **Enemy Library** in the Add panel (click to place). Created via "Save as enemy preset" on an enemy's Inspect panel; saving with an existing name+folder overwrites that preset
+- `preset_kind='enemy'` — reusable enemy tokens grouped by `folder`, shown as the **Enemy Library** at the bottom of the Add panel (click to place). Created via "Save as enemy preset" on an enemy's Inspect panel; saving with an existing name+folder overwrites that preset
 - Both flavours live in one table; realtime-synced
+
+### Phase 2 — player visibility & fog of war (`sql/007`)
+- **Security model:** players never read `battlefield_entities` directly. They call the `SECURITY DEFINER` RPC **`get_player_battlefield(bf)`**, which returns only tokens overlapping their revealed squares (and not hidden-until-revealed-to-them), and **redacts HP/mana** of anything they don't own. GMs keep full direct-table access.
+- **Vitals rule** — shared SQL predicate **`bf_can_see_vitals(target_id, viewer)`**: a viewer sees a character's HP/mana iff GM, own character (`user_id`), own tame (name/job link), or an **NPC in one of their parties**. Reused by the RPC; intended to also back an app-wide redaction later (currently only the battlefield enforces it — the home page already hides other players' living characters entirely).
+- **Tables:** `battlefield_visibility` (per player character: `granted` + `visible_cells` `["x,y"]`), `battlefield_entity_reveals` (per-player reveal of a hidden token), `battlefield_gm_notes` (GM notes **moved off** the `battlefields` row so players can safely read it / receive realtime pings).
+- **Realtime:** a trigger touches `battlefields.updated_at` on any entity/visibility/reveal change; players subscribe to their `battlefields` row + `battlefield_visibility` + `characters` and **re-call the RPC** (no leak in payloads). GM uses direct-table subscriptions.
+- **GM UI:** **Fog** tab (share toggle per player, Paint fog / Reveal all / Hide all, 👁️ Preview-as-player) + **fog tool** (🌫️) with a reveal/hide × rectangle/brush sub-toolbar. Per-token "Hidden until revealed" + per-player reveal live in Inspect. Tokens default to visible in a revealed square.
+- **Player view:** read-only, fogged (blacked-out outside `visible_cells`), pan/look only; HP/mana bars show for own character + tames + party NPCs only.
+- Grid fog props: `fogDisplay` (`'none'|'player'|'edit'`), `fogVisibleCells`, `hiddenEntityIds`, `fogReveal`, `fogShape`, `onPaintCells`.
 
 ## Key Files
 - `app/character/[id]/page.tsx` — the main character sheet page (everything: view, edit, level-up modal, power level display)
