@@ -169,9 +169,9 @@ Power level auto-fills when rarity is set; only overrides if the current value i
 A per-encounter tactical map of 5ft squares. **Phase 1 is GM-only** (RLS blocks players); player visibility + fog of war is Phase 2 (not built yet).
 
 - Route: `app/battlefields/page.tsx` (list + create) · `app/battlefields/[id]/page.tsx` (editor)
-- Grid renderer: `components/battlefield/BattlefieldGrid.tsx` (pan/zoom/pinch, token drag, measure, movement-range, stacking)
+- Grid renderer: `components/battlefield/BattlefieldGrid.tsx` (pan/zoom/pinch, token drag, marquee multi-select, resize handles, measure, movement-range, stacking)
 - Types/constants: `lib/battlefield.ts`
-- SQL migration: `sql/005_create_battlefields.sql` — **must be run in Supabase** before use
+- SQL migrations (run both, in order): `sql/005_create_battlefields.sql`, `sql/006_battlefield_presets.sql` — **must be run in Supabase** before use
 
 ### Data model
 - **`battlefields`**: `cols`/`rows` (size in 5ft squares, 1–100), `bg_color`, `border_type` (`'indoor'`|`'outdoor'` — drives border styling so players know where they can flee), `gm_notes` (private), `round`, `turn_entity_id` (whose turn), `is_archived`
@@ -184,6 +184,17 @@ A per-encounter tactical map of 5ft squares. **Phase 1 is GM-only** (RLS blocks 
 - Extras: initiative/turn tracker (`round` + `turn_entity_id`, "Next turn" wraps and increments round), toggleable status conditions (`CONDITIONS` in `lib/battlefield.ts`), distance measure + movement-range highlight (5e "every square = 5ft", `move_ft`)
 - Walls/doors/objects are cell-based tokens (v1 simplification — not edge-drawn)
 - Linked from home nav (visible to all; list is empty for players until Phase 2)
+
+### GM grid interactions (PC)
+- Three tools in the floating toolbar: **select** (↖️), **pan** (✋), **measure** (📏). Marquee needs left-drag, so panning moved to its own tool; middle/right-mouse-drag also pans in any tool, and one-finger drag pans on touch (mobile is view-first)
+- **select tool**: drag empty space = marquee multi-select (shift adds); drag a token = move it (dragging one of a multi-selection moves the whole group, formation-clamped to the grid); drag the amber handles on a single selected token = resize; **Delete/Backspace** removes the selection, **Esc** clears it
+- Any click/tap on a token selects just it and opens the Inspect panel (`onInspect`)
+- Selection is a `string[]` (`selectedIds`) in the page; Inspect shows a single-token editor or a bulk panel (recolor / delete N) when several are selected
+
+### Presets (`battlefield_presets`, GM-only, `sql/006`)
+- `preset_kind='character_default'` — one saved token look (size/color/icon/speed) per character, keyed by `character_id`; **auto-applied** when that character/tame is placed. Saved from the linked token's Inspect panel ("Save as … default"). ★ in the Add list marks characters that have one
+- `preset_kind='enemy'` — reusable enemy tokens grouped by `folder`, shown as the **Enemy Library** in the Add panel (click to place). Created via "Save as enemy preset" on an enemy's Inspect panel; saving with an existing name+folder overwrites that preset
+- Both flavours live in one table; realtime-synced
 
 ## Key Files
 - `app/character/[id]/page.tsx` — the main character sheet page (everything: view, edit, level-up modal, power level display)

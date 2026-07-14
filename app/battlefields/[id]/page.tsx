@@ -8,6 +8,7 @@ import BattlefieldGrid from '@/components/battlefield/BattlefieldGrid'
 import {
   Battlefield,
   BattlefieldEntity,
+  BattlefieldPreset,
   CharacterLite,
   EntityKind,
   TOKEN_COLORS,
@@ -19,6 +20,7 @@ import {
 } from '@/lib/battlefield'
 
 type Tab = 'add' | 'inspect' | 'initiative' | 'settings' | 'notes'
+type Tool = 'select' | 'pan' | 'measure'
 const CREATURE_KINDS = new Set<EntityKind>(['player', 'tame', 'enemy'])
 
 interface FullChar extends CharacterLite {
@@ -36,9 +38,10 @@ export default function BattlefieldEditorPage() {
   const [battlefield, setBattlefield] = useState<Battlefield | null>(null)
   const [entities, setEntities] = useState<BattlefieldEntity[]>([])
   const [allChars, setAllChars] = useState<FullChar[]>([])
+  const [presets, setPresets] = useState<BattlefieldPreset[]>([])
 
-  const [selectedId, setSelectedId] = useState<string | null>(null)
-  const [tool, setTool] = useState<'select' | 'measure'>('select')
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
+  const [tool, setTool] = useState<Tool>('select')
   const [rangeEntityId, setRangeEntityId] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('add')
   const [sheetOpen, setSheetOpen] = useState(false)
@@ -49,7 +52,7 @@ export default function BattlefieldEditorPage() {
     return m
   }, [allChars])
 
-  const selected = entities.find(e => e.id === selectedId) ?? null
+  const selected = selectedIds.length === 1 ? entities.find(e => e.id === selectedIds[0]) ?? null : null
 
   // ---- Load -------------------------------------------------------------
   useEffect(() => {
@@ -59,14 +62,16 @@ export default function BattlefieldEditorPage() {
         const { data: profile } = await supabase.from('profiles').select('role').eq('id', session.user.id).single()
         setIsGM(profile?.role === 'gm')
       }
-      const [{ data: bf }, { data: ents }, { data: chars }] = await Promise.all([
+      const [{ data: bf }, { data: ents }, { data: chars }, { data: pres }] = await Promise.all([
         supabase.from('battlefields').select('*').eq('id', id).single(),
         supabase.from('battlefield_entities').select('*').eq('battlefield_id', id),
         supabase.from('characters').select('id,name,hp_current,hp_max,mana_current,mana_max,is_tame,is_npc,is_dead'),
+        supabase.from('battlefield_presets').select('*'),
       ])
       if (bf) setBattlefield(bf as Battlefield)
       if (ents) setEntities(ents as BattlefieldEntity[])
       if (chars) setAllChars(chars as FullChar[])
+      if (pres) setPresets(pres as BattlefieldPreset[])
       setLoading(false)
     }
     init()
@@ -94,6 +99,17 @@ export default function BattlefieldEditorPage() {
         const row = payload.new as FullChar
         setAllChars(prev => prev.map(c => (c.id === row.id ? { ...c, ...row } : c)))
       })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'battlefield_presets' }, payload => {
+        setPresets(prev => {
+          if (payload.eventType === 'DELETE') return prev.filter(p => p.id !== (payload.old as { id: string }).id)
+          const row = payload.new as BattlefieldPreset
+          const idx = prev.findIndex(p => p.id === row.id)
+          if (idx === -1) return [...prev, row]
+          const next = [...prev]
+          next[idx] = row
+          return next
+        })
+      })
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [id])
@@ -109,15 +125,30 @@ export default function BattlefieldEditorPage() {
     await supabase.from('battlefield_entities').update(patch).eq('id', entId)
   }
 
-  async function deleteEntity(entId: string) {
-    setEntities(prev => prev.filter(e => e.id !== entId))
-    if (selectedId === entId) setSelectedId(null)
-    if (rangeEntityId === entId) setRangeEntityId(null)
-    await supabase.from('battlefield_entities').delete().eq('id', entId)
+  async function moveEntities(moves: { id: string; x: number; y: number }[]) {
+    setEntities(prev => prev.map(e => {
+      const m = moves.find(mm => mm.id === e.id)
+      return m ? { ...e, x: m.x, y: m.y } : e
+    }))
+    await Promise.all(moves.map(m => supabase.from('battlefield_entities').update({ x: m.x, y: m.y }).eq('id', m.id)))
+  }
+
+  async function deleteEntities(ids: string[]) {
+    if (ids.length === 0) return
+    setEntities(prev => prev.filter(e => !ids.includes(e.id)))
+    setSelectedIds(prev => prev.filter(x => !ids.includes(x)))
+    if (rangeEntityId && ids.includes(rangeEntityId)) setRangeEntityId(null)
+    await supabase.from('battlefield_entities').delete().in('id', ids)
   }
 
   async function addEntity(partial: Partial<BattlefieldEntity>) {
     if (!battlefield) return
+    // Apply this character's saved default token look, if one exists.
+    let defaults: Partial<BattlefieldEntity> = {}
+    if (partial.character_id) {
+      const d = presets.find(p => p.preset_kind === 'character_default' && p.character_id === partial.character_id)
+      if (d) defaults = { width: d.width, height: d.height, color: d.color, icon: d.icon, move_ft: d.move_ft }
+    }
     const spread = entities.length % 6
     const base = {
       battlefield_id: id,
@@ -128,18 +159,84 @@ export default function BattlefieldEditorPage() {
       move_ft: 30,
       conditions: [],
     }
-    const { data } = await supabase.from('battlefield_entities').insert({ ...base, ...partial }).select().single()
+    const { data } = await supabase.from('battlefield_entities').insert({ ...base, ...defaults, ...partial }).select().single()
     if (data) {
       setEntities(prev => (prev.some(e => e.id === (data as BattlefieldEntity).id) ? prev : [...prev, data as BattlefieldEntity]))
-      setSelectedId((data as BattlefieldEntity).id)
+      setSelectedIds([(data as BattlefieldEntity).id])
       setTab('inspect')
     }
+  }
+
+  // ---- Presets ----------------------------------------------------------
+  async function saveCharacterDefault(ent: BattlefieldEntity) {
+    if (!ent.character_id) return
+    const existing = presets.find(p => p.preset_kind === 'character_default' && p.character_id === ent.character_id)
+    const fields = { width: ent.width, height: ent.height, color: ent.color, icon: ent.icon, move_ft: ent.move_ft }
+    if (existing) {
+      setPresets(prev => prev.map(p => (p.id === existing.id ? { ...p, ...fields } : p)))
+      await supabase.from('battlefield_presets').update(fields).eq('id', existing.id)
+    } else {
+      const { data } = await supabase.from('battlefield_presets').insert({ preset_kind: 'character_default', character_id: ent.character_id, ...fields }).select().single()
+      if (data) setPresets(prev => [...prev, data as BattlefieldPreset])
+    }
+  }
+
+  async function saveEnemyPreset(ent: BattlefieldEntity, name: string, folder: string) {
+    const fields = { name: name.trim(), folder: folder.trim(), width: ent.width, height: ent.height, color: ent.color, icon: ent.icon, move_ft: ent.move_ft, hp_max: ent.hp_max, mana_max: ent.mana_max }
+    // Overwrite an existing preset with the same name+folder, else create a new one.
+    const existing = presets.find(p => p.preset_kind === 'enemy' && p.name === fields.name && p.folder === fields.folder)
+    if (existing) {
+      setPresets(prev => prev.map(p => (p.id === existing.id ? { ...p, ...fields } : p)))
+      await supabase.from('battlefield_presets').update(fields).eq('id', existing.id)
+    } else {
+      const { data } = await supabase.from('battlefield_presets').insert({ preset_kind: 'enemy', ...fields }).select().single()
+      if (data) setPresets(prev => [...prev, data as BattlefieldPreset])
+    }
+  }
+
+  async function deletePreset(presetId: string) {
+    setPresets(prev => prev.filter(p => p.id !== presetId))
+    await supabase.from('battlefield_presets').delete().eq('id', presetId)
+  }
+
+  function placeEnemyPreset(p: BattlefieldPreset) {
+    addEntity({
+      kind: 'enemy',
+      label: p.name || 'Enemy',
+      width: p.width,
+      height: p.height,
+      color: p.color,
+      icon: p.icon,
+      move_ft: p.move_ft,
+      hp_max: p.hp_max,
+      hp_current: p.hp_max,
+      mana_max: p.mana_max,
+      mana_current: p.mana_max,
+    })
   }
 
   function openTab(t: Tab) {
     setTab(t)
     setSheetOpen(true)
   }
+
+  // ---- Keyboard: Delete/Backspace removes the selection -----------------
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const el = document.activeElement
+      const typing = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || (el as HTMLElement).isContentEditable)
+      if (typing) return
+      if ((e.key === 'Delete' || e.key === 'Backspace') && isGM && selectedIds.length > 0) {
+        e.preventDefault()
+        deleteEntities(selectedIds)
+      } else if (e.key === 'Escape') {
+        setSelectedIds([])
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isGM, selectedIds])
 
   // ---- Render -----------------------------------------------------------
   if (loading) {
@@ -164,14 +261,20 @@ export default function BattlefieldEditorPage() {
       entities={entities}
       allChars={allChars}
       charMap={charMap}
+      presets={presets}
       selected={selected}
+      selectedIds={selectedIds}
       rangeEntityId={rangeEntityId}
       setRangeEntityId={setRangeEntityId}
-      onSelect={setSelectedId}
+      onSelect={id2 => setSelectedIds(id2 ? [id2] : [])}
       addEntity={addEntity}
       patchEntity={patchEntity}
-      deleteEntity={deleteEntity}
+      deleteEntities={deleteEntities}
       patchBattlefield={patchBattlefield}
+      saveCharacterDefault={saveCharacterDefault}
+      saveEnemyPreset={saveEnemyPreset}
+      deletePreset={deletePreset}
+      placeEnemyPreset={placeEnemyPreset}
       onDeleteBattlefield={async () => {
         if (!confirm('Delete this battlefield and everything on it?')) return
         await supabase.from('battlefields').delete().eq('id', id)
@@ -202,16 +305,19 @@ export default function BattlefieldEditorPage() {
             entities={entities}
             characters={charMap}
             isGM={isGM}
-            selectedId={selectedId}
-            onSelectEntity={setSelectedId}
-            onMoveEntity={(entId, x, y) => patchEntity(entId, { x, y })}
+            selectedIds={selectedIds}
             tool={tool}
             rangeEntityId={rangeEntityId}
+            onSelectionChange={setSelectedIds}
+            onInspect={entId => { setSelectedIds([entId]); setTab('inspect'); setSheetOpen(true) }}
+            onMoveEntities={moveEntities}
+            onResizeEntity={(entId, box) => patchEntity(entId, box)}
           />
 
           {/* Floating toolbar */}
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 bg-gray-800/95 border border-gray-600 rounded-full px-2 py-1.5 shadow-lg">
-            <ToolBtn active={tool === 'select'} onClick={() => setTool('select')} title="Select / move">✋</ToolBtn>
+            <ToolBtn active={tool === 'select'} onClick={() => setTool('select')} title="Select (marquee, move, resize)">↖️</ToolBtn>
+            <ToolBtn active={tool === 'pan'} onClick={() => setTool('pan')} title="Pan / move view">✋</ToolBtn>
             {isGM && <ToolBtn active={tool === 'measure'} onClick={() => setTool('measure')} title="Measure distance">📏</ToolBtn>}
             <div className="w-px h-6 bg-gray-600 mx-1" />
             {isGM && <ToolBtn active={tab === 'add' && sheetOpen} onClick={() => openTab('add')} title="Add">➕</ToolBtn>}
@@ -294,14 +400,20 @@ interface PanelProps {
   entities: BattlefieldEntity[]
   allChars: FullChar[]
   charMap: Record<string, CharacterLite>
+  presets: BattlefieldPreset[]
   selected: BattlefieldEntity | null
+  selectedIds: string[]
   rangeEntityId: string | null
   setRangeEntityId: (id: string | null) => void
   onSelect: (id: string | null) => void
   addEntity: (p: Partial<BattlefieldEntity>) => void
   patchEntity: (id: string, p: Partial<BattlefieldEntity>) => void
-  deleteEntity: (id: string) => void
+  deleteEntities: (ids: string[]) => void
   patchBattlefield: (p: Partial<Battlefield>) => void
+  saveCharacterDefault: (ent: BattlefieldEntity) => void
+  saveEnemyPreset: (ent: BattlefieldEntity, name: string, folder: string) => void
+  deletePreset: (id: string) => void
+  placeEnemyPreset: (p: BattlefieldPreset) => void
   onDeleteBattlefield: () => void
 }
 
@@ -315,11 +427,15 @@ function PanelContent(p: PanelProps) {
 }
 
 // -------- Add ------------------------------------------------------------
-function AddPanel({ battlefield, entities, allChars, addEntity }: PanelProps) {
+function AddPanel({ battlefield, entities, allChars, addEntity, presets, deletePreset, placeEnemyPreset }: PanelProps) {
   const onField = new Set(entities.map(e => e.character_id).filter(Boolean) as string[])
   const players = allChars.filter(c => !c.is_tame && !c.is_dead && !c.is_npc)
   const npcs = allChars.filter(c => !c.is_tame && c.is_npc && !c.is_dead)
   const tames = allChars.filter(c => c.is_tame && !c.is_dead)
+  const hasDefault = new Set(presets.filter(p => p.preset_kind === 'character_default' && p.character_id).map(p => p.character_id as string))
+
+  const enemyPresets = presets.filter(p => p.preset_kind === 'enemy')
+  const folders = [...new Set(enemyPresets.map(p => p.folder))].sort((a, b) => (a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))
 
   const addLinked = (c: FullChar, kind: EntityKind) =>
     addEntity({ kind, character_id: c.id, label: c.name, color: kindMeta(kind).color })
@@ -330,7 +446,7 @@ function AddPanel({ battlefield, entities, allChars, addEntity }: PanelProps) {
       onClick={() => addLinked(c, kind)}
       className="w-full flex items-center justify-between px-3 py-2 rounded bg-gray-700/50 hover:bg-gray-700 text-left text-sm"
     >
-      <span className="truncate">{c.name}</span>
+      <span className="truncate">{c.name}{hasDefault.has(c.id) && <span className="text-gray-500 ml-1" title="Has a saved default token">★</span>}</span>
       <span className="text-xs text-gray-400 shrink-0 ml-2">{onField.has(c.id) ? '＋ again' : '＋'}</span>
     </button>
   )
@@ -360,6 +476,33 @@ function AddPanel({ battlefield, entities, allChars, addEntity }: PanelProps) {
         </div>
       </div>
 
+      {enemyPresets.length > 0 && (
+        <div>
+          <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2">Enemy Library</h3>
+          <div className="space-y-2">
+            {folders.map(folder => (
+              <div key={folder || '_'}>
+                <div className="text-[11px] text-gray-500 mb-1">{folder || 'Ungrouped'}</div>
+                <div className="grid grid-cols-2 gap-1.5">
+                  {enemyPresets.filter(p => p.folder === folder).map(p => (
+                    <div key={p.id} className="group relative flex items-center gap-1.5 px-2 py-1.5 rounded bg-gray-700/50 hover:bg-gray-700 text-sm">
+                      <button onClick={() => placeEnemyPreset(p)} className="flex items-center gap-1.5 flex-1 min-w-0 text-left">
+                        <span style={{ color: p.color }}>{p.icon || '👹'}</span>
+                        <span className="truncate">{p.name || 'Enemy'}</span>
+                        {(p.width > 1 || p.height > 1) && <span className="text-[10px] text-gray-500">{p.width}×{p.height}</span>}
+                      </button>
+                      <button onClick={() => { if (confirm(`Delete preset "${p.name || 'Enemy'}"?`)) deletePreset(p.id) }}
+                        className="opacity-0 group-hover:opacity-100 text-gray-500 hover:text-red-400 text-xs shrink-0" title="Delete preset">✕</button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-gray-600 mt-1">Create presets from any enemy token&apos;s Inspect panel.</p>
+        </div>
+      )}
+
       <div>
         <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2">Player Characters</h3>
         <div className="space-y-1">
@@ -388,8 +531,38 @@ function AddPanel({ battlefield, entities, allChars, addEntity }: PanelProps) {
 
 // -------- Inspect --------------------------------------------------------
 function InspectPanel(p: PanelProps) {
-  const { selected: e, isGM, charMap, patchEntity, deleteEntity, battlefield, rangeEntityId, setRangeEntityId } = p
-  if (!e) return <p className="text-gray-500 text-sm">Select a token on the grid to inspect it.</p>
+  const { selected: e, selectedIds, entities, isGM, charMap, patchEntity, deleteEntities, battlefield, rangeEntityId, setRangeEntityId, saveCharacterDefault, saveEnemyPreset } = p
+
+  // Multiple selected -> bulk actions
+  if (selectedIds.length > 1) {
+    const sel = entities.filter(en => selectedIds.includes(en.id))
+    return (
+      <div className="space-y-4 text-sm">
+        <div className="font-bold">{selectedIds.length} tokens selected</div>
+        <div className="text-xs text-gray-500 space-y-0.5 max-h-32 overflow-y-auto">
+          {sel.map(en => <div key={en.id} className="truncate">{en.icon || kindMeta(en.kind).icon} {entityName(en, charMap)}</div>)}
+        </div>
+        {isGM && (
+          <>
+            <Field label="Set color for all">
+              <div className="flex flex-wrap gap-1.5">
+                {TOKEN_COLORS.map(col => (
+                  <button key={col} onClick={() => sel.forEach(en => patchEntity(en.id, { color: col }))}
+                    className="w-6 h-6 rounded-full border-2" style={{ background: col, borderColor: 'transparent' }} />
+                ))}
+              </div>
+            </Field>
+            <button onClick={() => deleteEntities(selectedIds)} className="w-full py-2 rounded bg-red-900/60 border border-red-700 text-red-200 hover:bg-red-900 text-sm font-bold">
+              Remove {selectedIds.length} tokens
+            </button>
+            <p className="text-[11px] text-gray-600">Tip: drag any selected token to move the whole group, or press Delete.</p>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  if (!e) return <p className="text-gray-500 text-sm">Select a token on the grid to inspect it. Drag a box on empty space to select several.</p>
 
   const linked = !!e.character_id
   const vitals = resolveVitals(e, charMap)
@@ -488,11 +661,44 @@ function InspectPanel(p: PanelProps) {
               className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1 resize-none" />
           </Field>
 
-          <button onClick={() => deleteEntity(e.id)} className="w-full py-2 rounded bg-red-900/60 border border-red-700 text-red-200 hover:bg-red-900 text-sm font-bold">
+          {/* Presets */}
+          {linked && (
+            <button onClick={() => saveCharacterDefault(e)}
+              className="w-full py-1.5 rounded bg-gray-700/50 border border-gray-600 hover:bg-gray-700 text-sm">
+              ★ Save size/color/icon/speed as {entityName(e, charMap)}&apos;s default
+            </button>
+          )}
+          {e.kind === 'enemy' && !linked && <SavePresetForm key={`sp-${e.id}`} onSave={(name, folder) => saveEnemyPreset(e, name, folder)} defaultName={e.label} />}
+
+          <button onClick={() => deleteEntities([e.id])} className="w-full py-2 rounded bg-red-900/60 border border-red-700 text-red-200 hover:bg-red-900 text-sm font-bold">
             Remove from battlefield
           </button>
         </>
       )}
+    </div>
+  )
+}
+
+function SavePresetForm({ onSave, defaultName }: { onSave: (name: string, folder: string) => void; defaultName: string }) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState(defaultName || 'Enemy')
+  const [folder, setFolder] = useState('')
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} className="w-full py-1.5 rounded bg-gray-700/50 border border-gray-600 hover:bg-gray-700 text-sm">
+        ＋ Save as enemy preset
+      </button>
+    )
+  }
+  return (
+    <div className="rounded border border-gray-600 bg-gray-900/60 p-2 space-y-2">
+      <Field label="Preset name"><input value={name} onChange={e => setName(e.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1" /></Field>
+      <Field label="Folder (optional)"><input value={folder} onChange={e => setFolder(e.target.value)} placeholder="e.g. Goblins" className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1" /></Field>
+      <div className="flex gap-2">
+        <button onClick={() => { onSave(name, folder); setOpen(false) }} className="flex-1 py-1.5 rounded bg-red-800 hover:bg-red-700 border border-red-600 text-sm font-bold">Save preset</button>
+        <button onClick={() => setOpen(false)} className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm">Cancel</button>
+      </div>
+      <p className="text-[11px] text-gray-600">Saving with an existing name+folder overwrites that preset.</p>
     </div>
   )
 }

@@ -43,6 +43,24 @@ export interface BattlefieldEntity {
   updated_at: string
 }
 
+export interface BattlefieldPreset {
+  id: string
+  preset_kind: 'character_default' | 'enemy'
+  character_id: string | null
+  name: string
+  folder: string
+  width: number
+  height: number
+  color: string
+  icon: string | null
+  move_ft: number
+  hp_max: number | null
+  mana_max: number | null
+  created_by: string | null
+  created_at: string
+  updated_at: string
+}
+
 // One grid square = 5 feet.
 export const FEET_PER_SQUARE = 5
 
