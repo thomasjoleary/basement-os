@@ -29,7 +29,7 @@ interface Props {
   selectedIds: string[]
   tool: Tool
   rangeEntityId?: string | null
-  onSelectionChange: (ids: string[]) => void
+  onSelectionChange: (ids: string[], opts?: { inspect?: boolean }) => void
   onInspect: (id: string) => void
   onMoveEntities: (moves: { id: string; x: number; y: number }[]) => void
   onResizeEntity: (id: string, box: { x: number; y: number; width: number; height: number }) => void
@@ -246,9 +246,9 @@ export default function BattlefieldGrid({
         // plain click on empty space
         onSelectionChange(marqueeRef.current.additive ? selectedIds : [])
       } else if (marqueeRef.current.additive) {
-        onSelectionChange([...new Set([...selectedIds, ...hits])])
+        onSelectionChange([...new Set([...selectedIds, ...hits])], { inspect: true })
       } else {
-        onSelectionChange(hits)
+        onSelectionChange(hits, { inspect: true })
       }
       marqueeRef.current = null
       setMarquee(null)

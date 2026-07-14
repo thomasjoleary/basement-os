@@ -308,7 +308,7 @@ export default function BattlefieldEditorPage() {
             selectedIds={selectedIds}
             tool={tool}
             rangeEntityId={rangeEntityId}
-            onSelectionChange={setSelectedIds}
+            onSelectionChange={(ids, opts) => { setSelectedIds(ids); if (opts?.inspect && ids.length > 0) { setTab('inspect'); setSheetOpen(true) } }}
             onInspect={entId => { setSelectedIds([entId]); setTab('inspect'); setSheetOpen(true) }}
             onMoveEntities={moveEntities}
             onResizeEntity={(entId, box) => patchEntity(entId, box)}
@@ -476,8 +476,31 @@ function AddPanel({ battlefield, entities, allChars, addEntity, presets, deleteP
         </div>
       </div>
 
-      {enemyPresets.length > 0 && (
+      <div>
+        <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2">Player Characters</h3>
+        <div className="space-y-1">
+          {players.length === 0 && <p className="text-xs text-gray-600">No player characters.</p>}
+          {players.map(c => <CharRow key={c.id} c={c} kind="player" />)}
+        </div>
+      </div>
+
+      {tames.length > 0 && (
         <div>
+          <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2">Tames</h3>
+          <div className="space-y-1">{tames.map(c => <CharRow key={c.id} c={c} kind="tame" />)}</div>
+        </div>
+      )}
+
+      {npcs.length > 0 && (
+        <div>
+          <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2">NPCs</h3>
+          <div className="space-y-1">{npcs.map(c => <CharRow key={c.id} c={c} kind="player" />)}</div>
+        </div>
+      )}
+      <p className="text-xs text-gray-600">Grid is {battlefield.cols}×{battlefield.rows}. New tokens land near the center — drag them into place.</p>
+
+      {enemyPresets.length > 0 && (
+        <div className="pt-2 border-t border-gray-700">
           <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2">Enemy Library</h3>
           <div className="space-y-2">
             {folders.map(folder => (
@@ -502,29 +525,6 @@ function AddPanel({ battlefield, entities, allChars, addEntity, presets, deleteP
           <p className="text-[11px] text-gray-600 mt-1">Create presets from any enemy token&apos;s Inspect panel.</p>
         </div>
       )}
-
-      <div>
-        <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2">Player Characters</h3>
-        <div className="space-y-1">
-          {players.length === 0 && <p className="text-xs text-gray-600">No player characters.</p>}
-          {players.map(c => <CharRow key={c.id} c={c} kind="player" />)}
-        </div>
-      </div>
-
-      {tames.length > 0 && (
-        <div>
-          <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2">Tames</h3>
-          <div className="space-y-1">{tames.map(c => <CharRow key={c.id} c={c} kind="tame" />)}</div>
-        </div>
-      )}
-
-      {npcs.length > 0 && (
-        <div>
-          <h3 className="text-xs uppercase tracking-wide text-gray-500 mb-2">NPCs</h3>
-          <div className="space-y-1">{npcs.map(c => <CharRow key={c.id} c={c} kind="player" />)}</div>
-        </div>
-      )}
-      <p className="text-xs text-gray-600">Grid is {battlefield.cols}×{battlefield.rows}. New tokens land near the center — drag them into place.</p>
     </div>
   )
 }
