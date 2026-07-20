@@ -18,7 +18,7 @@ const MIN_SCALE = 0.25
 const MAX_SCALE = 3
 const CLICK_SLOP = 4 // px of movement below which a press counts as a click
 
-type Tool = 'select' | 'pan' | 'measure' | 'fog'
+type Tool = 'select' | 'pan' | 'measure' | 'fog' | 'ping'
 type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w'
 
 interface Props {
@@ -40,6 +40,9 @@ interface Props {
   fogReveal?: boolean                     // when painting with the fog tool: true reveals, false hides
   fogShape?: 'rect' | 'brush'
   onPaintCells?: (cells: string[], reveal: boolean) => void
+  // Ping
+  pings?: { id: number; x: number; y: number; color: string }[]
+  onPing?: (x: number, y: number) => void
 }
 
 const CREATURE_KINDS = new Set(['player', 'tame', 'enemy'])
@@ -62,6 +65,8 @@ export default function BattlefieldGrid({
   fogReveal = true,
   fogShape = 'rect',
   onPaintCells,
+  pings,
+  onPing,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
@@ -192,6 +197,12 @@ export default function BattlefieldGrid({
       const { cx, cy } = cellAt(e.clientX, e.clientY)
       fogPaintRef.current = { shape: fogShape, reveal: fogReveal, start: { x: cx, y: cy } }
       setFogPreview(new Set([`${cx},${cy}`]))
+      return
+    }
+
+    if (tool === 'ping' && onPing) {
+      const { cx, cy } = cellAt(e.clientX, e.clientY)
+      onPing(cx, cy)
       return
     }
 
@@ -689,6 +700,14 @@ export default function BattlefieldGrid({
           {norm && (
             <div className="absolute pointer-events-none" style={{ left: norm.x, top: norm.y, width: norm.w, height: norm.h, background: 'rgba(251,191,36,0.12)', border: `${1.5 / scale}px solid #fbbf24` }} />
           )}
+
+          {/* Pings */}
+          {pings?.map(p => (
+            <div key={p.id} className="absolute pointer-events-none" style={{ left: p.x * CELL, top: p.y * CELL, width: CELL, height: CELL, zIndex: 55 }}>
+              <span className="absolute rounded-full animate-ping" style={{ inset: CELL * 0.1, border: `3px solid ${p.color}` }} />
+              <span className="absolute rounded-full" style={{ inset: CELL * 0.28, border: `2px solid ${p.color}`, background: `${p.color}33` }} />
+            </div>
+          ))}
 
           {/* Measurement line */}
           {measure && (

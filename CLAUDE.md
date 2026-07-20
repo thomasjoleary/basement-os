@@ -182,6 +182,9 @@ A per-encounter tactical map of 5ft squares. GM authoring + **player fog-of-war 
 - **HP/mana**: player/tame tokens are `character_id`-linked and read **live** from the character sheet (`resolveVitals()` in `lib/battlefield.ts`); enemies/objects use their own manual `hp/mana_*` fields
 - Multiple creatures can share a square — `BattlefieldGrid` fans/shrinks stacked creature tokens (mounts, tiny creatures)
 - Extras: initiative/turn tracker (`round` + `turn_entity_id`, "Next turn" wraps and increments round), toggleable status conditions (`CONDITIONS` in `lib/battlefield.ts`), distance measure + movement-range highlight (5e "every square = 5ft", `move_ft`)
+- **Damage/Heal** (`applyHp`) in Inspect: linked tokens write to the character sheet's `hp_current` (clamped 0..max, stays live); enemies/manual write to the token. No auto-death.
+- **Ping** (📍 tool, GM + players): Supabase realtime **broadcast** on channel `bf-ping-<id>` (no DB) → transient `animate-ping` ring at the tapped square for everyone viewing
+- **Duplicate** (Setup panel): clones the battlefield + entities + GM notes into a new row (fog/visibility/reveals start fresh) — serves as "save as template"
 - Walls/doors/objects are cell-based tokens (v1 simplification — not edge-drawn)
 - Linked from home nav (visible to all; list is empty for players until Phase 2)
 

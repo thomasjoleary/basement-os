@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
@@ -23,7 +23,7 @@ import {
 } from '@/lib/battlefield'
 
 type Tab = 'add' | 'inspect' | 'initiative' | 'fog' | 'settings' | 'notes'
-type Tool = 'select' | 'pan' | 'measure' | 'fog'
+type Tool = 'select' | 'pan' | 'measure' | 'fog' | 'ping'
 const CREATURE_KINDS = new Set<EntityKind>(['player', 'tame', 'enemy'])
 
 interface FullChar extends CharacterLite {
@@ -65,6 +65,10 @@ export default function BattlefieldEditorPage() {
   const [fogReveal, setFogReveal] = useState(true)
   const [fogShape, setFogShape] = useState<'rect' | 'brush'>('rect')
   const [previewAs, setPreviewAs] = useState<string | null>(null)
+
+  // Live pings (broadcast to everyone viewing this battlefield)
+  const [pings, setPings] = useState<{ id: number; x: number; y: number; color: string }[]>([])
+  const pingChannelRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
 
   const charMap = useMemo(() => {
     const m: Record<string, CharacterLite> = {}
@@ -185,6 +189,22 @@ export default function BattlefieldEditorPage() {
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [id, isGM])
+
+  // ---- Ping channel (broadcast, both roles) -----------------------------
+  useEffect(() => {
+    const ch = supabase.channel(`bf-ping-${id}`, { config: { broadcast: { self: true } } })
+    ch.on('broadcast', { event: 'ping' }, ({ payload }) => {
+      const pid = Date.now() + Math.random()
+      setPings(prev => [...prev, { id: pid, x: payload.x, y: payload.y, color: payload.color || '#fbbf24' }])
+      setTimeout(() => setPings(prev => prev.filter(p => p.id !== pid)), 1800)
+    }).subscribe()
+    pingChannelRef.current = ch
+    return () => { supabase.removeChannel(ch); pingChannelRef.current = null }
+  }, [id])
+
+  function sendPing(x: number, y: number) {
+    pingChannelRef.current?.send({ type: 'broadcast', event: 'ping', payload: { x, y, color: isGM ? '#f87171' : '#fbbf24' } })
+  }
 
   // ---- Mutations --------------------------------------------------------
   async function patchBattlefield(patch: Partial<Battlefield>) {
@@ -343,6 +363,46 @@ export default function BattlefieldEditorPage() {
     }
   }
 
+  // ---- Damage / heal ----------------------------------------------------
+  // Linked tokens write to the character sheet (HP is live from there); enemies/manual write to the token.
+  async function applyHp(entity: BattlefieldEntity, delta: number) {
+    if (entity.character_id) {
+      const c = allChars.find(x => x.id === entity.character_id)
+      const cur = c?.hp_current ?? 0
+      const max = c?.hp_max ?? null
+      const next = Math.max(0, max != null ? Math.min(max, cur + delta) : cur + delta)
+      setAllChars(prev => prev.map(x => (x.id === entity.character_id ? { ...x, hp_current: next } : x)))
+      await supabase.from('characters').update({ hp_current: next }).eq('id', entity.character_id)
+    } else {
+      const cur = entity.hp_current ?? 0
+      const max = entity.hp_max ?? null
+      const next = Math.max(0, max != null ? Math.min(max, cur + delta) : cur + delta)
+      patchEntity(entity.id, { hp_current: next })
+    }
+  }
+
+  // ---- Duplicate (save as template) -------------------------------------
+  async function duplicateBattlefield() {
+    if (!battlefield) return
+    const { data: nb, error } = await supabase.from('battlefields').insert({
+      name: `${battlefield.name} (copy)`,
+      cols: battlefield.cols, rows: battlefield.rows,
+      bg_color: battlefield.bg_color, border_type: battlefield.border_type,
+    }).select().single()
+    if (error || !nb) { alert('Could not duplicate: ' + (error?.message ?? 'unknown error')); return }
+    const newId = (nb as Battlefield).id
+    const copies = entities.map(e => ({
+      battlefield_id: newId, kind: e.kind, character_id: e.character_id, label: e.label,
+      x: e.x, y: e.y, width: e.width, height: e.height, color: e.color, icon: e.icon,
+      hp_current: e.hp_current, hp_max: e.hp_max, mana_current: e.mana_current, mana_max: e.mana_max,
+      move_ft: e.move_ft, conditions: e.conditions, initiative: e.initiative,
+      hidden_until_revealed: e.hidden_until_revealed, notes: e.notes,
+    }))
+    if (copies.length) await supabase.from('battlefield_entities').insert(copies)
+    if (gmNotes) await supabase.from('battlefield_gm_notes').upsert({ battlefield_id: newId, notes: gmNotes })
+    router.push(`/battlefields/${newId}`)
+  }
+
   function openTab(t: Tab) {
     setTab(t)
     setSheetOpen(true)
@@ -383,7 +443,7 @@ export default function BattlefieldEditorPage() {
         </div>
       )
     }
-    const pTool: Tool = tool === 'pan' ? 'pan' : 'select'
+    const pTool: Tool = tool === 'pan' || tool === 'ping' ? tool : 'select'
     const pSel = playerView.entities.find(e => e.id === playerSelectedId) ?? null
     return (
       <main className="h-screen flex flex-col bg-gray-900 text-white overflow-hidden">
@@ -408,6 +468,8 @@ export default function BattlefieldEditorPage() {
             onResizeEntity={() => {}}
             fogDisplay="player"
             fogVisibleCells={playerView.visibleCells}
+            pings={pings}
+            onPing={sendPing}
           />
 
           {pSel && <PlayerTokenCard entity={pSel} onClose={() => setPlayerSelectedId(null)} />}
@@ -415,6 +477,7 @@ export default function BattlefieldEditorPage() {
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 bg-gray-800/95 border border-gray-600 rounded-full px-2 py-1.5 shadow-lg">
             <ToolBtn active={pTool === 'select'} onClick={() => setTool('select')} title="Look">↖️</ToolBtn>
             <ToolBtn active={pTool === 'pan'} onClick={() => setTool('pan')} title="Pan">✋</ToolBtn>
+            <ToolBtn active={pTool === 'ping'} onClick={() => setTool('ping')} title="Ping a square">📍</ToolBtn>
           </div>
         </div>
       </main>
@@ -453,6 +516,8 @@ export default function BattlefieldEditorPage() {
       saveEnemyPreset={saveEnemyPreset}
       deletePreset={deletePreset}
       placeEnemyPreset={placeEnemyPreset}
+      applyHp={applyHp}
+      onDuplicate={duplicateBattlefield}
       visibility={visibility}
       reveals={reveals}
       gmNotes={gmNotes}
@@ -523,6 +588,8 @@ export default function BattlefieldEditorPage() {
             fogReveal={fogReveal}
             fogShape={fogShape}
             onPaintCells={(cells, reveal) => { if (fogCharId) paintCells(fogCharId, cells, reveal) }}
+            pings={pings}
+            onPing={sendPing}
           />
 
           {/* Fog paint sub-toolbar */}
@@ -557,6 +624,7 @@ export default function BattlefieldEditorPage() {
             <ToolBtn active={tool === 'select'} onClick={() => setTool('select')} title="Select (marquee, move, resize)">↖️</ToolBtn>
             <ToolBtn active={tool === 'pan'} onClick={() => setTool('pan')} title="Pan / move view">✋</ToolBtn>
             {isGM && <ToolBtn active={tool === 'measure'} onClick={() => setTool('measure')} title="Measure distance">📏</ToolBtn>}
+            <ToolBtn active={tool === 'ping'} onClick={() => setTool('ping')} title="Ping a square">📍</ToolBtn>
             {isGM && <ToolBtn active={tool === 'fog'} onClick={() => { setTool('fog'); openTab('fog') }} title="Fog of war">🌫️</ToolBtn>}
             <div className="w-px h-6 bg-gray-600 mx-1" />
             {isGM && <ToolBtn active={tab === 'add' && sheetOpen} onClick={() => openTab('add')} title="Add">➕</ToolBtn>}
@@ -654,6 +722,8 @@ interface PanelProps {
   saveEnemyPreset: (ent: BattlefieldEntity, name: string, folder: string) => void
   deletePreset: (id: string) => void
   placeEnemyPreset: (p: BattlefieldPreset) => void
+  applyHp: (entity: BattlefieldEntity, delta: number) => void
+  onDuplicate: () => void
   onDeleteBattlefield: () => void
   // Phase 2
   visibility: BattlefieldVisibility[]
@@ -784,7 +854,7 @@ function AddPanel({ battlefield, entities, allChars, addEntity, presets, deleteP
 
 // -------- Inspect --------------------------------------------------------
 function InspectPanel(p: PanelProps) {
-  const { selected: e, selectedIds, entities, isGM, charMap, patchEntity, deleteEntities, battlefield, rangeEntityId, setRangeEntityId, saveCharacterDefault, saveEnemyPreset, visibility, reveals, setEntityRevealed } = p
+  const { selected: e, selectedIds, entities, isGM, charMap, patchEntity, deleteEntities, battlefield, rangeEntityId, setRangeEntityId, saveCharacterDefault, saveEnemyPreset, visibility, reveals, setEntityRevealed, applyHp } = p
 
   // Multiple selected -> bulk actions
   if (selectedIds.length > 1) {
@@ -880,6 +950,11 @@ function InspectPanel(p: PanelProps) {
                   <Field label="Mana max"><NumInput value={e.mana_max ?? 0} min={0} onCommit={v => patchEntity(e.id, { mana_max: v })} /></Field>
                 </div>
               )}
+
+              <div>
+                <span className="block text-xs text-gray-400 mb-1">Damage / Heal</span>
+                <HpAdjuster onApply={d => applyHp(e, d)} />
+              </div>
 
               <Field label={`Speed (${e.move_ft} ft)`}>
                 <NumInput value={e.move_ft} min={0} max={300} step={5} onCommit={v => patchEntity(e.id, { move_ft: v })} />
@@ -1098,7 +1173,7 @@ function InitiativePanel(p: PanelProps) {
 }
 
 // -------- Settings -------------------------------------------------------
-function SettingsPanel({ battlefield, patchBattlefield, onDeleteBattlefield }: PanelProps) {
+function SettingsPanel({ battlefield, patchBattlefield, onDeleteBattlefield, onDuplicate }: PanelProps) {
   return (
     <div className="space-y-4 text-sm">
       <Field label="Name">
@@ -1136,7 +1211,11 @@ function SettingsPanel({ battlefield, patchBattlefield, onDeleteBattlefield }: P
         </div>
       </Field>
 
-      <div className="pt-4 border-t border-gray-700">
+      <div className="pt-4 border-t border-gray-700 space-y-2">
+        <button onClick={onDuplicate} className="w-full py-2 rounded bg-gray-700/60 border border-gray-600 hover:bg-gray-700 text-sm font-bold">
+          ⧉ Duplicate battlefield
+        </button>
+        <p className="text-[11px] text-gray-600">Copies the grid, terrain, tokens and notes into a new battlefield (fog &amp; player sharing start fresh) — handy as a reusable template.</p>
         <button onClick={onDeleteBattlefield} className="w-full py-2 rounded bg-red-900/60 border border-red-700 text-red-200 hover:bg-red-900 text-sm font-bold">
           Delete battlefield
         </button>
@@ -1203,6 +1282,19 @@ function NotesPanel({ battlefield, gmNotes, patchGmNotes }: PanelProps) {
 // ==========================================================================
 // Inputs
 // ==========================================================================
+function HpAdjuster({ onApply }: { onApply: (delta: number) => void }) {
+  const [amt, setAmt] = useState(5)
+  return (
+    <div className="flex items-center gap-1.5">
+      <button onClick={() => onApply(-amt)} className="flex-1 py-1.5 rounded bg-red-900/60 border border-red-700 text-red-200 hover:bg-red-900 text-sm font-bold">− Damage</button>
+      <input type="number" value={amt} min={0}
+        onChange={ev => setAmt(Math.max(0, Math.round(Number(ev.target.value) || 0)))}
+        className="w-14 text-center bg-gray-900 border border-gray-600 rounded px-1 py-1" />
+      <button onClick={() => onApply(amt)} className="flex-1 py-1.5 rounded bg-green-900/60 border border-green-700 text-green-200 hover:bg-green-900 text-sm font-bold">＋ Heal</button>
+    </div>
+  )
+}
+
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <label className="block">
