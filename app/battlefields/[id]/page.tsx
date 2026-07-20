@@ -16,6 +16,7 @@ import {
   BG_COLORS,
   CONDITIONS,
   kindMeta,
+  conditionMeta,
   entityName,
   resolveVitals,
   footprintVisible,
@@ -51,6 +52,7 @@ export default function BattlefieldEditorPage() {
 
   // Player (non-GM) fogged view, loaded via the RPC
   const [playerView, setPlayerView] = useState<{ battlefield: Battlefield; entities: BattlefieldEntity[]; visibleCells: Set<string> } | null>(null)
+  const [playerSelectedId, setPlayerSelectedId] = useState<string | null>(null)
 
   const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [tool, setTool] = useState<Tool>('select')
@@ -382,6 +384,7 @@ export default function BattlefieldEditorPage() {
       )
     }
     const pTool: Tool = tool === 'pan' ? 'pan' : 'select'
+    const pSel = playerView.entities.find(e => e.id === playerSelectedId) ?? null
     return (
       <main className="h-screen flex flex-col bg-gray-900 text-white overflow-hidden">
         <div className="bg-gray-800 border-b border-gray-700 px-3 sm:px-5 py-2.5 flex items-center justify-between shrink-0">
@@ -397,15 +400,18 @@ export default function BattlefieldEditorPage() {
             entities={playerView.entities}
             characters={{}}
             isGM={false}
-            selectedIds={[]}
+            selectedIds={playerSelectedId ? [playerSelectedId] : []}
             tool={pTool}
-            onSelectionChange={() => {}}
-            onInspect={() => {}}
+            onSelectionChange={ids => setPlayerSelectedId(ids[0] ?? null)}
+            onInspect={eid => setPlayerSelectedId(eid)}
             onMoveEntities={() => {}}
             onResizeEntity={() => {}}
             fogDisplay="player"
             fogVisibleCells={playerView.visibleCells}
           />
+
+          {pSel && <PlayerTokenCard entity={pSel} onClose={() => setPlayerSelectedId(null)} />}
+
           <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 bg-gray-800/95 border border-gray-600 rounded-full px-2 py-1.5 shadow-lg">
             <ToolBtn active={pTool === 'select'} onClick={() => setTool('select')} title="Look">↖️</ToolBtn>
             <ToolBtn active={pTool === 'pan'} onClick={() => setTool('pan')} title="Pan">✋</ToolBtn>
@@ -976,6 +982,39 @@ function SavePresetForm({ onSave, defaultName }: { onSave: (name: string, folder
         <button onClick={() => setOpen(false)} className="px-3 py-1.5 rounded bg-gray-700 hover:bg-gray-600 text-sm">Cancel</button>
       </div>
       <p className="text-[11px] text-gray-600">Saving with an existing name+folder overwrites that preset.</p>
+    </div>
+  )
+}
+
+// Read-only token inspector for the player view.
+function PlayerTokenCard({ entity, onClose }: { entity: BattlefieldEntity; onClose: () => void }) {
+  const vitals = resolveVitals(entity, {})
+  const showVitals = vitals.hpMax != null || vitals.manaMax != null
+  return (
+    <div className="absolute bottom-16 left-1/2 -translate-x-1/2 z-30 w-64 max-w-[90vw] bg-gray-800/95 border border-gray-600 rounded-lg shadow-xl p-3 text-sm">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-xl">{entity.icon || kindMeta(entity.kind).icon}</span>
+          <div className="min-w-0">
+            <div className="font-bold truncate">{entityName(entity, {})}</div>
+            <div className="text-xs text-gray-500 capitalize">{entity.kind}</div>
+          </div>
+        </div>
+        <button onClick={onClose} className="text-gray-400 hover:text-white shrink-0">✕</button>
+      </div>
+      {entity.conditions.length > 0 && (
+        <div className="flex flex-wrap gap-1 mt-2">
+          {entity.conditions.map(c => (
+            <span key={c} className="text-xs bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5">{conditionMeta(c)?.icon} {conditionMeta(c)?.label}</span>
+          ))}
+        </div>
+      )}
+      {showVitals && <div className="mt-2"><VitalsReadout vitals={vitals} /></div>}
+      {showVitals && entity.character_id && (
+        <Link href={`/character/${entity.character_id}`} className="block mt-2 text-center text-red-400 hover:text-red-300 text-xs font-bold">
+          View character sheet →
+        </Link>
+      )}
     </div>
   )
 }

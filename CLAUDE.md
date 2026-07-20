@@ -202,7 +202,7 @@ A per-encounter tactical map of 5ft squares. GM authoring + **player fog-of-war 
 - **Tables:** `battlefield_visibility` (per player character: `granted` + `visible_cells` `["x,y"]`), `battlefield_entity_reveals` (per-player reveal of a hidden token), `battlefield_gm_notes` (GM notes **moved off** the `battlefields` row so players can safely read it / receive realtime pings).
 - **Realtime:** a trigger touches `battlefields.updated_at` on any entity/visibility/reveal change; players subscribe to their `battlefields` row + `battlefield_visibility` + `characters` and **re-call the RPC** (no leak in payloads). GM uses direct-table subscriptions.
 - **GM UI:** **Fog** tab (share toggle per player, Paint fog / Reveal all / Hide all, 👁️ Preview-as-player) + **fog tool** (🌫️) with a reveal/hide × rectangle/brush sub-toolbar. Per-token "Hidden until revealed" + per-player reveal live in Inspect. Tokens default to visible in a revealed square.
-- **Player view:** read-only, fogged (blacked-out outside `visible_cells`), pan/look only; HP/mana bars show for own character + tames + party NPCs only.
+- **Player view:** read-only, fogged (blacked-out outside `visible_cells`), pan/look only. Tapping a visible token opens a read-only card (`PlayerTokenCard`) with its name/kind/conditions; HP/mana bars + a character-sheet link appear only when the RPC returned vitals (i.e. own character + tames + party NPCs) — privacy stays server-enforced.
 - Grid fog props: `fogDisplay` (`'none'|'player'|'edit'`), `fogVisibleCells`, `hiddenEntityIds`, `fogReveal`, `fogShape`, `onPaintCells`.
 
 ## Key Files
