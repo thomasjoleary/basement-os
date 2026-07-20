@@ -619,19 +619,18 @@ export default function BattlefieldEditorPage() {
             </div>
           )}
 
-          {/* Floating toolbar */}
-          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 bg-gray-800/95 border border-gray-600 rounded-full px-2 py-1.5 shadow-lg">
+          {/* Floating toolbar — grid tools only. Panels open via the side tab row (desktop)
+              or the ☰ button → bottom sheet (mobile). */}
+          <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-30 flex items-center gap-1 bg-gray-800/95 border border-gray-600 rounded-full px-2 py-1.5 shadow-lg max-w-[calc(100vw-1rem)]">
             <ToolBtn active={tool === 'select'} onClick={() => setTool('select')} title="Select (marquee, move, resize)">↖️</ToolBtn>
             <ToolBtn active={tool === 'pan'} onClick={() => setTool('pan')} title="Pan / move view">✋</ToolBtn>
             {isGM && <ToolBtn active={tool === 'measure'} onClick={() => setTool('measure')} title="Measure distance">📏</ToolBtn>}
             <ToolBtn active={tool === 'ping'} onClick={() => setTool('ping')} title="Ping a square">📍</ToolBtn>
             {isGM && <ToolBtn active={tool === 'fog'} onClick={() => { setTool('fog'); openTab('fog') }} title="Fog of war">🌫️</ToolBtn>}
-            <div className="w-px h-6 bg-gray-600 mx-1" />
-            {isGM && <ToolBtn active={tab === 'add' && sheetOpen} onClick={() => openTab('add')} title="Add">➕</ToolBtn>}
-            <ToolBtn active={tab === 'inspect' && sheetOpen} onClick={() => openTab('inspect')} title="Inspect">🔍</ToolBtn>
-            <ToolBtn active={tab === 'initiative' && sheetOpen} onClick={() => openTab('initiative')} title="Initiative">🎲</ToolBtn>
-            {isGM && <ToolBtn active={tab === 'settings' && sheetOpen} onClick={() => openTab('settings')} title="Settings">⚙️</ToolBtn>}
-            {isGM && <ToolBtn active={tab === 'notes' && sheetOpen} onClick={() => openTab('notes')} title="GM notes">📝</ToolBtn>}
+            <div className="w-px h-6 bg-gray-600 mx-1 lg:hidden" />
+            <button onClick={() => setSheetOpen(true)}
+              className={`lg:hidden w-9 h-9 rounded-full text-base flex items-center justify-center transition ${sheetOpen ? 'bg-red-700 text-white' : 'text-gray-300 hover:bg-gray-700'}`}
+              title="Panels (add, inspect, turns, fog, setup, notes)">☰</button>
           </div>
         </div>
 
