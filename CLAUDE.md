@@ -171,12 +171,13 @@ A per-encounter tactical map of 5ft squares. GM authoring + **player fog-of-war 
 - Route: `app/battlefields/page.tsx` (list + create) · `app/battlefields/[id]/page.tsx` (editor + player view)
 - Grid renderer: `components/battlefield/BattlefieldGrid.tsx` (pan/zoom/pinch, token drag, marquee multi-select, resize handles, measure, movement-range, stacking, fog display + fog painting)
 - Types/constants: `lib/battlefield.ts`
-- SQL migrations (run in order): `sql/005_create_battlefields.sql`, `sql/006_battlefield_presets.sql`, `sql/007_battlefield_visibility.sql` — **must be run in Supabase** before use
+- SQL migrations (applied to the live Supabase project; run in order on a fresh environment): `sql/005_create_battlefields.sql`, `sql/006_battlefield_presets.sql`, `sql/007_battlefield_visibility.sql`
 
 ### Data model
-- **`battlefields`**: `cols`/`rows` (size in 5ft squares, 1–100), `bg_color`, `border_type` (`'indoor'`|`'outdoor'` — drives border styling so players know where they can flee), `gm_notes` (private), `round`, `turn_entity_id` (whose turn), `is_archived`
-- **`battlefield_entities`**: `kind` (`player`|`tame`|`enemy`|`object`|`wall`|`door`), `character_id` (nullable link to `characters`), `x`/`y`/`width`/`height` (in squares), `color`, `icon`, `hp/mana_current/max`, `move_ft`, `conditions` (jsonb string[]), `initiative`, `hidden_until_revealed` (reserved for Phase 2 fog), `notes`
-- Both tables are on the Supabase realtime publication; the editor also subscribes to `characters` UPDATEs for live vitals
+- **`battlefields`**: `cols`/`rows` (size in 5ft squares, 1–100), `bg_color`, `border_type` (`'indoor'`|`'outdoor'` — border styling so players know where they can flee), `round`, `turn_entity_id` (whose turn), `is_archived`, `updated_at`. **No `gm_notes` column** — `007` moved it into `battlefield_gm_notes` so the `battlefields` row holds no private data and players can safely read it / receive realtime pings.
+- **`battlefield_entities`**: `kind` (`player`|`tame`|`enemy`|`object`|`wall`|`door`), `character_id` (nullable link to `characters`), `x`/`y`/`width`/`height` (in squares), `color`, `icon`, `hp/mana_current/max` (manual — used for enemies), `move_ft`, `conditions` (jsonb string[]), `initiative`, `hidden_until_revealed` (fog), `notes` (GM-private per token)
+- **`battlefield_gm_notes`** (GM-only): `battlefield_id` PK + `notes` — where GM notes actually live (edited via the Notes tab, `patchGmNotes`)
+- Realtime publication: `battlefields`, `battlefield_entities`, `battlefield_presets`, `battlefield_visibility`. A DB trigger touches `battlefields.updated_at` on any entity/visibility/reveal change — that bump is the player-refresh ping. The GM editor also subscribes to `characters` UPDATEs for live vitals.
 
 ### Behavior
 - **HP/mana**: player/tame tokens are `character_id`-linked and read **live** from the character sheet (`resolveVitals()` in `lib/battlefield.ts`); enemies/objects use their own manual `hp/mana_*` fields
@@ -186,13 +187,12 @@ A per-encounter tactical map of 5ft squares. GM authoring + **player fog-of-war 
 - **Ping** (📍 tool, GM + players): Supabase realtime **broadcast** on channel `bf-ping-<id>` (no DB) → transient `animate-ping` ring at the tapped square for everyone viewing
 - **Duplicate** (Setup panel): clones the battlefield + entities + GM notes into a new row (fog/visibility/reveals start fresh) — serves as "save as template"
 - Walls/doors/objects are cell-based tokens (v1 simplification — not edge-drawn)
-- Linked from home nav (visible to all; list is empty for players until Phase 2)
+- Linked from home nav (all roles). GMs see all battlefields in the list; players see only ones shared with them (via `battlefield_visibility.granted`, enforced by RLS)
 
-### GM grid interactions (PC)
-- Three tools in the floating toolbar: **select** (↖️), **pan** (✋), **measure** (📏). Marquee needs left-drag, so panning moved to its own tool; middle/right-mouse-drag also pans in any tool, and one-finger drag pans on touch (mobile is view-first)
-- **select tool**: drag empty space = marquee multi-select (shift adds); drag a token = move it (dragging one of a multi-selection moves the whole group, formation-clamped to the grid); drag the amber handles on a single selected token = resize; **Delete/Backspace** removes the selection, **Esc** clears it
-- Any click/tap on a token selects just it and opens the Inspect panel (`onInspect`)
-- Selection is a `string[]` (`selectedIds`) in the page; Inspect shows a single-token editor or a bulk panel (recolor / delete N) when several are selected
+### Tools & layout
+- Floating toolbar tools: **select** (↖️), **pan** (✋), **measure** (📏, GM), **ping** (📍), **fog** (🌫️, GM). Marquee needs left-drag so pan is its own tool; middle/right-mouse-drag pans in any tool; one-finger drag pans on touch
+- **select tool**: drag empty space = marquee multi-select (shift adds); drag a token = move it (dragging one of a multi-selection moves the whole group, formation-clamped); drag the amber handles on a single selected token = resize; **Delete/Backspace** removes the selection, **Esc** clears it. Any tap on a token selects just it and opens Inspect (`onInspect`). Selection is `selectedIds: string[]`; Inspect shows a single-token editor or a bulk panel (recolor / delete N) when several are selected
+- **Panels** (Add / Inspect / Turns / Fog / Setup / Notes): on **desktop** via the always-visible right side panel's tab row; on **mobile** via a single **☰** button in the toolbar that opens a bottom sheet with the same tab row. The floating toolbar carries only grid tools so it stays compact on phones
 
 ### Presets (`battlefield_presets`, GM-only, `sql/006`)
 - `preset_kind='character_default'` — one saved token look (size/color/icon/speed) per character, keyed by `character_id`; **auto-applied** when that character/tame is placed. Saved from the linked token's Inspect panel ("Save as … default"). ★ in the Add list marks characters that have one
@@ -205,13 +205,20 @@ A per-encounter tactical map of 5ft squares. GM authoring + **player fog-of-war 
 - **Tables:** `battlefield_visibility` (per player character: `granted` + `visible_cells` `["x,y"]`), `battlefield_entity_reveals` (per-player reveal of a hidden token), `battlefield_gm_notes` (GM notes **moved off** the `battlefields` row so players can safely read it / receive realtime pings).
 - **Realtime:** a trigger touches `battlefields.updated_at` on any entity/visibility/reveal change; players subscribe to their `battlefields` row + `battlefield_visibility` + `characters` and **re-call the RPC** (no leak in payloads). GM uses direct-table subscriptions.
 - **GM UI:** **Fog** tab (share toggle per player, Paint fog / Reveal all / Hide all, 👁️ Preview-as-player) + **fog tool** (🌫️) with a reveal/hide × rectangle/brush sub-toolbar. Per-token "Hidden until revealed" + per-player reveal live in Inspect. Tokens default to visible in a revealed square.
-- **Player view:** read-only, fogged (blacked-out outside `visible_cells`), pan/look only. Tapping a visible token opens a read-only card (`PlayerTokenCard`) with its name/kind/conditions; HP/mana bars + a character-sheet link appear only when the RPC returned vitals (i.e. own character + tames + party NPCs) — privacy stays server-enforced.
-- Grid fog props: `fogDisplay` (`'none'|'player'|'edit'`), `fogVisibleCells`, `hiddenEntityIds`, `fogReveal`, `fogShape`, `onPaintCells`.
+- **Player view:** same `[id]` route, branches on role — read-only, fogged (blacked-out outside `visible_cells`), pan/look/ping only. Tapping a visible token opens a read-only card (`PlayerTokenCard`) with its name/kind/conditions; HP/mana bars + a character-sheet link appear only when the RPC returned vitals (own character + tames + party NPCs) — privacy stays server-enforced.
+- Grid fog/ping props: `fogDisplay` (`'none'|'player'|'edit'`), `fogVisibleCells`, `hiddenEntityIds`, `fogReveal`, `fogShape`, `onPaintCells`, `pings`, `onPing`.
+
+### Related privacy behavior
+- App-wide HP/mana redaction beyond the battlefield was deliberately **not** done. Instead, `app/character/[id]/page.tsx` auto-redirects a non-GM to `/` when they open a character sheet whose `user_id` is set and isn't theirs (`router.replace('/')`). The leaderboard intentionally shows everyone's stats.
 
 ## Key Files
 - `app/character/[id]/page.tsx` — the main character sheet page (everything: view, edit, level-up modal, power level display)
 - `app/leaderboard/page.tsx` — leaderboard (GM: all categories + publish panel; players: published categories only)
 - `app/create/page.tsx` — new character creation form (includes tame_class/species fields for tames)
+- `app/battlefields/[id]/page.tsx` — battlefield editor (GM) + fogged read-only view (players); orchestrates all panels, mutations, realtime, and the fog/ping/damage-heal/duplicate logic
+- `components/battlefield/BattlefieldGrid.tsx` — the grid canvas (pan/zoom/pinch, token drag, marquee, resize, measure, movement-range, stacking, fog display + painting, pings)
+- `lib/battlefield.ts` — battlefield types, constants (`ENTITY_KINDS`, `CONDITIONS`, colors), and helpers (`resolveVitals`, `entityName`, `footprintVisible`, distance)
+- `sql/005_create_battlefields.sql` / `sql/006_battlefield_presets.sql` / `sql/007_battlefield_visibility.sql` — battlefield migrations (see the Battlefield section)
 - `sql/add_pending_levelup.sql` — migration: `pending_levelup` column + player UPDATE RLS policy
 - `sql/add_published_leaderboard.sql` — migration: `published_leaderboard` singleton table with RLS
 - `sql/character_words_leaderboard_read.sql` — migration: allows all authenticated users to read `character_words` (needed for leaderboard)
