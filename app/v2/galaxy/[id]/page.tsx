@@ -375,6 +375,8 @@ export default function SystemBuilderPage() {
                 onAddChild={b => addBody({ parent_id: b.id })}
                 onDelete={deleteBody}
                 onDuplicate={duplicateBody}
+                onFocus={setFocusId}
+                focusId={focusId}
               />
             </div>
           </div>
@@ -433,6 +435,8 @@ interface TreeBranchProps {
   onAddChild: (parent: SystemBody) => void
   onDelete: (body: SystemBody) => void
   onDuplicate: (body: SystemBody) => void
+  onFocus: (id: string) => void
+  focusId: string | null
 }
 
 function TreeBranch(p: TreeBranchProps) {
@@ -464,12 +468,23 @@ function TreeBranch(p: TreeBranchProps) {
                 <div className="truncate font-medium">
                   {b.name}
                   {childCount > 0 && <span className="text-gray-500 font-normal"> ({childCount})</span>}
+                  {p.focusId === b.id && (
+                    <span className="ml-1.5 text-[10px] text-red-400 font-normal" title="Currently shown in the diagram">◎</span>
+                  )}
                 </div>
                 <div className="text-[11px] text-gray-500 truncate">
                   {cls.label} · {b.orbital_radius_au.toFixed(b.orbital_radius_au < 1 ? 3 : 2)} AU · {formatPeriod(periodDays)}
                 </div>
               </div>
               <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 shrink-0">
+                {childCount > 0 && (
+                  <IconBtn
+                    title="Show what orbits this in the diagram"
+                    onClick={e => { e.stopPropagation(); p.onFocus(b.id) }}
+                  >
+                    ◎
+                  </IconBtn>
+                )}
                 <IconBtn title="Add orbiting body" onClick={e => { e.stopPropagation(); p.onAddChild(b) }}>＋</IconBtn>
                 <IconBtn title="Duplicate" onClick={e => { e.stopPropagation(); p.onDuplicate(b) }}>⧉</IconBtn>
                 <IconBtn title="Delete" danger onClick={e => { e.stopPropagation(); p.onDelete(b) }}>🗑</IconBtn>
@@ -650,8 +665,11 @@ function OrbitDiagram({
                           strokeWidth={1.5}
                           className="cursor-pointer"
                           onClick={() => onSelect(k.id)}
+                          // Drop into the parent so this one becomes a full-size
+                          // body with its own orbiters visible.
+                          onDoubleClick={() => onFocusChange(b.id)}
                         >
-                          <title>{k.name} -- {kcls.label}</title>
+                          <title>{k.name} -- {kcls.label} (double-click to open {b.name})</title>
                         </circle>
                       )
                     })}
@@ -682,7 +700,9 @@ function OrbitDiagram({
           })}
         </svg>
       </div>
-      <p className="text-[11px] text-gray-600 px-2 py-1 border-t border-gray-800 shrink-0">Click a body to select it · double-click one with a red halo (has orbiters) to focus in and see what orbits it</p>
+      <p className="text-[11px] text-gray-500 px-2 py-1 border-t border-gray-800 shrink-0">
+        Click to select · <span className="text-gray-300">double-click a body with a red halo</span> to open it, or hit <span className="text-gray-300">◎</span> on any row in the hierarchy · use the breadcrumb above to come back out
+      </p>
     </div>
   )
 }
