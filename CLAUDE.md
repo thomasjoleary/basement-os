@@ -215,6 +215,8 @@ A per-encounter tactical map of 5ft squares. GM authoring + **player fog-of-war 
 
 # Basement OS v2 (space setting) — in progress
 
+**Docs:** `docs/V2_OVERVIEW.md` (status, setup, data model, open ideas) and `docs/V2_SETTING.md` (in-world fiction: jump drives, stars). Keep those current alongside this file.
+
 A **second campaign system** being built alongside the D&D one, not a replacement. The legacy app stays live and untouched; v2 shares the same site and the same logins (`auth.users` / `profiles`), but **all of its data lives in `v2_`-prefixed tables** so no legacy query can ever see it.
 
 - Route root: `app/v2/page.tsx` — GM-gated shell (non-GM → alert + redirect to `/`), same pattern as `/words` and `/leaderboard`. Not linked from the legacy home page; reachable only by typing `/v2`.
@@ -229,7 +231,7 @@ A GM authoring tool for the campaign's star map. Systems are nodes positioned in
 |---|---|
 | `v2_star_systems` | Map nodes: `name`, `x`/`y`/`z` (light-years), `description`, `gm_notes`, `discovered`, `tags` |
 | `v2_system_bodies` | Everything inside a system, **self-nesting** via `parent_id` |
-| `v2_galaxy_settings` | Singleton (`id = 1`): `galaxy_name`, `jump_charge_hours`, `jump_speed_ly_per_hour` |
+| `v2_galaxy_settings` | Singleton (`id = 1`): `galaxy_name`. (Its `jump_charge_hours` / `jump_speed_ly_per_hour` columns are **dead** — see Travel time.) |
 
 **`z` is stored but unused** by the current top-down map — it exists so a future 3D view needs no migration.
 
@@ -243,9 +245,13 @@ That single pointer is what makes moons moons: a moon is just a body whose paren
 **Deleting a body deletes everything orbiting it** (DB-level cascade) — the editor warns with a descendant count before confirming.
 
 ### Travel time
-`jump time = jump_charge_hours + (distance_ly ÷ jump_speed_ly_per_hour)`
+`jump time = charge_hours + (distance_ly ÷ speed_ly_per_hour)`
 
-A fixed drive spin-up plus cruise time, so short hops are relatively costlier. Both constants live in the settings row, so travel times are **tunable without a deploy**. Defaults: 6h charge, 1 ly/hour.
+A fixed drive spin-up plus cruise time, so short hops are relatively costlier.
+
+**These are NOT database-backed.** Jump performance is a property of the ship and its components, not the galaxy, so it lives in `DRIVE_PROFILES` / `JumpDrive` in `lib/galaxy.ts` and will eventually be read off a ship record. The galaxy map's drive picker is a GM estimating tool that persists nothing. The two matching columns left in `v2_galaxy_settings` are unused (kept rather than forcing another migration).
+
+Drive design follows the setting's fiction — long charge "sharpens" the jump so it cuts cleanly (low power); a near-zero-charge "hammer drive" punches through by force (high power). See `docs/V2_SETTING.md`.
 
 ### Orbital mechanics
 Kepler's third law in solar units: **`P(years) = √(a(AU)³ ÷ M(solar masses))`** — verified against Jupiter (5.2 AU, 1 M☉ → 11.86 years).

@@ -52,23 +52,80 @@ export interface SystemBody {
   updated_at: string
 }
 
-// Singleton row (id = 1) holding the tunable travel constants.
+// Singleton row (id = 1). Galaxy-level data only.
+//
+// NOTE: this table still has jump_charge_hours / jump_speed_ly_per_hour columns
+// from the original migration, but nothing reads them any more -- jump
+// performance is a property of the SHIP, not the galaxy (see JumpDrive below).
+// The columns are left in place rather than forcing another migration.
 export interface GalaxySettings {
   id: number
   galaxy_name: string
-  // Fixed spin-up cost paid on every jump, regardless of distance.
-  jump_charge_hours: number
-  // Cruise speed once the drive is charged.
-  jump_speed_ly_per_hour: number
   updated_at: string
 }
 
 export const DEFAULT_SETTINGS: GalaxySettings = {
   id: 1,
   galaxy_name: 'Uncharted Galaxy',
-  jump_charge_hours: 6,
-  jump_speed_ly_per_hour: 1,
   updated_at: '',
+}
+
+// ===========================================================================
+// Jump drives
+//
+// Charge time and speed belong to the ship and its components, not the galaxy,
+// so these live in code (and eventually on a ship record) rather than the DB.
+//
+// The setting's fiction: space is many layers of fabric. Charging longer
+// "sharpens" the jump so the drive cuts through cleanly; a drive with almost no
+// charge time is a "hammer drive" that punches through by brute force, which is
+// why it draws so much power.
+// ===========================================================================
+
+export interface JumpDrive {
+  id: string
+  label: string
+  // Fixed spin-up paid on every jump, regardless of distance.
+  charge_hours: number
+  // Cruise speed once charged.
+  speed_ly_per_hour: number
+  // Flavour, and a hook for future power/component budgeting.
+  power_draw: 'low' | 'medium' | 'high'
+  blurb: string
+}
+
+// Placeholder values -- tune freely, nothing depends on these numbers.
+export const DRIVE_PROFILES: JumpDrive[] = [
+  {
+    id: 'standard',
+    label: 'Standard Drive',
+    charge_hours: 6,
+    speed_ly_per_hour: 1,
+    power_draw: 'medium',
+    blurb: 'A balanced cut. What most hulls ship with.',
+  },
+  {
+    id: 'hammer',
+    label: 'Hammer Drive',
+    charge_hours: 1,
+    speed_ly_per_hour: 0.4,
+    power_draw: 'high',
+    blurb: 'Almost no charge time -- it punches through the fabric by force. Fast to leave, slow to arrive, and it drinks power.',
+  },
+  {
+    id: 'lance',
+    label: 'Lance Drive',
+    charge_hours: 18,
+    speed_ly_per_hour: 2.5,
+    power_draw: 'low',
+    blurb: 'A long charge sharpens the jump to a razor. Sips power and covers ground once underway -- if you can afford the wait.',
+  },
+]
+
+export const DEFAULT_DRIVE: JumpDrive = DRIVE_PROFILES[0]
+
+export function driveProfile(id: string): JumpDrive {
+  return DRIVE_PROFILES.find(d => d.id === id) ?? DEFAULT_DRIVE
 }
 
 // ===========================================================================
@@ -385,11 +442,11 @@ export function distanceLy(
   return Math.sqrt(dx * dx + dy * dy + dz * dz)
 }
 
-// Total time for a jump: a fixed drive spin-up plus cruise time over the distance.
-export function jumpTimeHours(ly: number, settings: GalaxySettings): number {
-  const speed = settings.jump_speed_ly_per_hour
-  if (!speed || speed <= 0) return settings.jump_charge_hours
-  return settings.jump_charge_hours + ly / speed
+// Total time for a jump: the drive's fixed spin-up plus cruise time over the distance.
+export function jumpTimeHours(ly: number, drive: JumpDrive): number {
+  const speed = drive.speed_ly_per_hour
+  if (!speed || speed <= 0) return drive.charge_hours
+  return drive.charge_hours + ly / speed
 }
 
 // "3d 4h" / "6h 30m" -- compact enough for a map overlay.

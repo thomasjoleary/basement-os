@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   StarSystem,
-  GalaxySettings,
+  JumpDrive,
   distanceLy,
   jumpTimeHours,
   formatDuration,
@@ -47,7 +47,7 @@ interface Props {
   measureTo: string | null
   onMeasureChange: (from: string | null, to: string | null) => void
   snapToGrid: boolean
-  settings: GalaxySettings
+  drive: JumpDrive
   focusRequest?: GalaxyFocusRequest | null
 }
 
@@ -183,7 +183,7 @@ export default function GalaxyMap({
   measureTo,
   onMeasureChange,
   snapToGrid,
-  settings,
+  drive,
   focusRequest,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -200,6 +200,7 @@ export default function GalaxyMap({
   const dragRef = useRef<DragState | null>(null)
   const measureClickRef = useRef<{ id: string; x: number; y: number } | null>(null)
 
+  const [isFullscreen, setIsFullscreen] = useState(false)
   const [dragGhost, setDragGhost] = useState<{ id: string; x: number; y: number } | null>(null)
   const [hoverLy, setHoverLy] = useState<{ x: number; y: number } | null>(null)
   const [cursorLy, setCursorLy] = useState<{ x: number; y: number } | null>(null)
@@ -269,10 +270,55 @@ export default function GalaxyMap({
     zoomAt(factor, rect.width / 2, rect.height / 2)
   }
 
+  // Frame every system with a margin. Going back to the origin at 100% would
+  // look like a no-op whenever the systems sit far from 0,0.
   const resetView = () => {
-    setScale(1)
-    setPan({ x: viewSize.w / 2, y: viewSize.h / 2 })
+    const { w, h } = viewSize
+    if (!systems.length) {
+      setScale(1)
+      setPan({ x: w / 2, y: h / 2 })
+      return
+    }
+
+    const xs = systems.map(s => s.x)
+    const ys = systems.map(s => s.y)
+    const minX = Math.min(...xs)
+    const maxX = Math.max(...xs)
+    const minY = Math.min(...ys)
+    const maxY = Math.max(...ys)
+
+    // Floor the span so a single system (or a perfectly straight line of them)
+    // doesn't divide by zero and slam the zoom to MAX_SCALE.
+    const spanX = Math.max(maxX - minX, 2) * BASE_PX_PER_LY
+    const spanY = Math.max(maxY - minY, 2) * BASE_PX_PER_LY
+    const pad = 90
+
+    const next = Math.max(
+      MIN_SCALE,
+      Math.min(MAX_SCALE, Math.min((w - pad * 2) / spanX, (h - pad * 2) / spanY))
+    )
+    const cx = ((minX + maxX) / 2) * BASE_PX_PER_LY
+    const cy = ((minY + maxY) / 2) * BASE_PX_PER_LY
+
+    setScale(next)
+    setPan({ x: w / 2 - cx * next, y: h / 2 - cy * next })
   }
+
+  // ---- Fullscreen ----------------------------------------------------------
+  const toggleFullscreen = () => {
+    const el = wrapRef.current
+    if (!el) return
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+    else el.requestFullscreen?.().catch(() => {})
+  }
+
+  // Track it from the event rather than our own click, so pressing Esc (which
+  // exits fullscreen without touching the button) keeps the icon honest.
+  useEffect(() => {
+    const sync = () => setIsFullscreen(document.fullscreenElement === wrapRef.current)
+    document.addEventListener('fullscreenchange', sync)
+    return () => document.removeEventListener('fullscreenchange', sync)
+  }, [])
 
   useEffect(() => {
     const el = wrapRef.current
@@ -298,6 +344,12 @@ export default function GalaxyMap({
 
   // ---- Background: pan / pinch / click-to-create / click-to-deselect ------
   const onBgPointerDown = (e: React.PointerEvent) => {
+    // The overlay controls (zoom, fullscreen, the measure readout's dismiss) are
+    // children of this container. Capturing the pointer here would retarget their
+    // pointerup to the container and swallow the click entirely, so let those
+    // events through untouched.
+    if ((e.target as HTMLElement).closest?.('button, input, select, textarea, a')) return
+
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
 
@@ -679,7 +731,15 @@ export default function GalaxyMap({
       <div className="absolute top-3 right-3 z-30 flex flex-col gap-1">
         <button onClick={() => zoomButton(1.2)} className="w-9 h-9 rounded bg-gray-800/90 border border-gray-600 text-white text-lg hover:bg-gray-700" aria-label="Zoom in">+</button>
         <button onClick={() => zoomButton(0.83)} className="w-9 h-9 rounded bg-gray-800/90 border border-gray-600 text-white text-lg hover:bg-gray-700" aria-label="Zoom out">−</button>
-        <button onClick={resetView} className="w-9 h-9 rounded bg-gray-800/90 border border-gray-600 text-white text-xs hover:bg-gray-700" aria-label="Reset view">⤢</button>
+        <button onClick={resetView} className="w-9 h-9 rounded bg-gray-800/90 border border-gray-600 text-white text-xs hover:bg-gray-700" aria-label="Fit all systems" title="Fit all systems">⤢</button>
+        <button
+          onClick={toggleFullscreen}
+          className="w-9 h-9 rounded bg-gray-800/90 border border-gray-600 text-white text-xs hover:bg-gray-700"
+          aria-label={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+          title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+        >
+          {isFullscreen ? '⤡' : '⛶'}
+        </button>
       </div>
 
       {/* Add-mode hint */}
@@ -700,7 +760,7 @@ export default function GalaxyMap({
               </span>
               <span className="text-white font-bold shrink-0">{formatLy(measureInfo.ly)}</span>
               <span className="text-gray-500 shrink-0">•</span>
-              <span className="text-amber-300 shrink-0">{formatDuration(jumpTimeHours(measureInfo.ly, settings))}</span>
+              <span className="text-amber-300 shrink-0">{formatDuration(jumpTimeHours(measureInfo.ly, drive))}</span>
               <button onClick={() => onMeasureChange(null, null)} className="ml-1 text-gray-400 hover:text-white shrink-0" aria-label="Clear measurement">✕</button>
             </>
           ) : (

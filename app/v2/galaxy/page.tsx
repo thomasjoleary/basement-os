@@ -10,6 +10,9 @@ import {
   SystemBody,
   GalaxySettings,
   DEFAULT_SETTINGS,
+  JumpDrive,
+  DRIVE_PROFILES,
+  DEFAULT_DRIVE,
   STAR_CLASSES,
   systemColor,
   nearestSystems,
@@ -39,6 +42,10 @@ export default function GalaxyMapPage() {
   const [systems, setSystems] = useState<StarSystem[]>([])
   const [bodies, setBodies] = useState<SystemBody[]>([])
   const [settings, setSettings] = useState<GalaxySettings>(DEFAULT_SETTINGS)
+  // Jump performance is a property of the ship, not the galaxy, so this is local
+  // UI state for estimating travel -- nothing is persisted. Eventually this
+  // picker gets replaced by whatever drive the party's ship actually has.
+  const [drive, setDrive] = useState<JumpDrive>(DEFAULT_DRIVE)
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [tool, setTool] = useState<GalaxyTool>('select')
@@ -208,8 +215,6 @@ export default function GalaxyMapPage() {
     const { error: err } = await supabase.from('v2_galaxy_settings').upsert({
       id: 1,
       galaxy_name: next.galaxy_name,
-      jump_charge_hours: next.jump_charge_hours,
-      jump_speed_ly_per_hour: next.jump_speed_ly_per_hour,
     })
     if (err) setError(describeError(err))
   }
@@ -315,7 +320,7 @@ export default function GalaxyMapPage() {
             measureTo={measureTo}
             onMeasureChange={(from, to) => { setMeasureFrom(from); setMeasureTo(to) }}
             snapToGrid={snapToGrid}
-            settings={settings}
+            drive={drive}
             focusRequest={focusRequest}
           />
 
@@ -347,7 +352,7 @@ export default function GalaxyMapPage() {
               key={selected.id}
               system={selected}
               nearest={nearest}
-              settings={settings}
+              drive={drive}
               onPatch={patch => patchSystem(selected.id, patch)}
               onDelete={() => deleteSystem(selected.id)}
               onSelectNearest={id => {
@@ -366,7 +371,13 @@ export default function GalaxyMapPage() {
       </div>
 
       {showSettings && (
-        <SettingsModal settings={settings} onSave={updateSettings} onClose={() => setShowSettings(false)} />
+        <SettingsModal
+          settings={settings}
+          drive={drive}
+          onSave={updateSettings}
+          onDriveChange={setDrive}
+          onClose={() => setShowSettings(false)}
+        />
       )}
     </main>
   )
@@ -379,14 +390,14 @@ export default function GalaxyMapPage() {
 function SystemPanel({
   system,
   nearest,
-  settings,
+  drive,
   onPatch,
   onDelete,
   onSelectNearest,
 }: {
   system: StarSystem
   nearest: { system: StarSystem; ly: number }[]
-  settings: GalaxySettings
+  drive: JumpDrive
   onPatch: (patch: Partial<StarSystem>) => void
   onDelete: () => void
   onSelectNearest: (id: string) => void
@@ -462,7 +473,7 @@ function SystemPanel({
               >
                 <span className="truncate">{n.name}</span>
                 <span className="text-gray-400 text-xs shrink-0 font-mono">
-                  {formatLy(ly)} · {formatDuration(jumpTimeHours(ly, settings))}
+                  {formatLy(ly)} · {formatDuration(jumpTimeHours(ly, drive))}
                 </span>
               </button>
             ))}
@@ -523,24 +534,30 @@ function Legend() {
 }
 
 // ===========================================================================
-// Galaxy settings modal -- tunable travel constants, no deploy required
+// Galaxy settings modal
+//
+// The galaxy name is persisted; the drive is not. Jump performance belongs to
+// the ship and its components, so the picker here is only an estimating tool
+// for the GM -- swap it for the party's actual drive once ships exist.
 // ===========================================================================
 
 function SettingsModal({
   settings,
+  drive,
   onSave,
+  onDriveChange,
   onClose,
 }: {
   settings: GalaxySettings
+  drive: JumpDrive
   onSave: (patch: Partial<GalaxySettings>) => void
+  onDriveChange: (drive: JumpDrive) => void
   onClose: () => void
 }) {
   const [name, setName] = useState(settings.galaxy_name)
-  const [charge, setCharge] = useState(settings.jump_charge_hours)
-  const [speed, setSpeed] = useState(settings.jump_speed_ly_per_hour)
 
   function save() {
-    onSave({ galaxy_name: name.trim() || DEFAULT_SETTINGS.galaxy_name, jump_charge_hours: charge, jump_speed_ly_per_hour: speed })
+    onSave({ galaxy_name: name.trim() || DEFAULT_SETTINGS.galaxy_name })
     onClose()
   }
 
@@ -554,18 +571,35 @@ function SettingsModal({
             className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1.5" />
         </Field>
 
-        <Field label="Jump charge (hours, fixed spin-up cost)">
-          <input type="number" step="0.5" min="0" value={charge} onChange={e => setCharge(parseFloat(e.target.value) || 0)}
-            className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1.5" />
-        </Field>
-
-        <Field label="Jump speed (ly per hour, cruise)">
-          <input type="number" step="0.1" min="0" value={speed} onChange={e => setSpeed(parseFloat(e.target.value) || 0)}
-            className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1.5" />
-        </Field>
+        <div>
+          <div className="text-xs uppercase tracking-wide text-gray-400 mb-1">
+            Estimate jumps with <span className="text-gray-500 normal-case tracking-normal">(not saved)</span>
+          </div>
+          <div className="space-y-1.5">
+            {DRIVE_PROFILES.map(d => (
+              <button
+                key={d.id}
+                onClick={() => onDriveChange(d)}
+                className={`w-full text-left px-3 py-2 rounded border transition-colors ${
+                  d.id === drive.id
+                    ? 'bg-red-900/40 border-red-600 text-white'
+                    : 'bg-gray-900 border-gray-700 text-gray-300 hover:border-gray-500'
+                }`}
+              >
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="font-bold text-sm">{d.label}</span>
+                  <span className="text-[10px] font-mono text-gray-400 shrink-0">
+                    {d.charge_hours}h · {d.speed_ly_per_hour} ly/h · {d.power_draw} pwr
+                  </span>
+                </div>
+                <p className="text-xs text-gray-400 mt-0.5">{d.blurb}</p>
+              </button>
+            ))}
+          </div>
+        </div>
 
         <p className="text-xs text-gray-500">
-          Example: a {formatLy(10)} hop costs {formatDuration(jumpTimeHours(10, { ...settings, jump_charge_hours: charge, jump_speed_ly_per_hour: speed }))}.
+          With the {drive.label}, a {formatLy(10)} hop costs {formatDuration(jumpTimeHours(10, drive))}.
         </p>
 
         <div className="flex gap-2 justify-end pt-1">
