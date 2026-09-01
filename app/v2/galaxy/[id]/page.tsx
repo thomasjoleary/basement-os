@@ -7,7 +7,7 @@
 // Layout: hierarchy tree (left) + top-down orbit diagram (center) + inspector (right).
 // See lib/galaxy.ts for the shared types/constants/helpers this page builds on.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
@@ -132,6 +132,23 @@ export default function SystemBuilderPage() {
     init()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, router])
+
+  // Open on the primary star rather than the barycentre. The barycentre's only
+  // child in a single-star system is the star itself, which sits at orbital
+  // radius 0 -- so that view shows one dot at the centre and hides every planet
+  // a level deeper. Focusing the star gives the expected system-at-a-glance.
+  // Runs once per system so hitting "System" in the breadcrumb actually sticks.
+  const didAutoFocus = useRef(false)
+  useEffect(() => { didAutoFocus.current = false }, [id])
+  useEffect(() => {
+    if (didAutoFocus.current || focusId || bodies.length === 0) return
+    const topLevelStars = bodies.filter(b => b.parent_id === null && b.kind === 'star')
+    if (topLevelStars.length !== 1) return
+    // Only jump in if there is actually something orbiting it.
+    if (childrenOf(bodies, topLevelStars[0].id).length === 0) return
+    didAutoFocus.current = true
+    setFocusId(topLevelStars[0].id)
+  }, [bodies, focusId])
 
   // ---- Realtime -------------------------------------------------------------
   useEffect(() => {
@@ -508,7 +525,12 @@ function OrbitDiagram({
   const center = size / 2
   const maxRadiusPx = center - 40
   const innerPad = 26
-  const maxAu = Math.max(0.001, ...children.map(c => c.orbital_radius_au))
+  // Bodies sitting at radius 0 (typically stars on the barycentre) are drawn at
+  // the centre rather than on a ring, so they need excluding from the scale --
+  // otherwise a lone star would make maxAu 0 and collapse everything inward.
+  const orbiting = children.filter(c => c.orbital_radius_au > 0)
+  const atCentre = children.filter(c => c.orbital_radius_au <= 0)
+  const maxAu = Math.max(0.001, ...orbiting.map(c => c.orbital_radius_au))
 
   // Real orbital radii span orders of magnitude -- a sqrt scale keeps the inner
   // system usable instead of collapsing it into a single dot.
@@ -549,12 +571,40 @@ function OrbitDiagram({
               />
               <text x={center} y={center + 32} textAnchor="middle" fontSize="11" fill="#9ca3af" className="pointer-events-none select-none">{focusBody.name}</text>
             </g>
-          ) : (
+          ) : atCentre.length === 0 ? (
             <g>
               <circle cx={center} cy={center} r={3} fill="#4b5563" />
               <text x={center} y={center + 18} textAnchor="middle" fontSize="10" fill="#6b7280" className="pointer-events-none select-none">barycentre</text>
             </g>
-          )}
+          ) : null}
+
+          {/* Bodies at radius 0 sit ON the barycentre. Fan them apart so a binary
+              pair stays readable instead of stacking into one dot. */}
+          {!focusBody && atCentre.map((b, i) => {
+            const cls = bodyClassMeta(b.kind, b.body_class)
+            const spread = atCentre.length > 1 ? 18 : 0
+            const a = (i / Math.max(1, atCentre.length)) * Math.PI * 2 - Math.PI / 2
+            const x = center + spread * Math.cos(a)
+            const y = center + spread * Math.sin(a)
+            const hasKids = childrenOf(bodies, b.id).length > 0
+            const isSel = selectedId === b.id
+            return (
+              <g key={b.id}>
+                <circle
+                  cx={x} cy={y} r={16}
+                  fill={b.color || cls.color}
+                  stroke={isSel ? '#fff' : hasKids ? '#f87171' : 'none'}
+                  strokeWidth={isSel ? 2.5 : hasKids ? 1.5 : 0}
+                  className="cursor-pointer"
+                  onClick={() => onSelect(b.id)}
+                  onDoubleClick={() => { if (hasKids) onFocusChange(b.id) }}
+                >
+                  <title>{b.name} -- {cls.label}{hasKids ? ' (double-click to see what orbits it)' : ''}</title>
+                </circle>
+                <text x={x} y={y + 30} textAnchor="middle" fontSize="11" fill="#d1d5db" className="pointer-events-none select-none">{b.name}</text>
+              </g>
+            )
+          })}
 
           {children.length === 0 && (
             <text x={center} y={center - 60} textAnchor="middle" fontSize="12" fill="#6b7280" className="pointer-events-none select-none">
@@ -562,22 +612,52 @@ function OrbitDiagram({
             </text>
           )}
 
-          {children.map(b => {
+          {orbiting.map(b => {
             const r = radiusPx(b.orbital_radius_au)
             const angleRad = (b.angle_deg * Math.PI) / 180
             const x = center + r * Math.cos(angleRad)
             const y = center + r * Math.sin(angleRad)
             const cls = bodyClassMeta(b.kind, b.body_class)
             const color = b.color || cls.color
-            const hasKids = childrenOf(bodies, b.id).length > 0
+            const kids = childrenOf(bodies, b.id)
+            const hasKids = kids.length > 0
             const isSel = selectedId === b.id
             const msz = markerSize(b.kind)
+            const satRing = msz + 8
             return (
               <g key={b.id}>
                 <circle
                   cx={center} cy={center} r={r} fill="none" stroke="#374151" strokeWidth={1}
                   strokeDasharray={b.kind === 'belt' ? '3 3' : undefined}
                 />
+
+                {/* Whatever orbits this body, shown in miniature so the system's
+                    structure reads at a glance without drilling in. */}
+                {hasKids && (
+                  <>
+                    <circle cx={x} cy={y} r={satRing} fill="none" stroke="#4b5563" strokeWidth={0.75} strokeDasharray="2 2" />
+                    {kids.map((k, ki) => {
+                      const ka = (ki / kids.length) * Math.PI * 2 - Math.PI / 2
+                      const kcls = bodyClassMeta(k.kind, k.body_class)
+                      return (
+                        <circle
+                          key={k.id}
+                          cx={x + satRing * Math.cos(ka)}
+                          cy={y + satRing * Math.sin(ka)}
+                          r={3}
+                          fill={k.color || kcls.color}
+                          stroke={selectedId === k.id ? '#fff' : 'none'}
+                          strokeWidth={1.5}
+                          className="cursor-pointer"
+                          onClick={() => onSelect(k.id)}
+                        >
+                          <title>{k.name} -- {kcls.label}</title>
+                        </circle>
+                      )
+                    })}
+                  </>
+                )}
+
                 <circle
                   cx={x} cy={y} r={msz}
                   fill={color}
@@ -589,7 +669,14 @@ function OrbitDiagram({
                 >
                   <title>{b.name} -- {cls.label}{hasKids ? ' (double-click to focus)' : ''}</title>
                 </circle>
-                <text x={x} y={y + msz + 12} textAnchor="middle" fontSize="10" fill="#d1d5db" className="pointer-events-none select-none">{b.name}</text>
+                <text
+                  x={x}
+                  y={y + (hasKids ? satRing : msz) + 12}
+                  textAnchor="middle" fontSize="10" fill="#d1d5db"
+                  className="pointer-events-none select-none"
+                >
+                  {b.name}
+                </text>
               </g>
             )
           })}
