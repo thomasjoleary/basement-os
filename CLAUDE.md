@@ -265,6 +265,13 @@ Colours are **Mitchell Charity blackbody values** (CIE 1931, sRGB/D65) — the s
 
 Includes the remnants — white dwarf, neutron star, pulsar, **black hole**. A black hole has no photosphere, so `isLightless()` is true for it and temperature/luminosity readouts are suppressed rather than printed as zeros. `schwarzschildRadiusKm()` gives its event horizon (2.95 km per solar mass).
 
+### Habitable zones
+The system builder shades where liquid water is possible (toggle in the diagram header; only shown when a **star** is at the centre of the view). Edges use the **Kopparapu et al. (2013/2014)** polynomial — conservative = runaway→maximum greenhouse, optimistic = recent Venus→early Mars. Verified against the Sun (0.981–1.689 AU) and TRAPPIST-1 (0.025–0.049 AU). The fit is valid 2600–7200 K; outside that the UI flags the edges as rough.
+
+**Luminosity is derived, not stored**: main-sequence stars use the Eker et al. (2018) mass–luminosity relation (valid 0.179–31 M☉); giants/remnants fall back to the class luminosity range, since that relation is main-sequence-only.
+
+`STAR_HABITABILITY` in `lib/galaxy.ts` holds the per-class verdict on whether that *kind* of star could host life at all (lifetime, UV, flares, tidal locking) — a separate question from where its zone falls. Planets show a zone verdict + tidal-lock warning in the inspector and a 🌱 in the tree; moons are judged at their planet's distance from the star. See `docs/V2_SETTING.md`.
+
 ### RLS
 GMs manage everything. Players get **read-only access to `discovered` systems only** (and the bodies within them); settings are readable by any authenticated user so players can see travel times. The player policies are written but the builder is GM-only today — they exist so the future player view needs no migration.
 

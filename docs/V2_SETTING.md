@@ -86,6 +86,32 @@ Roughly a third of systems are **multiple** (binary or more), and that fraction
 climbs steeply with mass: most hot bright stars have companions, while red
 dwarfs are usually alone.
 
+### Which stars can host life
+
+Two separate questions, with different answers:
+
+1. **Where around this star could liquid water sit?** — the habitable zone, computed from luminosity.
+2. **Could this kind of star host life at all?** — often no, for reasons that have nothing to do with the zone.
+
+A blue giant has a perfectly good habitable zone. It also burns out in a few million years, so nothing in it has time to evolve.
+
+| Star | Verdict | Why |
+|---|---|---|
+| Blue Giant (O) | ✖ | ~5 million years of life. Sterilising UV besides. |
+| Blue-White (B) | ✖ | Tens to a few hundred million years. |
+| White (A) | ⚠️ | ~1–3 billion years — borderline for simple life, never enough for complex. Harsh UV. |
+| Pale Yellow (F) | ⚠️ | ~4–7 billion years. Fine for simple life; complex life at the cooler end. |
+| **Yellow (G)** | 🌱 | The baseline. ~10 billion years, no special hazards. This is the Sun. |
+| **Orange Dwarf (K)** | 🌱 | Arguably the best of all — tens of billions of years, far less flaring than an M dwarf. |
+| Red Dwarf (M) | ⚠️ | Effectively unlimited time, but tidal locking, flares stripping atmospheres, and a blindingly bright first billion years. **Genuinely disputed among astronomers** — not a settled no. |
+| Red Giant | ⚠️ | The zone sweeps outward as the star swells; any orbit is only temperate for a window (~200 Myr to a few Gyr). |
+| Red Supergiant | ✖ | Lasts tens of thousands of years, then explodes. |
+| White Dwarf | ⚠️ | A real zone, but ~0.005–0.02 AU out, tidally locked, near the shredding limit, shrinking as it cools. Any world there arrived *after* the star died. |
+| Neutron Star / Pulsar | ✖ | No steady warmth. Pulsar planets are real — the first exoplanets ever found orbited one — but the radiation is lethal. |
+| Black Hole | ✖ | No light, no zone. |
+
+**For the campaign:** yellow and orange stars are where ordinary settled worlds belong. Red dwarfs are the interesting middle ground — abundant (three quarters of all stars), long-lived, and arguable either way, which makes them good ground for a setting to take a position on. The exotic remnants are where you put something that has no business being alive.
+
 ### The remnants
 
 White dwarfs, neutron stars, pulsars and black holes are all available as system

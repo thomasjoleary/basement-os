@@ -340,6 +340,237 @@ export function schwarzschildRadiusKm(massSolar: number): number {
 }
 
 // ===========================================================================
+// Habitability
+//
+// Two separate questions, and they have different answers:
+//   1. WHERE around this star could liquid water sit?  -> habitableZone()
+//   2. COULD this kind of star host life at all?        -> starHabitability()
+// A blue giant has a habitable zone. It also burns out in a few million years,
+// so nothing has time to evolve in it.
+// ===========================================================================
+
+// Kopparapu et al. (2013, ApJ 765:131 / 2014, ApJL 787:L29) boundary
+// coefficients for a 1 Earth-mass planet.
+//   S_eff = S_eff0 + a*T + b*T^2 + c*T^3 + d*T^4,  where T = Teff - 5780 K
+//   distance_AU = sqrt( (L / L_sun) / S_eff )
+interface HzCoefficients {
+  s0: number
+  a: number
+  b: number
+  c: number
+  d: number
+}
+
+const HZ_COEFFICIENTS: Record<string, HzCoefficients> = {
+  recentVenus:       { s0: 1.7763, a: 1.4335e-4, b: 3.3954e-9, c: -7.6364e-12, d: -1.1950e-15 },
+  runawayGreenhouse: { s0: 1.0385, a: 1.2456e-4, b: 1.4612e-8, c: -7.6345e-12, d: -1.7511e-15 },
+  moistGreenhouse:   { s0: 1.0146, a: 8.1884e-5, b: 1.9394e-9, c: -4.3618e-12, d: -6.8260e-16 },
+  maxGreenhouse:     { s0: 0.3507, a: 5.9578e-5, b: 1.6707e-9, c: -3.0058e-12, d: -5.1925e-16 },
+  earlyMars:         { s0: 0.3207, a: 5.4471e-5, b: 1.5275e-9, c: -2.1709e-12, d: -3.8282e-16 },
+}
+
+// The polynomial is only fitted between these temperatures. Outside it we are
+// extrapolating, and the UI says so rather than quietly printing a number.
+export const HZ_TEFF_MIN = 2600
+export const HZ_TEFF_MAX = 7200
+
+export interface HabitableZone {
+  // Optimistic edges: Venus and Mars may have held surface water this far out.
+  optimisticInner: number
+  optimisticOuter: number
+  // Conservative edges: the pair used as "the" habitable zone in the literature.
+  conservativeInner: number
+  conservativeOuter: number
+  // True when the star's temperature falls outside the fit's valid range.
+  extrapolated: boolean
+}
+
+function hzEdgeAu(coeff: HzCoefficients, luminositySolar: number, teffK: number): number {
+  const t = teffK - 5780
+  const sEff = coeff.s0 + coeff.a * t + coeff.b * t ** 2 + coeff.c * t ** 3 + coeff.d * t ** 4
+  if (sEff <= 0) return 0
+  return Math.sqrt(luminositySolar / sEff)
+}
+
+// Habitable zone edges in AU. Returns null when the star emits no useful light.
+export function habitableZone(luminositySolar: number | null, teffK: number): HabitableZone | null {
+  if (!luminositySolar || luminositySolar <= 0) return null
+  return {
+    optimisticInner:   hzEdgeAu(HZ_COEFFICIENTS.recentVenus, luminositySolar, teffK),
+    conservativeInner: hzEdgeAu(HZ_COEFFICIENTS.runawayGreenhouse, luminositySolar, teffK),
+    conservativeOuter: hzEdgeAu(HZ_COEFFICIENTS.maxGreenhouse, luminositySolar, teffK),
+    optimisticOuter:   hzEdgeAu(HZ_COEFFICIENTS.earlyMars, luminositySolar, teffK),
+    extrapolated: teffK < HZ_TEFF_MIN || teffK > HZ_TEFF_MAX,
+  }
+}
+
+export type ZonePlacement = 'too-hot' | 'optimistic-inner' | 'habitable' | 'optimistic-outer' | 'too-cold'
+
+// Where an orbit sits relative to the zone.
+export function zonePlacement(au: number, hz: HabitableZone): ZonePlacement {
+  if (au < hz.optimisticInner) return 'too-hot'
+  if (au < hz.conservativeInner) return 'optimistic-inner'
+  if (au <= hz.conservativeOuter) return 'habitable'
+  if (au <= hz.optimisticOuter) return 'optimistic-outer'
+  return 'too-cold'
+}
+
+export const ZONE_LABELS: Record<ZonePlacement, { label: string; color: string; note: string }> = {
+  'too-hot': { label: 'Too hot', color: '#f87171', note: 'Inside the inner edge — surface water boils away.' },
+  'optimistic-inner': { label: 'Optimistic (hot edge)', color: '#fbbf24', note: 'Habitable only under generous assumptions — a Venus that stayed wet.' },
+  'habitable': { label: 'Habitable zone', color: '#4ade80', note: 'Liquid water is possible on the surface.' },
+  'optimistic-outer': { label: 'Optimistic (cold edge)', color: '#60a5fa', note: 'Habitable only under generous assumptions — an early, warmer Mars.' },
+  'too-cold': { label: 'Too cold', color: '#93c5fd', note: 'Beyond the outer edge — surface water freezes.' },
+}
+
+// Main-sequence mass-luminosity relation, Eker et al. (2018), from 509
+// eclipsing binaries. Valid roughly 0.179-31 solar masses; outside that we
+// fall back to the class's own luminosity range.
+const EKER_SEGMENTS: { maxMass: number; alpha: number }[] = [
+  { maxMass: 0.45, alpha: 2.028 },
+  { maxMass: 0.72, alpha: 4.572 },
+  { maxMass: 1.05, alpha: 5.743 },
+  { maxMass: 2.40, alpha: 4.329 },
+  { maxMass: 7.00, alpha: 3.967 },
+  { maxMass: 31.0, alpha: 2.865 },
+]
+
+export function luminosityFromMass(massSolar: number): number | null {
+  if (massSolar < 0.179 || massSolar > 31) return null
+  const seg = EKER_SEGMENTS.find(s => massSolar <= s.maxMass) ?? EKER_SEGMENTS[EKER_SEGMENTS.length - 1]
+  return massSolar ** seg.alpha
+}
+
+// Main-sequence lifetime. The Sun checks out: 1 solar mass -> 10 Gyr.
+export function mainSequenceLifetimeGyr(massSolar: number): number {
+  if (massSolar <= 0) return 0
+  return 10 * massSolar ** -2.5
+}
+
+// Geometric mean is the honest midpoint for a range spanning orders of magnitude.
+function rangeMidGeometric(range: [number, number]): number {
+  if (range[0] <= 0) return range[1] / 2
+  return Math.sqrt(range[0] * range[1])
+}
+
+// Luminosity to use for a star, in solar units.
+//
+// The mass-luminosity relation is a MAIN SEQUENCE relation. A red giant's
+// output is set by its bloated radius, and a white dwarf's by residual cooling,
+// so for those we take the class's own luminosity range instead of deriving.
+export function starLuminositySolar(classId: string, massSolar: number | null): number | null {
+  const cls = starClassMeta(classId)
+  if (isLightless(classId)) return null
+  if (MAIN_SEQUENCE_CLASSES.has(classId) && massSolar && massSolar > 0) {
+    const derived = luminosityFromMass(massSolar)
+    if (derived != null) return derived
+  }
+  const mid = rangeMidGeometric(cls.luminosity)
+  return mid > 0 ? mid : null
+}
+
+// Representative temperature for a class, used by the HZ polynomial.
+export function starTeffK(classId: string): number {
+  const cls = starClassMeta(classId)
+  return (cls.tempK[0] + cls.tempK[1]) / 2
+}
+
+const MAIN_SEQUENCE_CLASSES = new Set([
+  'blue_giant', 'blue_white', 'white', 'pale_yellow', 'yellow', 'orange_dwarf', 'red_dwarf',
+])
+
+export type HabitabilityVerdict = 'plausible' | 'marginal' | 'ruled-out'
+
+export interface StarHabitability {
+  verdict: HabitabilityVerdict
+  headline: string
+  reason: string
+}
+
+// Whether this KIND of star could host life at all, independent of where its
+// habitable zone happens to fall.
+export const STAR_HABITABILITY: Record<string, StarHabitability> = {
+  blue_giant: {
+    verdict: 'ruled-out',
+    headline: 'Burns out far too fast',
+    reason: 'Lives only a few million years — orders of magnitude short of the ~1 billion life needed even to begin. Its ultraviolet output is sterilising besides.',
+  },
+  blue_white: {
+    verdict: 'ruled-out',
+    headline: 'Burns out too fast',
+    reason: 'Tens to a few hundred million years on the main sequence. No time for life to get started.',
+  },
+  white: {
+    verdict: 'marginal',
+    headline: 'Short-lived and harshly ultraviolet',
+    reason: 'Around 1-3 billion years of life — borderline for simple life, effectively never enough for complex life. Heavy UV flux also shrinks the genuinely safe band well inside the liquid-water zone.',
+  },
+  pale_yellow: {
+    verdict: 'marginal',
+    headline: 'Workable, with a UV problem',
+    reason: 'Roughly 4-7 billion years is enough for simple life throughout, and for complex life at the cooler end. Ultraviolet output is a milder version of the white-star problem.',
+  },
+  yellow: {
+    verdict: 'plausible',
+    headline: 'The baseline case',
+    reason: 'About 10 billion years of stable output and no special hazards. This is the kind of star Earth orbits.',
+  },
+  orange_dwarf: {
+    verdict: 'plausible',
+    headline: 'Arguably the best of all',
+    reason: 'Tens of billions of years of stable burning, far less flaring than a red dwarf, and a comfortably placed zone. Often called the sweet spot for life.',
+  },
+  red_dwarf: {
+    verdict: 'marginal',
+    headline: 'Enormous time, serious hazards',
+    reason: 'Lives effectively forever, but the zone sits so close that worlds there are likely tidally locked, flares and X-rays erode atmospheres, and the star was blindingly bright for its first billion years — long enough to boil a world dry before settling. Genuinely disputed among astronomers.',
+  },
+  red_giant: {
+    verdict: 'marginal',
+    headline: 'A moving window, not a home',
+    reason: 'As the star swells its zone sweeps outward, so a given orbit is only temperate for a stretch — anywhere from ~200 million to a few billion years — before the zone moves past it.',
+  },
+  red_supergiant: {
+    verdict: 'ruled-out',
+    headline: 'Dying, violently',
+    reason: 'This stage lasts only tens of thousands to a million years, with savage mass loss and a supernova at the end of it.',
+  },
+  white_dwarf: {
+    verdict: 'marginal',
+    headline: 'A narrow, closing window',
+    reason: 'A real zone exists, but only a few thousandths of an AU out — perilously near the tidal-shredding limit, tidally locked for certain, and creeping inward as the ember cools. Any world there had to arrive after the star died.',
+  },
+  neutron_star: {
+    verdict: 'ruled-out',
+    headline: 'No warmth to offer',
+    reason: 'No steady starlight, and any planet would have had to survive the supernova that made it.',
+  },
+  pulsar: {
+    verdict: 'ruled-out',
+    headline: 'Real planets, lethal skies',
+    reason: 'Pulsar planets genuinely exist — the first exoplanets ever found orbited one — but the beamed radiation makes conventional life wildly implausible.',
+  },
+  black_hole: {
+    verdict: 'ruled-out',
+    headline: 'No light, no zone',
+    reason: 'Emits nothing usable. Exotic schemes exist on paper for harvesting the background radiation near a giant spinning hole, but their own authors treat them as thought experiments.',
+  },
+}
+
+export function starHabitability(classId: string): StarHabitability {
+  return STAR_HABITABILITY[classId] ?? STAR_HABITABILITY.yellow
+}
+
+// Tidal locking scales as a^6 / M^2, so it falls off ferociously with distance.
+// Worlds in the zone of a star below roughly half a solar mass lock within a
+// few billion years; around a Sun-like star they essentially never do.
+export function likelyTidallyLocked(au: number, starMassSolar: number | null): boolean {
+  if (!starMassSolar || starMassSolar <= 0 || au <= 0) return false
+  // Calibrated so Proxima b (0.0485 AU, 0.12 M) locks and Earth does not.
+  return (au ** 6) / (starMassSolar ** 2) < 1e-4
+}
+
+// ===========================================================================
 // Planet & station classes (game flavour rather than formal taxonomy)
 // ===========================================================================
 

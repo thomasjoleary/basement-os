@@ -94,6 +94,41 @@ The editor displays planets and moons in **Earth masses** and converts on save
 (1 M☉ = 332,946 M⊕). `orbital_period_days` is an optional override — when null,
 the period is derived from the parent's mass.
 
+### Habitable zones
+
+The system builder shades the band where liquid water is possible, toggled from
+the diagram header. It only appears when a **star** is at the centre of the view
+— focused on a gas giant the rings are moons measured from the planet, where a
+stellar zone would be meaningless.
+
+Edges come from the **Kopparapu et al. (2013/2014)** parameterisation, the
+standard in the literature:
+
+```
+S_eff = S_eff0 + a·T + b·T² + c·T³ + d·T⁴     where T = Teff − 5780 K
+d_AU  = sqrt( (L / L☉) / S_eff )
+```
+
+- **Conservative zone** (the solid band): runaway greenhouse → maximum greenhouse.
+- **Optimistic zone** (the faint band): recent Venus → early Mars.
+- Verified against the Sun (0.981–1.689 AU) and TRAPPIST-1 (0.025–0.049 AU),
+  both matching published values.
+- The fit is only valid for **2600–7200 K**. Outside it the UI says the edges are
+  rough rather than quietly printing a number — hot A/B stars trip this.
+
+**Luminosity is derived, not stored.** The schema holds mass, so main-sequence
+luminosity comes from the Eker et al. (2018) mass–luminosity relation (valid
+0.179–31 M☉). That relation is *main sequence only* — a giant's output is set by
+its bloated radius and a white dwarf's by residual cooling — so for evolved and
+degenerate classes the code falls back to the class's own luminosity range
+instead. If you ever want to set a star's luminosity explicitly, that needs a new
+column; deriving it avoided a migration.
+
+Planets get a zone verdict in the inspector, a 🌱 in the hierarchy when they sit
+in the conservative zone, and a tidal-locking warning where `a⁶/M²` says one face
+would always be toward the star. Moons are judged at their *planet's* distance
+from the star, which is the distance that actually matters.
+
 ### Jump time
 
 ```

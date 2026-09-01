@@ -19,6 +19,14 @@ import {
   classesForKind,
   bodyClassMeta,
   starClassMeta,
+  habitableZone,
+  starLuminositySolar,
+  starTeffK,
+  starHabitability,
+  mainSequenceLifetimeGyr,
+  zonePlacement,
+  ZONE_LABELS,
+  likelyTidallyLocked,
   isLightless,
   defaultChildKind,
   childrenOf,
@@ -71,6 +79,15 @@ function roundSig(v: number, sig = 6): number {
   return Math.round(v * factor) / factor
 }
 
+// Stellar lifetimes span from millions to trillions of years, so pick the unit.
+function formatGyr(gyr: number): string {
+  if (!isFinite(gyr) || gyr <= 0) return '--'
+  if (gyr < 0.001) return `${Math.round(gyr * 1e6)} thousand years`
+  if (gyr < 1) return `${Math.round(gyr * 1000)} million years`
+  if (gyr < 1000) return `${gyr.toFixed(gyr < 10 ? 1 : 0)} billion years`
+  return `${(gyr / 1000).toFixed(1)} trillion years`
+}
+
 // Friendlier message for the common failure mode during development: the migration
 // for v2_star_systems / v2_system_bodies hasn't been applied yet.
 function friendlyError(err: { message?: string; code?: string } | null): string {
@@ -95,6 +112,7 @@ export default function SystemBuilderPage() {
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [focusId, setFocusId] = useState<string | null>(null) // orbit diagram focus; null = system barycentre
+  const [showHz, setShowHz] = useState(true)
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set())
 
   const bodiesById = useMemo(() => new Map(bodies.map(b => [b.id, b])), [bodies])
@@ -384,6 +402,8 @@ export default function SystemBuilderPage() {
           {/* Orbit diagram */}
           <div className="flex-1 min-h-[38vh] lg:min-h-0 border-b lg:border-b-0 lg:border-r border-gray-700 flex flex-col">
             <OrbitDiagram
+              showHz={showHz}
+              onToggleHz={setShowHz}
               bodies={bodies}
               focusId={focusId}
               onFocusChange={setFocusId}
@@ -451,6 +471,18 @@ function TreeBranch(p: TreeBranchProps) {
         const kindMeta = BODY_KINDS.find(k => k.kind === b.kind)
         const parent = b.parent_id ? p.bodiesById.get(b.parent_id) ?? null : null
         const periodDays = resolvePeriodDays(b, parent?.mass_solar ?? null)
+        // Flag worlds sitting in their star's habitable zone, so candidates for
+        // life are visible without opening each one.
+        const inHz = (() => {
+          if (b.kind !== 'planet' && b.kind !== 'moon') return false
+          if (!parent) return false
+          const star = parent.kind === 'star' ? parent : (parent.parent_id ? p.bodiesById.get(parent.parent_id) ?? null : null)
+          if (!star || star.kind !== 'star') return false
+          const hz = habitableZone(starLuminositySolar(star.body_class, star.mass_solar), starTeffK(star.body_class))
+          if (!hz) return false
+          const au = parent.kind === 'star' ? b.orbital_radius_au : parent.orbital_radius_au
+          return zonePlacement(au, hz) === 'habitable'
+        })()
         return (
           <div key={b.id}>
             <div
@@ -468,6 +500,9 @@ function TreeBranch(p: TreeBranchProps) {
                 <div className="truncate font-medium">
                   {b.name}
                   {childCount > 0 && <span className="text-gray-500 font-normal"> ({childCount})</span>}
+                  {inHz && (
+                    <span className="ml-1.5 text-[10px] font-normal" title="Sits in its star's habitable zone">🌱</span>
+                  )}
                   {p.focusId === b.id && (
                     <span className="ml-1.5 text-[10px] text-red-400 font-normal" title="Currently shown in the diagram">◎</span>
                   )}
@@ -516,13 +551,15 @@ function IconBtn({ title, onClick, danger, children }: { title: string; onClick:
 // Orbit diagram (SVG schematic, non-linear radius scale)
 // ==========================================================================
 function OrbitDiagram({
-  bodies, focusId, onFocusChange, selectedId, onSelect,
+  bodies, focusId, onFocusChange, selectedId, onSelect, showHz, onToggleHz,
 }: {
   bodies: SystemBody[]
   focusId: string | null
   onFocusChange: (id: string | null) => void
   selectedId: string | null
   onSelect: (id: string) => void
+  showHz: boolean
+  onToggleHz: (v: boolean) => void
 }) {
   const bodiesById = useMemo(() => new Map(bodies.map(b => [b.id, b])), [bodies])
   const focusBody = focusId ? bodiesById.get(focusId) ?? null : null
@@ -560,6 +597,19 @@ function OrbitDiagram({
     return 6 // moon, station, belt
   }
 
+  // The habitable zone belongs to the star the orbits are drawn around, so it
+  // only means anything when a star is at the centre. Focused on a gas giant,
+  // the rings are moons measured from the planet -- a stellar zone there would
+  // be nonsense, so it is suppressed.
+  const hzStar =
+    focusBody && focusBody.kind === 'star' ? focusBody
+    : !focusBody && atCentre.length === 1 && atCentre[0].kind === 'star' ? atCentre[0]
+    : null
+
+  const hz = hzStar
+    ? habitableZone(starLuminositySolar(hzStar.body_class, hzStar.mass_solar), starTeffK(hzStar.body_class))
+    : null
+
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className="flex items-center gap-1 text-xs px-2 py-1.5 border-b border-gray-800 overflow-x-auto shrink-0">
@@ -570,10 +620,47 @@ function OrbitDiagram({
             <button onClick={() => onFocusChange(c.id)} className={`px-2 py-0.5 rounded truncate max-w-[10rem] ${focusId === c.id ? 'bg-red-900/50 text-red-200' : 'text-gray-400 hover:text-white'}`}>{c.name}</button>
           </span>
         ))}
+
+        <label
+          className={`ml-auto flex items-center gap-1.5 px-2 py-0.5 rounded shrink-0 ${hz ? 'cursor-pointer text-gray-400 hover:text-white' : 'text-gray-700 cursor-not-allowed'}`}
+          title={hz ? 'Shade the band where liquid water is possible' : 'Only shown when a star is at the centre of the view'}
+        >
+          <input type="checkbox" checked={showHz && !!hz} disabled={!hz} onChange={e => onToggleHz(e.target.checked)} className="accent-green-600" />
+          <span className="whitespace-nowrap">🌱 Habitable zone</span>
+        </label>
       </div>
 
       <div className="flex-1 min-h-0">
         <svg viewBox={`0 0 ${size} ${size}`} className="w-full h-full">
+          {/* Habitable zone, drawn first so orbits and bodies sit on top of it.
+              Each band is a circle stroked at the band's own thickness. */}
+          {showHz && hz && (() => {
+            const band = (from: number, to: number, fill: string, opacity: number) => {
+              const rIn = radiusPx(from)
+              const rOut = radiusPx(to)
+              if (rOut <= rIn) return null
+              return (
+                <circle
+                  cx={center} cy={center} r={(rIn + rOut) / 2}
+                  fill="none" stroke={fill} strokeWidth={rOut - rIn} opacity={opacity}
+                />
+              )
+            }
+            const rConsOuter = radiusPx(hz.conservativeOuter)
+            return (
+              <g className="pointer-events-none">
+                {band(hz.optimisticInner, hz.optimisticOuter, '#22c55e', 0.10)}
+                {band(hz.conservativeInner, hz.conservativeOuter, '#22c55e', 0.20)}
+                <circle cx={center} cy={center} r={radiusPx(hz.conservativeInner)} fill="none" stroke="#4ade80" strokeWidth={1} opacity={0.5} strokeDasharray="4 3" />
+                <circle cx={center} cy={center} r={rConsOuter} fill="none" stroke="#4ade80" strokeWidth={1} opacity={0.5} strokeDasharray="4 3" />
+                {rConsOuter > 40 && rConsOuter < maxRadiusPx && (
+                  <text x={center} y={center - rConsOuter - 5} textAnchor="middle" fontSize="9" fill="#4ade80" opacity={0.75} className="select-none">
+                    habitable zone
+                  </text>
+                )}
+              </g>
+            )
+          })()}
           {focusBody ? (
             <g>
               <circle
@@ -845,8 +932,73 @@ function InspectorPanel({
             <span>Luminosity: {lightless ? 'n/a -- emits no light' : `${starMeta.luminosity[0]}–${starMeta.luminosity[1]} L☉`}</span>
           </div>
           <div className="text-gray-600">{starMeta.abundance}</div>
+
+          {/* Can this KIND of star host life, and where would the zone fall? */}
+          {(() => {
+            const hab = starHabitability(body.body_class)
+            const lum = starLuminositySolar(body.body_class, body.mass_solar)
+            const hz = habitableZone(lum, starTeffK(body.body_class))
+            const tone =
+              hab.verdict === 'plausible' ? 'text-green-300 border-green-800 bg-green-950/40'
+              : hab.verdict === 'marginal' ? 'text-amber-300 border-amber-800 bg-amber-950/40'
+              : 'text-red-300 border-red-900 bg-red-950/40'
+            const badge = hab.verdict === 'plausible' ? 'Could host life' : hab.verdict === 'marginal' ? 'Marginal for life' : 'No life'
+            return (
+              <div className={`mt-2 rounded border p-2 space-y-1 ${tone}`}>
+                <div className="font-bold flex items-center gap-1.5">
+                  <span>{hab.verdict === 'plausible' ? '🌱' : hab.verdict === 'marginal' ? '⚠️' : '✖'}</span>
+                  {badge} — {hab.headline}
+                </div>
+                <p className="text-gray-400 leading-snug">{hab.reason}</p>
+                {hz ? (
+                  <div className="text-gray-400 pt-0.5">
+                    <div>Habitable zone: <span className="text-white font-mono">{hz.conservativeInner.toFixed(3)}–{hz.conservativeOuter.toFixed(3)} AU</span></div>
+                    <div className="text-gray-500">Optimistic: {hz.optimisticInner.toFixed(3)}–{hz.optimisticOuter.toFixed(3)} AU</div>
+                    {lum != null && <div className="text-gray-500">Luminosity ≈ {lum < 0.01 ? lum.toExponential(2) : lum.toFixed(2)} L☉</div>}
+                    {hz.extrapolated && (
+                      <div className="text-amber-400/80 pt-0.5">Temperature is outside the range the zone model was fitted to — treat these edges as rough.</div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="text-gray-500">No habitable zone — this object gives off no usable light.</div>
+                )}
+                {body.mass_solar != null && body.mass_solar > 0 && !isLightless(body.body_class) && (
+                  <div className="text-gray-500">Burns for ≈ {formatGyr(mainSequenceLifetimeGyr(body.mass_solar))}</div>
+                )}
+              </div>
+            )
+          })()}
         </div>
       )}
+
+      {/* Where this world sits relative to its star's habitable zone. */}
+      {(body.kind === 'planet' || body.kind === 'moon') && parent && (() => {
+        // A moon's distance from the star is really its planet's orbit.
+        const star = parent.kind === 'star' ? parent : (parent.parent_id ? bodiesById.get(parent.parent_id) ?? null : null)
+        if (!star || star.kind !== 'star') return null
+        const auFromStar = parent.kind === 'star' ? body.orbital_radius_au : parent.orbital_radius_au
+        const hz = habitableZone(starLuminositySolar(star.body_class, star.mass_solar), starTeffK(star.body_class))
+        if (!hz) return null
+        const placement = zonePlacement(auFromStar, hz)
+        const meta = ZONE_LABELS[placement]
+        const locked = likelyTidallyLocked(auFromStar, star.mass_solar)
+        return (
+          <div className="rounded border border-gray-700 bg-gray-900/40 p-2.5 space-y-1 text-xs">
+            <div className="font-bold flex items-center gap-1.5" style={{ color: meta.color }}>
+              <span>{placement === 'habitable' ? '🌱' : '•'}</span>{meta.label}
+            </div>
+            <p className="text-gray-500 leading-snug">{meta.note}</p>
+            <div className="text-gray-500">
+              {parent.kind === 'star'
+                ? <>Orbits {star.name} at {auFromStar} AU · zone {hz.conservativeInner.toFixed(2)}–{hz.conservativeOuter.toFixed(2)} AU</>
+                : <>Sits at {parent.name}&apos;s distance from {star.name} ({auFromStar} AU)</>}
+            </div>
+            {locked && (
+              <div className="text-amber-400/90">Likely tidally locked — one face always toward the star, one always in night.</div>
+            )}
+          </div>
+        )
+      })()}
 
       <Field label="Description">
         <textarea
