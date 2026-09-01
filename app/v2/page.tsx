@@ -61,6 +61,15 @@ export default function BasementOSv2() {
         <div className="h-1 w-32 bg-gradient-to-r from-transparent via-red-500 to-transparent opacity-50"></div>
       </div>
 
+      <div className="flex justify-center gap-4 mb-10 flex-wrap">
+        <Link
+          href="/v2/galaxy"
+          className="bg-indigo-900 border border-indigo-700 px-6 py-2 rounded hover:bg-indigo-800 transition-colors text-indigo-200 font-bold flex items-center gap-2"
+        >
+          <span>🌌</span> Galaxy Map
+        </Link>
+      </div>
+
       <div className="max-w-xl mx-auto text-center">
         <p className="text-gray-400">
           This is the new version of Basement OS, under construction. Only you can see this page for now —
