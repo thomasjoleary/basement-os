@@ -8,14 +8,17 @@ schema see [V2_OVERVIEW.md](./V2_OVERVIEW.md).
 ## Jump Drives
 
 > Jump drives are usually low charge time, high power and low speed, or they're
-> high charge time, low power and low speed. A good way to think of it is to
+> high charge time, low power and high speed. A good way to think of it is to
 > think of time and space as many many layers of fabric. Charging up the jump
 > drive 'sharpens' your jump, allowing you to cut through the fabric easier.
 > Drives with very little charge time are also known as 'hammer drives' since
 > they can be imagined punching through the fabric with blunt force instead of
 > cutting through. This is why they have high power draw.
 >
-> — GM, recorded verbatim
+> — GM
+
+*One word corrected from the original dictation, which read "low speed" for both
+drive types; confirmed that high-charge drives are the fast ones.*
 
 ### The three axes
 
@@ -34,20 +37,18 @@ The image is **layers of fabric**. Charge sharpens the edge:
 - **Little or no charge → a blunt punch.** A **hammer drive** forces its way
   through. Very high power draw, because brute force is expensive.
 
-### ⚠️ Open question
+So the two ends of the spectrum are:
 
-The first sentence describes both drive types as **low speed**:
+| | Charge | Power | Speed |
+|---|---|---|---|
+| **Hammer drive** (blunt) | low | high | low |
+| **Sharpened drive** | high | low | high |
 
-> "low charge time, high power and **low speed**, or they're high charge time,
-> low power and **low speed**"
-
-If both are low speed, there's no speed tradeoff — the axis does nothing. The
-rest of the passage implies a sharper (longer-charged) jump should cut *better*,
-which reads as the high-charge drive being the **faster** one. Left exactly as
-written pending your confirmation; likely intended:
-
-- low charge, high power, **low** speed (hammer)
-- high charge, low power, **high** speed (sharpened)
+The tradeoff at the table is therefore *readiness vs. transit*: a hammer drive
+gets you moving almost immediately but crawls between stars and strains the
+power budget; a sharpened drive demands you sit still and charge, then crosses
+the same gap far faster on less power. Fleeing an ambush favours the hammer;
+a planned long haul favours the lance.
 
 ### Where this lives in code
 

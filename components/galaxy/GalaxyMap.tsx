@@ -731,7 +731,7 @@ export default function GalaxyMap({
       <div className="absolute top-3 right-3 z-30 flex flex-col gap-1">
         <button onClick={() => zoomButton(1.2)} className="w-9 h-9 rounded bg-gray-800/90 border border-gray-600 text-white text-lg hover:bg-gray-700" aria-label="Zoom in">+</button>
         <button onClick={() => zoomButton(0.83)} className="w-9 h-9 rounded bg-gray-800/90 border border-gray-600 text-white text-lg hover:bg-gray-700" aria-label="Zoom out">−</button>
-        <button onClick={resetView} className="w-9 h-9 rounded bg-gray-800/90 border border-gray-600 text-white text-xs hover:bg-gray-700" aria-label="Fit all systems" title="Fit all systems">⤢</button>
+        <button onClick={resetView} className="w-9 h-9 rounded bg-gray-800/90 border border-gray-600 text-white text-base hover:bg-gray-700" aria-label="Fit all systems" title="Fit all systems">◎</button>
         <button
           onClick={toggleFullscreen}
           className="w-9 h-9 rounded bg-gray-800/90 border border-gray-600 text-white text-xs hover:bg-gray-700"
