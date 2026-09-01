@@ -211,7 +211,66 @@ A per-encounter tactical map of 5ft squares. GM authoring + **player fog-of-war 
 ### Related privacy behavior
 - App-wide HP/mana redaction beyond the battlefield was deliberately **not** done. Instead, `app/character/[id]/page.tsx` auto-redirects a non-GM to `/` when they open a character sheet whose `user_id` is set and isn't theirs (`router.replace('/')`). The leaderboard intentionally shows everyone's stats.
 
+---
+
+# Basement OS v2 (space setting) — in progress
+
+A **second campaign system** being built alongside the D&D one, not a replacement. The legacy app stays live and untouched; v2 shares the same site and the same logins (`auth.users` / `profiles`), but **all of its data lives in `v2_`-prefixed tables** so no legacy query can ever see it.
+
+- Route root: `app/v2/page.tsx` — GM-gated shell (non-GM → alert + redirect to `/`), same pattern as `/words` and `/leaderboard`. Not linked from the legacy home page; reachable only by typing `/v2`.
+- Eventually `/v2` becomes the post-login home page, with a button back to the old one.
+
+## v2 Galaxy Map
+
+A GM authoring tool for the campaign's star map. Systems are nodes positioned in **light-years**; ships jump between them and the map computes travel time.
+
+### Tables (`sql/v2_001_galaxy.sql`)
+| Table | Purpose |
+|---|---|
+| `v2_star_systems` | Map nodes: `name`, `x`/`y`/`z` (light-years), `description`, `gm_notes`, `discovered`, `tags` |
+| `v2_system_bodies` | Everything inside a system, **self-nesting** via `parent_id` |
+| `v2_galaxy_settings` | Singleton (`id = 1`): `galaxy_name`, `jump_charge_hours`, `jump_speed_ly_per_hour` |
+
+**`z` is stored but unused** by the current top-down map — it exists so a future 3D view needs no migration.
+
+### The body hierarchy (the core design)
+`v2_system_bodies.parent_id` is a self-referencing FK with `ON DELETE CASCADE`:
+- `parent_id IS NULL` → orbits the system barycentre (i.e. a star, or a free-floating station)
+- otherwise → orbits that body
+
+That single pointer is what makes moons moons: a moon is just a body whose parent is a planet, and a station orbiting a moon of a gas giant is three levels deep. `kind` is one of `star | planet | moon | station | belt`; `body_class` indexes into the matching class list in `lib/galaxy.ts`.
+
+**Deleting a body deletes everything orbiting it** (DB-level cascade) — the editor warns with a descendant count before confirming.
+
+### Travel time
+`jump time = jump_charge_hours + (distance_ly ÷ jump_speed_ly_per_hour)`
+
+A fixed drive spin-up plus cruise time, so short hops are relatively costlier. Both constants live in the settings row, so travel times are **tunable without a deploy**. Defaults: 6h charge, 1 ly/hour.
+
+### Orbital mechanics
+Kepler's third law in solar units: **`P(years) = √(a(AU)³ ÷ M(solar masses))`** — verified against Jupiter (5.2 AU, 1 M☉ → 11.86 years).
+
+`mass_solar` is stored in **solar masses for every body** so this math stays uniform; the editor displays planets/moons in Earth masses and converts on save (1 M☉ = 332,946 Earth masses). `orbital_period_days` is an optional override — when null, the period is derived from the parent's mass via `resolvePeriodDays()`.
+
+### Star classification (real astronomy)
+`STAR_CLASSES` in `lib/galaxy.ts` uses **real stellar classification under approachable labels** ("Yellow Star" for G-type, "Red Dwarf" for M-type), each carrying its real spectral type, temperature/mass/radius/luminosity ranges, and abundance.
+
+Colours are **Mitchell Charity blackbody values** (CIE 1931, sRGB/D65) — the same table planetarium software uses. Note O/B stars are **blue-white, not saturated blue**: blackbody chromaticity converges to pale blue-white as temperature rises, so no thermal starlight is ever deeply blue.
+
+Includes the remnants — white dwarf, neutron star, pulsar, **black hole**. A black hole has no photosphere, so `isLightless()` is true for it and temperature/luminosity readouts are suppressed rather than printed as zeros. `schwarzschildRadiusKm()` gives its event horizon (2.95 km per solar mass).
+
+### RLS
+GMs manage everything. Players get **read-only access to `discovered` systems only** (and the bodies within them); settings are readable by any authenticated user so players can see travel times. The player policies are written but the builder is GM-only today — they exist so the future player view needs no migration.
+
+**Verified against a local PostgreSQL 16 cluster** with stubbed `auth.uid()`/`profiles`: the migration applies cleanly, is re-runnable, cascades correctly, and the player policies hold (read limited to discovered, writes rejected). Not yet verified against the live Supabase project.
+
 ## Key Files
+- `app/v2/page.tsx` — v2 home shell (GM-gated)
+- `app/v2/galaxy/page.tsx` — galaxy map: systems as nodes, create/drag/measure, settings + nearest-neighbour panel
+- `app/v2/galaxy/[id]/page.tsx` — system builder: hierarchical body tree, inspector, orbit schematic
+- `components/galaxy/GalaxyMap.tsx` — the galaxy canvas (pan/zoom/pinch, procedural spiral backdrop, measure tool)
+- `lib/galaxy.ts` — v2 galaxy types, star/planet/station classes, distance + jump-time math, Kepler helpers, hierarchy helpers (`childrenOf`, `descendantsOf`, `wouldCycle`)
+- `sql/v2_001_galaxy.sql` — v2 galaxy migration (**run manually in the Supabase SQL editor**)
 - `app/character/[id]/page.tsx` — the main character sheet page (everything: view, edit, level-up modal, power level display)
 - `app/leaderboard/page.tsx` — leaderboard (GM: all categories + publish panel; players: published categories only)
 - `app/create/page.tsx` — new character creation form (includes tame_class/species fields for tames)
