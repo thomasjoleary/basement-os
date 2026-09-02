@@ -275,7 +275,7 @@ The system builder shades where liquid water is possible (toggle in the diagram 
 ### Habitability & settlement scores (`sql/v2_003`)
 **Two scores per world, deliberately separate** — they answer different questions and routinely disagree (Mars: 8/100 habitability, but a strong sealed-habitat colony):
 - `habitabilityScore(body, ctx)` — unprotected surface survival, 0–100. Weights: breathable air 35 (uses **oxygen partial pressure**, not percentage) · temperature/zone 20 · water 15 · gravity 12 · climate stability 12 · radiation shelter 6.
-- `settlementRating(body, ctx, habitability)` — can a tech species build here? **Gravity is a hard gate** (0.3–1.8 g); everything else is a cost, since pressure/temperature/air/radiation can all be walled off and gravity cannot.
+- `settlementRating(body, ctx, habitability)` — can a tech species build here? Everything except gravity is a cost, since pressure/temperature/air/radiation can all be walled off. **Gravity is asymmetric**: above 1.8 g is a hard blocker (`orbital-only`), below 0.3 g is only a caveat yielding the `outpost` tier — a lunar-style base is viable and low gravity makes launch/construction cheaper; only a multi-generational population is doubtful. Partial gravity has never been tested on humans, so that floor is a game convention, not a measured threshold.
 
 **Hard limits are ceilings, not deductions** — otherwise a vacuum world in a perfect orbit coasts to a high score on the factors it passes. Below the Armstrong limit (0.0618 atm) caps at 8; toxic/corrosive air 12; unbreathable 25; gravity outside 0.3–1.8 g caps at 30.
 

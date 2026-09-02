@@ -923,7 +923,7 @@ export function habitabilityScore(body: SystemBody, ctx: HabitabilityContext): H
 // on hand decide whether the colony can ever feed itself.
 // ---------------------------------------------------------------------------
 
-export type SettlementTier = 'open' | 'easy' | 'engineered' | 'sealed' | 'extreme' | 'orbital-only'
+export type SettlementTier = 'open' | 'easy' | 'engineered' | 'sealed' | 'outpost' | 'extreme' | 'orbital-only'
 
 export interface SettlementRating {
   tier: SettlementTier
@@ -940,13 +940,24 @@ const TIER_META: Record<SettlementTier, { label: string; color: string }> = {
   'easy':         { label: 'Light habitats', color: '#a3e635' },
   'engineered':   { label: 'Engineered colony', color: '#facc15' },
   'sealed':       { label: 'Sealed habitat', color: '#fb923c' },
+  'outpost':      { label: 'Outpost / rotating crews', color: '#38bdf8' },
   'extreme':      { label: 'Extreme outpost', color: '#f87171' },
   'orbital-only': { label: 'Orbit only', color: '#a78bfa' },
 }
 
-// Gravity bounds beyond which a surface colony is not viable however much
-// technology you throw at it. You cannot build a wall against gravity.
+// Below this, a PERMANENT multi-generational population is doubtful -- bone and
+// muscle waste and exercise does not appear to stop it. Bases, industry and
+// rotating crews are entirely viable, and low gravity actively helps with
+// launch and construction, so this is a caveat and not a blocker.
+//
+// Honesty about this number: partial gravity has never been tested on humans.
+// We have data at 1g and at microgravity and nothing in between, so where the
+// real floor sits -- if there is one -- is unknown. 0.3 is a game convention.
 export const GRAVITY_MIN_G = 0.3
+
+// Above this, working the surface at all becomes the problem: you cannot move
+// or lift, machinery is stressed continuously, and getting back off the surface
+// costs enormously. This one really is a blocker.
 export const GRAVITY_MAX_G = 1.8
 
 export function settlementRating(
@@ -972,22 +983,26 @@ export function settlementRating(
   if (has('geothermal') || has('fissiles')) selfSufficiency += 10
   selfSufficiency = Math.min(100, selfSufficiency)
 
-  // --- The hard gate.
+  // --- High gravity is the genuine blocker: you cannot work the surface, the
+  // machinery is stressed continuously, and leaving again costs enormously.
   const g = ctx.gravityG
-  if (g != null && (g < GRAVITY_MIN_G || g > GRAVITY_MAX_G)) {
-    blockers.push(
-      g < GRAVITY_MIN_G
-        ? `${g.toFixed(2)} g is too little to live in permanently — bone and muscle waste away and exercise alone does not stop it. Rotating habitats can fake gravity; a planet's surface cannot.`
-        : `${g.toFixed(2)} g is crushing. There is no engineering fix for gravity: it pulls on every cell, continuously, and no wall stops it.`
-    )
+  if (g != null && g > GRAVITY_MAX_G) {
+    blockers.push(`${g.toFixed(2)} g is crushing. There is no engineering fix for gravity: it pulls on every cell, continuously, and no wall stops it.`)
     return {
       tier: 'orbital-only',
       ...TIER_META['orbital-only'],
-      summary: g < GRAVITY_MIN_G
-        ? 'Fine for mining camps and rotating tours of duty, but nobody raises a family here. Permanent population belongs in a spun station overhead.'
-        : 'No permanent surface population. Work it from orbit and send machines down.',
+      summary: 'No permanent surface population. Work it from orbit and send machines down.',
       selfSufficiency, blockers, costs,
     }
+  }
+
+  // --- Low gravity is a CAVEAT, not a blocker. A base is entirely viable and
+  // the low gravity actively helps with launch and construction; what is in
+  // doubt is a permanent population raised there over generations.
+  const lowGravity = g != null && g < GRAVITY_MIN_G
+  if (lowGravity) {
+    costs.push(`${g!.toFixed(2)} g is likely too little for a population raised here — bone and muscle waste and exercise does not appear to stop it. Rotating crews work; generations are the open question. (Partial gravity has never actually been tested on humans.)`)
+    costs.push('Low gravity does make launch, construction and moving cargo far cheaper than on a heavier world.')
   }
 
   // --- Engineering costs, none of which are dealbreakers on their own.
@@ -1023,6 +1038,15 @@ export function settlementRating(
   // score zero for habitability and are still excellent places to settle.
   if (tier === 'sealed' && selfSufficiency >= 70) {
     summary = 'Nothing breathes out there, but vacuum is cheap to seal against and the resources are right here. A strong colony site.'
+  }
+
+  // A light world reads as an outpost rather than a home, however good the site
+  // otherwise is -- which is exactly what a lunar or asteroid base looks like.
+  if (lowGravity) {
+    tier = 'outpost'
+    summary = selfSufficiency >= 60
+      ? 'A first-rate base: cheap to land on, cheap to launch from, and the resources are right here. Crews rotate home rather than settle, and the permanent population lives in a spun station overhead.'
+      : 'Workable as a base, though little of what it needs can be found locally. Crews rotate rather than settle.'
   }
 
   return { tier, ...TIER_META[tier], summary, selfSufficiency, blockers, costs }

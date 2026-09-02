@@ -152,15 +152,20 @@ obvious one:
   perfect orbit coasts to a decent score on the factors it passes. Below the
   Armstrong limit caps at 8; toxic air at 12; unbreathable at 25; gravity outside
   0.3–1.8 g at 30.
-- **Gravity gates settlement outright**; everything else is a cost multiplier.
-  It is the one factor no technology addresses.
+- **Gravity is the only factor no technology addresses**, but it is not
+  symmetrical. High gravity (>1.8 g) is a hard blocker — orbit only. Low gravity
+  (<0.3 g) is a caveat that yields the `outpost` tier: bases are viable and
+  cheap to launch from, only a multi-generational population is doubtful. Note
+  that partial gravity has never been tested on humans, so the low-g floor is a
+  game convention rather than a measured threshold.
 - **Magnetosphere is a minor modifier**, never a gate — the science is genuinely
   contested and Venus is a standing counterexample.
 - **Axial tilt is weighted low** because the large-moon obliquity-stabilisation
   claim was substantially revised in 2012.
 
 Validated against real bodies: Earth 100/open, Mars 8/sealed-habitat,
-Venus surface 12/extreme, Moon 8/orbital-only, a 3.1 g super-Earth 30/orbital-only.
+Venus surface 12/extreme, Moon 8/outpost, Europa 8/outpost, a 3.1 g super-Earth
+30/orbital-only.
 
 ### Jump time
 

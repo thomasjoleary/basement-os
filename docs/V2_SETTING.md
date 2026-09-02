@@ -131,7 +131,7 @@ Two different questions, deliberately kept apart, because they routinely disagre
 - **Habitability (0–100)** — could an unprotected being walk out and survive?
 - **Settlement** — could a technological species build a colony here?
 
-Mars scores **8 for habitability and rates a strong sealed-habitat colony**. The Moon scores 8 and is orbital-only. A three-gravity super-Earth with perfect air is bad on *both*. That spread is the point.
+Mars scores **8 for habitability and rates a strong sealed-habitat colony**. The Moon also scores 8, and rates a first-rate outpost. A three-gravity super-Earth with perfect air is bad on *both*. That spread is the point.
 
 ### What actually matters, in order
 
@@ -163,7 +163,14 @@ Worth knowing, because the setting can be more interesting than the cliché:
 
 ### Settling a world that hates you
 
-**Gravity is the only thing technology cannot fix.** Pressure, temperature, air and radiation are all things you can put a wall between yourself and. Gravity pulls on every cell continuously and no wall stops it. So gravity gates settlement; everything else is a cost.
+**Gravity is the only thing technology cannot fix.** Pressure, temperature, air and radiation are all things you can put a wall between yourself and. Gravity pulls on every cell continuously and no wall stops it.
+
+But it cuts two different ways, and they are not symmetrical:
+
+- **Too heavy (above ~1.8 g)** is a genuine blocker. You cannot move or lift, machinery is stressed continuously, and climbing back out of the well costs enormously. Work it from orbit.
+- **Too light (below ~0.3 g)** is a *caveat*, not a blocker. A base is entirely viable, and the low gravity actively makes landing, launching and building **cheaper**. What is in doubt is a population raised there over generations. So light worlds read as **outposts**: crews rotate home, and anyone permanent lives in a spun station overhead.
+
+Worth knowing that this floor is soft. **Partial gravity has never been tested on humans** — we have data at 1 g and at microgravity and nothing in between. Whether 0.17 g behaves like zero or is nearly fine is genuinely unknown, so 0.3 g is a game convention, not a measured threshold. If you want lunar-born generations in your setting, that is a perfectly defensible call and the science cannot contradict you.
 
 What decides whether a colony can feed itself:
 
