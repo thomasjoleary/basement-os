@@ -8,6 +8,13 @@
 
 export type BodyKind = 'star' | 'planet' | 'moon' | 'station' | 'belt'
 
+export type AtmosphereType = 'none' | 'trace' | 'thin' | 'breathable' | 'dense' | 'toxic' | 'corrosive'
+export type HydrosphereType = 'none' | 'ice' | 'trace' | 'seas' | 'ocean_world'
+export type TectonicsType = 'dead' | 'stagnant' | 'active'
+export type MagnetosphereType = 'none' | 'weak' | 'strong'
+export type BiosphereType = 'none' | 'microbial' | 'complex' | 'exotic'
+export type ResourceId = 'water_ice' | 'liquid_water' | 'metals' | 'nitrogen' | 'carbon' | 'organics' | 'fissiles' | 'geothermal'
+
 export interface StarSystem {
   id: string
   name: string
@@ -48,6 +55,21 @@ export interface SystemBody {
   color: string | null
   description: string
   gm_notes: string
+  // --- Habitability traits (sql/v2_003). All nullable; when unset the body's
+  // class supplies a default so every world still scores. ---
+  atmosphere: AtmosphereType | null
+  pressure_atm: number | null
+  oxygen_pct: number | null
+  hydrosphere: HydrosphereType | null
+  surface_temp_c: number | null
+  tectonics: TectonicsType | null
+  magnetosphere: MagnetosphereType | null
+  axial_tilt_deg: number | null
+  rotation_hours: number | null
+  eccentricity: number | null
+  biosphere: BiosphereType | null
+  resources: ResourceId[]
+  habitability_override: number | null
   created_at: string
   updated_at: string
 }
@@ -568,6 +590,442 @@ export function likelyTidallyLocked(au: number, starMassSolar: number | null): b
   if (!starMassSolar || starMassSolar <= 0 || au <= 0) return false
   // Calibrated so Proxima b (0.0485 AU, 0.12 M) locks and Earth does not.
   return (au ** 6) / (starMassSolar ** 2) < 1e-4
+}
+
+// ===========================================================================
+// Planetary traits & habitability scoring
+//
+// Two scores, because they answer different questions and routinely disagree:
+//
+//   habitability -- could an unprotected being survive on the surface?
+//   settlement   -- could a technological species build a colony here?
+//
+// An airless ice moon scores ~0 on the first and very well on the second:
+// vacuum is cheap to seal against and the water is right there. A high-gravity
+// world scores badly on BOTH, because gravity is the one factor no amount of
+// technology can engineer around -- you cannot build a wall against it.
+// ===========================================================================
+
+export const ATMOSPHERE_TYPES: { id: AtmosphereType; label: string; note: string }[] = [
+  { id: 'none', label: 'None (vacuum)', note: 'No atmosphere at all. Cheap to seal against — a hard vacuum is routine engineering.' },
+  { id: 'trace', label: 'Trace', note: 'Barely there. Too thin to breathe or to shield against radiation.' },
+  { id: 'thin', label: 'Thin', note: 'Real but insufficient — a pressure suit is needed outdoors.' },
+  { id: 'breathable', label: 'Breathable', note: 'Oxygen-bearing at survivable pressure. Rare and precious.' },
+  { id: 'dense', label: 'Dense', note: 'Thick. Excellent radiation shielding, but crushing at the extreme.' },
+  { id: 'toxic', label: 'Toxic', note: 'Poisonous to breathe, whatever the pressure.' },
+  { id: 'corrosive', label: 'Corrosive', note: 'Actively eats equipment. The hardest kind to build in.' },
+]
+
+export const HYDROSPHERE_TYPES: { id: HydrosphereType; label: string; note: string }[] = [
+  { id: 'none', label: 'Bone dry', note: 'No water in any form.' },
+  { id: 'ice', label: 'Ice only', note: 'Frozen water. The single most valuable thing a colony can find.' },
+  { id: 'trace', label: 'Trace / subsurface', note: 'Damp, or liquid water hidden below the surface.' },
+  { id: 'seas', label: 'Seas and land', note: 'Open water with exposed continents — the best case for life.' },
+  { id: 'ocean_world', label: 'Ocean world', note: 'Global ocean, no exposed land. Whether that helps or hurts climate is genuinely disputed.' },
+]
+
+export const TECTONICS_TYPES: { id: TectonicsType; label: string; note: string }[] = [
+  { id: 'dead', label: 'Dead', note: 'Geologically inert. No thermostat, no fresh volatiles.' },
+  { id: 'stagnant', label: 'Stagnant lid', note: 'Volcanism without plate recycling — a weaker thermostat, like Mars or Venus.' },
+  { id: 'active', label: 'Active plates', note: 'Full carbonate-silicate cycle: the thermostat that kept Earth temperate for four billion years.' },
+]
+
+export const MAGNETOSPHERE_TYPES: { id: MagnetosphereType; label: string; note: string }[] = [
+  { id: 'none', label: 'None', note: 'No intrinsic field. Not the disaster it is often made out to be — Venus has none and 90 bar of air.' },
+  { id: 'weak', label: 'Weak / induced', note: 'A modest or atmosphere-induced field.' },
+  { id: 'strong', label: 'Strong', note: 'An Earth-like dynamo. Helps against flares; its effect on atmospheric retention is contested.' },
+]
+
+export const BIOSPHERE_TYPES: { id: BiosphereType; label: string; note: string }[] = [
+  { id: 'none', label: 'Sterile', note: 'Nothing lives here.' },
+  { id: 'microbial', label: 'Microbial', note: 'Life, but nothing you can talk to.' },
+  { id: 'complex', label: 'Complex', note: 'A full biosphere.' },
+  { id: 'exotic', label: 'Exotic', note: 'Life running on chemistry that has no business working.' },
+]
+
+export const RESOURCES: { id: ResourceId; label: string; icon: string; note: string }[] = [
+  { id: 'water_ice', label: 'Water ice', icon: '🧊', note: 'The master resource: drinking water, breathable oxygen, and fuel.' },
+  { id: 'liquid_water', label: 'Liquid water', icon: '💧', note: 'Accessible without melting anything first.' },
+  { id: 'metals', label: 'Metals', icon: '⛏️', note: 'Construction and manufacturing.' },
+  { id: 'nitrogen', label: 'Nitrogen', icon: '🫧', note: 'Buffer gas. A sealed habitat cannot run on pure oxygen without becoming a bomb, so this is a real constraint.' },
+  { id: 'carbon', label: 'Carbon', icon: '⚫', note: 'Plastics, fuel, and food.' },
+  { id: 'organics', label: 'Organics', icon: '🧬', note: 'Complex carbon chemistry ready to use.' },
+  { id: 'fissiles', label: 'Fissiles', icon: '☢️', note: 'Power where sunlight is too weak.' },
+  { id: 'geothermal', label: 'Geothermal / tidal heat', icon: '♨️', note: 'Energy from the world itself. What keeps Europa\'s ocean liquid.' },
+]
+
+export interface BodyTraits {
+  atmosphere: AtmosphereType
+  pressure_atm: number
+  oxygen_pct: number
+  hydrosphere: HydrosphereType
+  tectonics: TectonicsType
+  magnetosphere: MagnetosphereType
+  axial_tilt_deg: number
+  eccentricity: number
+  resources: ResourceId[]
+}
+
+// Plausible defaults per class, so a freshly-placed world scores sensibly with
+// nothing filled in. Anything the GM sets overrides these.
+export const CLASS_TRAIT_DEFAULTS: Record<string, Partial<BodyTraits>> = {
+  // "Terrestrial" in the class list sits alongside Barren Rock and Desert World,
+  // so a GM picking it usually means the Earth-like one. Defaults reflect that
+  // intent rather than the statistically likelier dead rock.
+  terrestrial: { atmosphere: 'breathable', pressure_atm: 1, oxygen_pct: 20, hydrosphere: 'seas', tectonics: 'active', magnetosphere: 'weak', resources: ['liquid_water', 'water_ice', 'metals', 'nitrogen', 'carbon'] },
+  ocean:       { atmosphere: 'breathable', pressure_atm: 1.1, oxygen_pct: 20, hydrosphere: 'ocean_world', tectonics: 'active', magnetosphere: 'weak', resources: ['liquid_water', 'water_ice'] },
+  desert:      { atmosphere: 'thin', pressure_atm: 0.6, oxygen_pct: 2, hydrosphere: 'trace', tectonics: 'stagnant', magnetosphere: 'none', resources: ['metals'] },
+  ice:         { atmosphere: 'trace', pressure_atm: 0.05, oxygen_pct: 0, hydrosphere: 'ice', tectonics: 'dead', magnetosphere: 'none', resources: ['water_ice'] },
+  volcanic:    { atmosphere: 'toxic', pressure_atm: 2.5, oxygen_pct: 0, hydrosphere: 'none', tectonics: 'active', magnetosphere: 'weak', resources: ['metals', 'geothermal', 'fissiles'] },
+  toxic:       { atmosphere: 'corrosive', pressure_atm: 8, oxygen_pct: 0, hydrosphere: 'none', tectonics: 'stagnant', magnetosphere: 'none', resources: ['carbon'] },
+  barren:      { atmosphere: 'none', pressure_atm: 0, oxygen_pct: 0, hydrosphere: 'none', tectonics: 'dead', magnetosphere: 'none', resources: ['metals'] },
+  gas_giant:   { atmosphere: 'dense', pressure_atm: 1000, oxygen_pct: 0, hydrosphere: 'none', tectonics: 'dead', magnetosphere: 'strong', resources: ['nitrogen', 'carbon'] },
+  ice_giant:   { atmosphere: 'dense', pressure_atm: 800, oxygen_pct: 0, hydrosphere: 'ice', tectonics: 'dead', magnetosphere: 'strong', resources: ['water_ice', 'nitrogen'] },
+  dwarf:       { atmosphere: 'none', pressure_atm: 0, oxygen_pct: 0, hydrosphere: 'ice', tectonics: 'dead', magnetosphere: 'none', resources: ['water_ice', 'metals'] },
+}
+
+const TRAIT_FALLBACK: BodyTraits = {
+  atmosphere: 'none', pressure_atm: 0, oxygen_pct: 0, hydrosphere: 'none',
+  tectonics: 'dead', magnetosphere: 'none', axial_tilt_deg: 20, eccentricity: 0.02, resources: [],
+}
+
+// A body's effective traits: what the GM set, else the class default, else nothing.
+export function resolveTraits(body: SystemBody): BodyTraits {
+  const d = CLASS_TRAIT_DEFAULTS[body.body_class] ?? {}
+  return {
+    atmosphere: body.atmosphere ?? d.atmosphere ?? TRAIT_FALLBACK.atmosphere,
+    pressure_atm: body.pressure_atm ?? d.pressure_atm ?? TRAIT_FALLBACK.pressure_atm,
+    oxygen_pct: body.oxygen_pct ?? d.oxygen_pct ?? TRAIT_FALLBACK.oxygen_pct,
+    hydrosphere: body.hydrosphere ?? d.hydrosphere ?? TRAIT_FALLBACK.hydrosphere,
+    tectonics: body.tectonics ?? d.tectonics ?? TRAIT_FALLBACK.tectonics,
+    magnetosphere: body.magnetosphere ?? d.magnetosphere ?? TRAIT_FALLBACK.magnetosphere,
+    axial_tilt_deg: body.axial_tilt_deg ?? d.axial_tilt_deg ?? TRAIT_FALLBACK.axial_tilt_deg,
+    eccentricity: body.eccentricity ?? d.eccentricity ?? TRAIT_FALLBACK.eccentricity,
+    resources: (body.resources?.length ? body.resources : d.resources) ?? TRAIT_FALLBACK.resources,
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Derived physical quantities
+// ---------------------------------------------------------------------------
+
+export const EARTH_RADIUS_KM = 6371
+// Above roughly this radius a world is a sub-Neptune rather than a rock: the
+// Fulton gap, an observed scarcity of planets between ~1.5 and 2 Earth radii.
+export const ROCKY_RADIUS_LIMIT_EARTH = 1.6
+
+// Surface gravity in Earth gravities: g = M / R², both in Earth units.
+export function surfaceGravityG(massSolar: number | null, radiusKm: number | null): number | null {
+  if (!massSolar || !radiusKm || massSolar <= 0 || radiusKm <= 0) return null
+  const massEarth = solarToEarthMasses(massSolar)
+  const radiusEarth = radiusKm / EARTH_RADIUS_KM
+  return massEarth / (radiusEarth * radiusEarth)
+}
+
+// Oxygen partial pressure in atmospheres -- the figure that decides whether air
+// is breathable. A thin atmosphere of pure oxygen still suffocates you.
+export function oxygenPartialPressureAtm(traits: BodyTraits): number {
+  return traits.pressure_atm * (traits.oxygen_pct / 100)
+}
+
+// Pressure below which exposed body fluids boil at body temperature.
+export const ARMSTRONG_LIMIT_ATM = 0.0618
+// Human-survivable oxygen partial pressure band.
+export const PO2_MIN_ATM = 0.16
+export const PO2_MAX_ATM = 0.5
+
+// Equilibrium temperature in Celsius, ignoring greenhouse effects.
+export function equilibriumTempC(luminositySolar: number | null, au: number, albedo = 0.3): number | null {
+  if (!luminositySolar || luminositySolar <= 0 || au <= 0) return null
+  // 278.5 K is the equilibrium temperature at 1 AU from a 1 L-sun star at zero albedo.
+  const kelvin = 278.5 * ((1 - albedo) ** 0.25) * (luminositySolar ** 0.25) / Math.sqrt(au)
+  return kelvin - 273.15
+}
+
+// ---------------------------------------------------------------------------
+// Habitability score -- unprotected survival on the surface
+// ---------------------------------------------------------------------------
+
+export interface ScoreFactor {
+  label: string
+  points: number
+  max: number
+  note: string
+}
+
+export interface HabitabilityScore {
+  score: number // 0-100
+  band: 'garden' | 'habitable' | 'marginal' | 'hostile' | 'lethal'
+  factors: ScoreFactor[]
+  overridden: boolean
+}
+
+export const HABITABILITY_BANDS: Record<HabitabilityScore['band'], { label: string; color: string }> = {
+  garden:    { label: 'Garden world', color: '#4ade80' },
+  habitable: { label: 'Habitable', color: '#a3e635' },
+  marginal:  { label: 'Marginal', color: '#facc15' },
+  hostile:   { label: 'Hostile', color: '#fb923c' },
+  lethal:    { label: 'Lethal', color: '#f87171' },
+}
+
+function bandFor(score: number): HabitabilityScore['band'] {
+  if (score >= 80) return 'garden'
+  if (score >= 60) return 'habitable'
+  if (score >= 35) return 'marginal'
+  if (score >= 15) return 'hostile'
+  return 'lethal'
+}
+
+export interface HabitabilityContext {
+  zone: ZonePlacement | null
+  gravityG: number | null
+  tidallyLocked: boolean
+}
+
+// Weights reflect what actually kills you fastest, and what regulates a climate
+// over geological time. Deliberately NOT weighted heavily: magnetosphere (its
+// effect on retention is contested) and axial tilt (the large-moon
+// stabilisation claim was substantially revised).
+export function habitabilityScore(body: SystemBody, ctx: HabitabilityContext): HabitabilityScore {
+  const t = resolveTraits(body)
+  const factors: ScoreFactor[] = []
+
+  // --- Breathable air (35) -- the fastest-acting factor of all.
+  const po2 = oxygenPartialPressureAtm(t)
+  let air = 0
+  let airNote: string
+  if (t.pressure_atm < ARMSTRONG_LIMIT_ATM) {
+    airNote = 'Below the Armstrong limit — exposed body fluids boil. Unsurvivable unsuited.'
+  } else if (t.atmosphere === 'corrosive') {
+    air = 1
+    airNote = 'Corrosive. Lethal to breathe and hostile to equipment.'
+  } else if (t.atmosphere === 'toxic') {
+    air = 2
+    airNote = 'Poisonous whatever the pressure.'
+  } else if (po2 < PO2_MIN_ATM) {
+    air = po2 <= 0 ? 3 : 10
+    airNote = `Oxygen partial pressure ${po2.toFixed(3)} atm — below the ${PO2_MIN_ATM} atm needed to stay conscious.`
+  } else if (po2 > PO2_MAX_ATM) {
+    air = 14
+    airNote = `Oxygen partial pressure ${po2.toFixed(2)} atm — high enough for oxygen toxicity and severe fire risk.`
+  } else if (t.pressure_atm > 4) {
+    air = 20
+    airNote = 'Breathable mix, but the pressure itself brings narcosis.'
+  } else {
+    air = 35
+    airNote = `Breathable: ${po2.toFixed(2)} atm oxygen at ${t.pressure_atm} atm total.`
+  }
+  factors.push({ label: 'Breathable air', points: air, max: 35, note: airNote })
+
+  // --- Temperature / zone (20)
+  let temp = 0
+  let tempNote = 'No star to warm it.'
+  if (ctx.zone) {
+    const map: Record<ZonePlacement, [number, string]> = {
+      'habitable': [20, 'Squarely in the habitable zone.'],
+      'optimistic-inner': [12, 'Just inside the hot edge — habitable only on generous assumptions.'],
+      'optimistic-outer': [12, 'Just outside the cold edge — habitable only on generous assumptions.'],
+      'too-hot': [0, 'Too close to its star for surface water.'],
+      'too-cold': [2, 'Too far from its star; surface water is frozen.'],
+    }
+    const [pts, note] = map[ctx.zone]
+    temp = pts
+    tempNote = note
+  }
+  factors.push({ label: 'Temperature', points: temp, max: 20, note: tempNote })
+
+  // --- Water (15). Presence of exposed land is the discontinuity, not the amount.
+  const waterPts: Record<HydrosphereType, [number, string]> = {
+    'seas': [15, 'Open water with exposed land — the ideal arrangement.'],
+    'ocean_world': [10, 'A global ocean with no land. Whether that helps or hurts long-term climate is genuinely disputed.'],
+    'trace': [7, 'Some water, but little of it accessible at the surface.'],
+    'ice': [4, 'Water, but frozen.'],
+    'none': [0, 'No water in any form.'],
+  }
+  const [wp, wn] = waterPts[t.hydrosphere]
+  factors.push({ label: 'Water', points: wp, max: 15, note: wn })
+
+  // --- Gravity (12)
+  let grav = 0
+  let gravNote = 'Unknown mass or radius.'
+  if (ctx.gravityG != null) {
+    const g = ctx.gravityG
+    if (g >= 0.7 && g <= 1.3) { grav = 12; gravNote = `${g.toFixed(2)} g — comfortable indefinitely.` }
+    else if (g >= 0.5 && g < 0.7) { grav = 8; gravNote = `${g.toFixed(2)} g — below the point where exercise alone stops muscle and bone loss.` }
+    else if (g > 1.3 && g <= 1.6) { grav = 7; gravNote = `${g.toFixed(2)} g — tiring, and hard on the heart over years.` }
+    else if (g >= 0.3 && g < 0.5) { grav = 4; gravNote = `${g.toFixed(2)} g — long residence means permanent physical decline.` }
+    else if (g > 1.6 && g <= 2.5) { grav = 2; gravNote = `${g.toFixed(2)} g — punishing. Sustained habitation is doubtful.` }
+    else { grav = 0; gravNote = `${g.toFixed(2)} g — outside anything a body tolerates for long.` }
+  }
+  factors.push({ label: 'Gravity', points: grav, max: 12, note: gravNote })
+
+  // --- Long-term climate stability (12): the thermostat plus orbital behaviour.
+  const tectPts: Record<TectonicsType, [number, string]> = {
+    'active': [8, 'Active plates drive the carbonate-silicate cycle — the thermostat that held Earth temperate for four billion years.'],
+    'stagnant': [4, 'Volcanism without plate recycling gives a weaker thermostat.'],
+    'dead': [0, 'Geologically dead: no thermostat, and no fresh volatiles.'],
+  }
+  const [tp, tn] = tectPts[t.tectonics]
+  let ecc = 4
+  let eccNote = `Orbit is near-circular (e=${t.eccentricity}).`
+  if (t.eccentricity > 0.6) { ecc = 0; eccNote = `e=${t.eccentricity} — violent swings in stellar heating each orbit.` }
+  else if (t.eccentricity > 0.3) { ecc = 2; eccNote = `e=${t.eccentricity} — noticeable seasonal extremes from the orbit itself.` }
+  factors.push({ label: 'Climate stability', points: tp + ecc, max: 12, note: `${tn} ${eccNote}` })
+
+  // --- Radiation shelter (6). Atmospheric mass matters far more than a magnetic
+  // field here: Earth's air is ~1000 g/cm² of shielding, which no dynamo matches.
+  let rad = 0
+  let radNote: string
+  if (t.pressure_atm >= 0.5) { rad = 6; radNote = 'A thick atmosphere is the real radiation shield — worth far more than any magnetic field.' }
+  else if (t.pressure_atm >= 0.1) { rad = 3; radNote = 'Thin air gives only partial protection from cosmic rays and flares.' }
+  else { rad = 0; radNote = 'Effectively no atmospheric shielding. Surface radiation is unmitigated.' }
+  if (t.magnetosphere === 'strong') { rad = Math.min(6, rad + 1); radNote += ' A strong field helps against flares.' }
+  factors.push({ label: 'Radiation shelter', points: rad, max: 6, note: radNote })
+
+  const raw = factors.reduce((s, f) => s + f.points, 0)
+
+  // Some conditions kill you outright, and no amount of scoring well elsewhere
+  // changes that. A world in the perfect orbit with no air is still vacuum, and
+  // breathable air on a three-gravity world still crushes you. These are ceilings,
+  // not deductions -- without them a lethal world can coast to a high score on
+  // the factors it happens to pass.
+  const caps: { cap: number; why: string }[] = []
+  if (t.pressure_atm < ARMSTRONG_LIMIT_ATM) {
+    caps.push({ cap: 8, why: 'Effectively vacuum — unprotected exposure kills in under two minutes.' })
+  }
+  if (t.atmosphere === 'toxic' || t.atmosphere === 'corrosive') {
+    caps.push({ cap: 12, why: 'The air itself is lethal to breathe.' })
+  } else if (po2 < PO2_MIN_ATM || po2 > PO2_MAX_ATM) {
+    caps.push({ cap: 25, why: 'Air is unbreathable — survivable only behind a mask or a seal.' })
+  }
+  if (ctx.gravityG != null && (ctx.gravityG < GRAVITY_MIN_G || ctx.gravityG > GRAVITY_MAX_G)) {
+    caps.push({ cap: 30, why: `${ctx.gravityG.toFixed(2)} g is outside what a body endures for long, whatever the air is like.` })
+  }
+
+  const ceiling = caps.length ? Math.min(...caps.map(c => c.cap)) : 100
+  if (caps.length) {
+    const binding = caps.reduce((a, b) => (a.cap <= b.cap ? a : b))
+    factors.push({ label: 'Hard limit', points: 0, max: 0, note: binding.why })
+  }
+
+  const score = body.habitability_override != null
+    ? Math.max(0, Math.min(100, body.habitability_override))
+    : Math.max(0, Math.min(ceiling, Math.round(raw)))
+
+  return { score, band: bandFor(score), factors, overridden: body.habitability_override != null }
+}
+
+// ---------------------------------------------------------------------------
+// Settlement rating -- can a technological species build here?
+//
+// Gravity is the gate. Everything else is a cost: pressure, temperature, air
+// and radiation are all things a wall can be built against, and the resources
+// on hand decide whether the colony can ever feed itself.
+// ---------------------------------------------------------------------------
+
+export type SettlementTier = 'open' | 'easy' | 'engineered' | 'sealed' | 'extreme' | 'orbital-only'
+
+export interface SettlementRating {
+  tier: SettlementTier
+  label: string
+  color: string
+  summary: string
+  selfSufficiency: number // 0-100, how far local resources go
+  blockers: string[]
+  costs: string[]
+}
+
+const TIER_META: Record<SettlementTier, { label: string; color: string }> = {
+  'open':         { label: 'Open settlement', color: '#4ade80' },
+  'easy':         { label: 'Light habitats', color: '#a3e635' },
+  'engineered':   { label: 'Engineered colony', color: '#facc15' },
+  'sealed':       { label: 'Sealed habitat', color: '#fb923c' },
+  'extreme':      { label: 'Extreme outpost', color: '#f87171' },
+  'orbital-only': { label: 'Orbit only', color: '#a78bfa' },
+}
+
+// Gravity bounds beyond which a surface colony is not viable however much
+// technology you throw at it. You cannot build a wall against gravity.
+export const GRAVITY_MIN_G = 0.3
+export const GRAVITY_MAX_G = 1.8
+
+export function settlementRating(
+  body: SystemBody,
+  ctx: HabitabilityContext,
+  habitability: number
+): SettlementRating {
+  const t = resolveTraits(body)
+  const blockers: string[] = []
+  const costs: string[] = []
+
+  // --- Self-sufficiency from local resources.
+  const has = (r: ResourceId) => t.resources.includes(r)
+  let selfSufficiency = 0
+  if (has('water_ice') || has('liquid_water') || t.hydrosphere !== 'none') selfSufficiency += 40
+  else blockers.push('No water of any kind — everything must be shipped in.')
+  if (has('metals')) selfSufficiency += 20
+  else costs.push('No local metals; construction material must be imported.')
+  if (has('nitrogen') || t.atmosphere === 'breathable') selfSufficiency += 20
+  else costs.push('No buffer gas. A sealed habitat cannot run on pure oxygen without becoming a firetrap, so nitrogen or argon must come from somewhere.')
+  if (has('carbon') || has('organics')) selfSufficiency += 10
+  else costs.push('No local carbon for plastics, fuel or food.')
+  if (has('geothermal') || has('fissiles')) selfSufficiency += 10
+  selfSufficiency = Math.min(100, selfSufficiency)
+
+  // --- The hard gate.
+  const g = ctx.gravityG
+  if (g != null && (g < GRAVITY_MIN_G || g > GRAVITY_MAX_G)) {
+    blockers.push(
+      g < GRAVITY_MIN_G
+        ? `${g.toFixed(2)} g is too little to live in permanently — bone and muscle waste away and exercise alone does not stop it. Rotating habitats can fake gravity; a planet's surface cannot.`
+        : `${g.toFixed(2)} g is crushing. There is no engineering fix for gravity: it pulls on every cell, continuously, and no wall stops it.`
+    )
+    return {
+      tier: 'orbital-only',
+      ...TIER_META['orbital-only'],
+      summary: g < GRAVITY_MIN_G
+        ? 'Fine for mining camps and rotating tours of duty, but nobody raises a family here. Permanent population belongs in a spun station overhead.'
+        : 'No permanent surface population. Work it from orbit and send machines down.',
+      selfSufficiency, blockers, costs,
+    }
+  }
+
+  // --- Engineering costs, none of which are dealbreakers on their own.
+  if (t.atmosphere === 'corrosive') costs.push('Corrosive air attacks structures and seals — a materials problem before an engineering one.')
+  if (t.pressure_atm > 20) costs.push(`${t.pressure_atm} atm needs submarine-grade pressure hulls.`)
+  if (t.pressure_atm > 0 && t.pressure_atm < ARMSTRONG_LIMIT_ATM) costs.push('Effectively vacuum outdoors — pressure suits at all times.')
+  if (t.atmosphere === 'none') costs.push('No atmosphere: sealing is straightforward, but there is nothing to shield against radiation, so build under regolith.')
+  if (t.pressure_atm < 0.1) costs.push('Little atmospheric shielding — bury the habitat or accept the dose.')
+  if (ctx.zone === 'too-hot') costs.push('Fierce heat load; cooling runs continuously.')
+  if (ctx.zone === 'too-cold') costs.push('Deep cold; heating is a permanent power draw.')
+
+  // --- Tier: how much has to be built before anyone can live there.
+  let tier: SettlementTier
+  let summary: string
+  if (habitability >= 70) {
+    tier = 'open'
+    summary = 'Walk out and breathe. Settlement needs shelter, not life support.'
+  } else if (habitability >= 45) {
+    tier = 'easy'
+    summary = 'Nearly liveable. Habitats are light, and the outdoors is survivable with a mask or warm clothes.'
+  } else if (t.atmosphere === 'corrosive' || t.pressure_atm > 20 || (ctx.zone === 'too-hot' && t.pressure_atm > 5)) {
+    tier = 'extreme'
+    summary = 'Heat, pressure and corrosion together push this to the edge of what can be built. Consider the upper atmosphere instead of the surface.'
+  } else if (selfSufficiency >= 40) {
+    tier = 'sealed'
+    summary = 'Lethal outside, but sealed habitats work and there is enough here to keep them running.'
+  } else {
+    tier = 'engineered'
+    summary = 'Buildable, but the colony lives on supply ships until something worth mining turns up.'
+  }
+
+  // Resource-rich vacuum worlds are genuinely good colonies. The Moon and Ceres
+  // score zero for habitability and are still excellent places to settle.
+  if (tier === 'sealed' && selfSufficiency >= 70) {
+    summary = 'Nothing breathes out there, but vacuum is cheap to seal against and the resources are right here. A strong colony site.'
+  }
+
+  return { tier, ...TIER_META[tier], summary, selfSufficiency, blockers, costs }
 }
 
 // ===========================================================================

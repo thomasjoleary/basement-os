@@ -43,6 +43,8 @@ Run in the Supabase SQL editor, in order:
    realtime publication. Safe to re-run.
 2. `sql/v2_002_galaxy_seed.sql` — optional sample galaxy. Deletable; see the
    header comment in the file.
+3. `sql/v2_003_habitability.sql` — required for habitability scoring. Adds the
+   per-world trait columns. Additive and safe to re-run.
 
 Then visit `/v2` → **Galaxy Map**. Until step 1 is done the page shows a
 "migration hasn't been applied" banner rather than a blank screen.
@@ -128,6 +130,37 @@ Planets get a zone verdict in the inspector, a 🌱 in the hierarchy when they s
 in the conservative zone, and a tidal-locking warning where `a⁶/M²` says one face
 would always be toward the star. Moons are judged at their *planet's* distance
 from the star, which is the distance that actually matters.
+
+### Habitability & settlement scoring
+
+Two scores per world, from `sql/v2_003` trait columns plus derived physics. They
+answer different questions and routinely disagree — Mars scores 8/100 for
+habitability and rates a strong sealed-habitat colony. See
+[V2_SETTING.md](./V2_SETTING.md) for the weights, hard limits and reasoning.
+
+**Traits are nullable and fall back to `CLASS_TRAIT_DEFAULTS`**, so a freshly
+placed world scores sensibly with nothing filled in; anything the GM sets
+overrides. `resolveTraits(body)` is the single place that resolution happens.
+
+Derived, never stored: surface gravity (`M/R²` in Earth units), oxygen partial
+pressure, equilibrium temperature.
+
+Key implementation notes, each of which is a deliberate choice against the
+obvious one:
+
+- **Hard limits are ceilings, not deductions.** Without them a vacuum world in a
+  perfect orbit coasts to a decent score on the factors it passes. Below the
+  Armstrong limit caps at 8; toxic air at 12; unbreathable at 25; gravity outside
+  0.3–1.8 g at 30.
+- **Gravity gates settlement outright**; everything else is a cost multiplier.
+  It is the one factor no technology addresses.
+- **Magnetosphere is a minor modifier**, never a gate — the science is genuinely
+  contested and Venus is a standing counterexample.
+- **Axial tilt is weighted low** because the large-moon obliquity-stabilisation
+  claim was substantially revised in 2012.
+
+Validated against real bodies: Earth 100/open, Mars 8/sealed-habitat,
+Venus surface 12/extreme, Moon 8/orbital-only, a 3.1 g super-Earth 30/orbital-only.
 
 ### Jump time
 

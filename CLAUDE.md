@@ -272,6 +272,17 @@ The system builder shades where liquid water is possible (toggle in the diagram 
 
 `STAR_HABITABILITY` in `lib/galaxy.ts` holds the per-class verdict on whether that *kind* of star could host life at all (lifetime, UV, flares, tidal locking) — a separate question from where its zone falls. Planets show a zone verdict + tidal-lock warning in the inspector and a 🌱 in the tree; moons are judged at their planet's distance from the star. See `docs/V2_SETTING.md`.
 
+### Habitability & settlement scores (`sql/v2_003`)
+**Two scores per world, deliberately separate** — they answer different questions and routinely disagree (Mars: 8/100 habitability, but a strong sealed-habitat colony):
+- `habitabilityScore(body, ctx)` — unprotected surface survival, 0–100. Weights: breathable air 35 (uses **oxygen partial pressure**, not percentage) · temperature/zone 20 · water 15 · gravity 12 · climate stability 12 · radiation shelter 6.
+- `settlementRating(body, ctx, habitability)` — can a tech species build here? **Gravity is a hard gate** (0.3–1.8 g); everything else is a cost, since pressure/temperature/air/radiation can all be walled off and gravity cannot.
+
+**Hard limits are ceilings, not deductions** — otherwise a vacuum world in a perfect orbit coasts to a high score on the factors it passes. Below the Armstrong limit (0.0618 atm) caps at 8; toxic/corrosive air 12; unbreathable 25; gravity outside 0.3–1.8 g caps at 30.
+
+Trait columns are **all nullable**, falling back to `CLASS_TRAIT_DEFAULTS` via `resolveTraits(body)` so an unedited world still scores. Gravity, oxygen partial pressure and equilibrium temperature are derived, never stored.
+
+Three deliberate choices against the pop-science version: **magnetosphere is a minor modifier, never a gate** (Venus counterexample; polar-wind escape); **axial tilt is weighted low** (the large-moon obliquity claim was revised in 2012); **tidal locking is not treated as fatal** (substellar cloud feedback). See `docs/V2_SETTING.md`.
+
 ### RLS
 GMs manage everything. Players get **read-only access to `discovered` systems only** (and the bodies within them); settings are readable by any authenticated user so players can see travel times. The player policies are written but the builder is GM-only today — they exist so the future player view needs no migration.
 

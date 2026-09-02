@@ -38,6 +38,25 @@ import {
   earthMassesToSolar,
   solarToEarthMasses,
   SOLAR_RADIUS_KM,
+  ResourceId,
+  ATMOSPHERE_TYPES,
+  HYDROSPHERE_TYPES,
+  TECTONICS_TYPES,
+  MAGNETOSPHERE_TYPES,
+  BIOSPHERE_TYPES,
+  RESOURCES,
+  resolveTraits,
+  surfaceGravityG,
+  oxygenPartialPressureAtm,
+  ARMSTRONG_LIMIT_ATM,
+  PO2_MIN_ATM,
+  PO2_MAX_ATM,
+  equilibriumTempC,
+  habitabilityScore,
+  settlementRating,
+  HABITABILITY_BANDS,
+  ROCKY_RADIUS_LIMIT_EARTH,
+  EARTH_RADIUS_KM,
 } from '@/lib/galaxy'
 
 // Rough Earth-mass / radius flavour defaults per planet/moon class, used only to
@@ -97,6 +116,35 @@ function friendlyError(err: { message?: string; code?: string } | null): string 
     return `The galaxy builder's database tables aren't set up yet -- the migration may not be applied. (${msg})`
   }
   return msg
+}
+
+// A moon's distance from its star is really its PLANET's orbit -- the parent
+// walk used by both the zone-placement block and the habitability section.
+function starAndDistance(
+  body: SystemBody,
+  parent: SystemBody | null,
+  bodiesById: Map<string, SystemBody>
+): { star: SystemBody; auFromStar: number } | null {
+  if (!parent) return null
+  const star = parent.kind === 'star' ? parent : (parent.parent_id ? bodiesById.get(parent.parent_id) ?? null : null)
+  if (!star || star.kind !== 'star') return null
+  const auFromStar = parent.kind === 'star' ? body.orbital_radius_au : parent.orbital_radius_au
+  return { star, auFromStar }
+}
+
+// The habitability context (zone placement, gravity, tidal locking) for a
+// planet or moon, derived from its position in the hierarchy. Shared by the
+// hierarchy tree's band dot and the inspector's habitability section.
+function habitabilityContextFor(body: SystemBody, bodiesById: Map<string, SystemBody>) {
+  const parent = body.parent_id ? bodiesById.get(body.parent_id) ?? null : null
+  const starCtx = starAndDistance(body, parent, bodiesById)
+  const hz = starCtx
+    ? habitableZone(starLuminositySolar(starCtx.star.body_class, starCtx.star.mass_solar), starTeffK(starCtx.star.body_class))
+    : null
+  const zone = hz && starCtx ? zonePlacement(starCtx.auFromStar, hz) : null
+  const gravityG = surfaceGravityG(body.mass_solar, body.radius_km)
+  const tidallyLocked = starCtx ? likelyTidallyLocked(starCtx.auFromStar, starCtx.star.mass_solar) : false
+  return { ctx: { zone, gravityG, tidallyLocked }, starCtx }
 }
 
 export default function SystemBuilderPage() {
@@ -471,18 +519,12 @@ function TreeBranch(p: TreeBranchProps) {
         const kindMeta = BODY_KINDS.find(k => k.kind === b.kind)
         const parent = b.parent_id ? p.bodiesById.get(b.parent_id) ?? null : null
         const periodDays = resolvePeriodDays(b, parent?.mass_solar ?? null)
-        // Flag worlds sitting in their star's habitable zone, so candidates for
-        // life are visible without opening each one.
-        const inHz = (() => {
-          if (b.kind !== 'planet' && b.kind !== 'moon') return false
-          if (!parent) return false
-          const star = parent.kind === 'star' ? parent : (parent.parent_id ? p.bodiesById.get(parent.parent_id) ?? null : null)
-          if (!star || star.kind !== 'star') return false
-          const hz = habitableZone(starLuminositySolar(star.body_class, star.mass_solar), starTeffK(star.body_class))
-          if (!hz) return false
-          const au = parent.kind === 'star' ? b.orbital_radius_au : parent.orbital_radius_au
-          return zonePlacement(au, hz) === 'habitable'
-        })()
+        // Habitability context for worlds, so both the 🌱 zone flag and the
+        // band dot below can be read off the same computation.
+        const isWorld = b.kind === 'planet' || b.kind === 'moon'
+        const habCtx = isWorld ? habitabilityContextFor(b, p.bodiesById) : null
+        const inHz = habCtx?.ctx.zone === 'habitable'
+        const habScore = habCtx ? habitabilityScore(b, habCtx.ctx) : null
         return (
           <div key={b.id}>
             <div
@@ -507,8 +549,17 @@ function TreeBranch(p: TreeBranchProps) {
                     <span className="ml-1.5 text-[10px] text-red-400 font-normal" title="Currently shown in the diagram">◎</span>
                   )}
                 </div>
-                <div className="text-[11px] text-gray-500 truncate">
-                  {cls.label} · {b.orbital_radius_au.toFixed(b.orbital_radius_au < 1 ? 3 : 2)} AU · {formatPeriod(periodDays)}
+                <div className="text-[11px] text-gray-500 flex items-center gap-1 min-w-0">
+                  <span className="truncate">
+                    {cls.label} · {b.orbital_radius_au.toFixed(b.orbital_radius_au < 1 ? 3 : 2)} AU · {formatPeriod(periodDays)}
+                  </span>
+                  {habScore && (
+                    <span
+                      className="inline-block w-1.5 h-1.5 rounded-full shrink-0 ml-auto"
+                      style={{ background: HABITABILITY_BANDS[habScore.band].color }}
+                      title={`Habitability ${habScore.score}/100 · ${HABITABILITY_BANDS[habScore.band].label}`}
+                    />
+                  )}
                 </div>
               </div>
               <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 shrink-0">
@@ -1000,6 +1051,11 @@ function InspectorPanel({
         )
       })()}
 
+      {/* Habitability & settlement scoring + trait editor. */}
+      {(body.kind === 'planet' || body.kind === 'moon') && (
+        <HabitabilitySection body={body} bodiesById={bodiesById} onPatch={onPatch} />
+      )}
+
       <Field label="Description">
         <textarea
           defaultValue={body.description}
@@ -1025,6 +1081,269 @@ function InspectorPanel({
         <button onClick={onDelete} className="flex-1 py-2 rounded bg-red-900/60 border border-red-700 text-red-200 hover:bg-red-900 text-sm font-bold">🗑 Delete</button>
       </div>
     </div>
+  )
+}
+
+// ==========================================================================
+// Habitability & settlement section (planets + moons only)
+// ==========================================================================
+function HabitabilitySection({
+  body, bodiesById, onPatch,
+}: {
+  body: SystemBody
+  bodiesById: Map<string, SystemBody>
+  onPatch: (patch: Partial<SystemBody>) => void
+}) {
+  const [showBreakdown, setShowBreakdown] = useState(false)
+
+  const { ctx, starCtx } = habitabilityContextFor(body, bodiesById)
+  const score = habitabilityScore(body, ctx)
+  const rating = settlementRating(body, ctx, score.score)
+  const traits = resolveTraits(body)
+
+  const luminosity = starCtx ? starLuminositySolar(starCtx.star.body_class, starCtx.star.mass_solar) : null
+  const eqTempC = starCtx ? equilibriumTempC(luminosity, starCtx.auFromStar) : null
+  const po2 = oxygenPartialPressureAtm(traits)
+  const radiusEarth = body.radius_km != null ? body.radius_km / EARTH_RADIUS_KM : null
+
+  const bandMeta = HABITABILITY_BANDS[score.band]
+  const hardLimit = score.factors.find(f => f.max === 0)
+  const scoredFactors = score.factors.filter(f => f.max > 0)
+
+  function toggleResource(r: ResourceId) {
+    const has = body.resources.includes(r)
+    onPatch({ resources: has ? body.resources.filter(x => x !== r) : [...body.resources, r] })
+  }
+
+  return (
+    <div className="space-y-3 rounded border border-gray-700 bg-gray-900/40 p-2.5 text-xs">
+      <div className="font-bold text-gray-300 uppercase tracking-wide">Habitability</div>
+
+      {/* -- The two scores -------------------------------------------------- */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <span className="text-gray-400">Habitability score</span>
+          <span className="font-mono font-bold" style={{ color: bandMeta.color }}>{score.score}/100 · {bandMeta.label}</span>
+        </div>
+        <div className="h-2 rounded bg-gray-800 overflow-hidden">
+          <div className="h-full" style={{ width: `${score.score}%`, background: bandMeta.color }} />
+        </div>
+        {score.overridden && (
+          <p className="text-[11px] text-amber-400">Manually overridden — the computed breakdown below is shown for reference but no longer sets the score.</p>
+        )}
+      </div>
+
+      <div className="space-y-1 rounded border border-gray-800 bg-gray-900/60 p-2">
+        <div className="flex items-center justify-between">
+          <span className="font-bold" style={{ color: rating.color }}>{rating.label}</span>
+          <span className="text-[11px] text-gray-500 font-mono">{rating.selfSufficiency}% self-sufficient</span>
+        </div>
+        <p className="text-[11px] text-gray-400 leading-snug">{rating.summary}</p>
+        {rating.blockers.length > 0 && (
+          <ul className="text-[11px] text-red-300 space-y-0.5 pt-1">
+            {rating.blockers.map((b, i) => <li key={i}>⛔ {b}</li>)}
+          </ul>
+        )}
+        {rating.costs.length > 0 && (
+          <ul className="text-[11px] text-amber-300 space-y-0.5 pt-1">
+            {rating.costs.map((c, i) => <li key={i}>💰 {c}</li>)}
+          </ul>
+        )}
+      </div>
+
+      <button onClick={() => setShowBreakdown(v => !v)} className="text-[11px] text-gray-400 hover:text-white">
+        {showBreakdown ? '▾' : '▸'} Score breakdown
+      </button>
+      {showBreakdown && (
+        <div className="space-y-1.5">
+          {hardLimit && (
+            <div className="text-[11px] text-red-300 border border-red-900 bg-red-950/40 rounded p-1.5">⚠ {hardLimit.note}</div>
+          )}
+          {scoredFactors.map(f => (
+            <div key={f.label}>
+              <div className="flex items-center justify-between text-gray-400 text-[11px]">
+                <span>{f.label}</span>
+                <span className="font-mono">{f.points}/{f.max}</span>
+              </div>
+              <div className="h-1 rounded bg-gray-800 overflow-hidden">
+                <div className="h-full bg-gray-500" style={{ width: `${f.max ? (f.points / f.max) * 100 : 0}%` }} />
+              </div>
+              <p className="text-gray-600 text-[11px]">{f.note}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* -- Derived read-outs ------------------------------------------------ */}
+      <div className="space-y-1 text-[11px] text-gray-400 border-t border-gray-800 pt-2">
+        <div>
+          Surface gravity:{' '}
+          {ctx.gravityG != null ? (
+            <span className="text-white font-mono">{ctx.gravityG.toFixed(2)} g</span>
+          ) : (
+            <span className="text-gray-600">
+              Unknown — set {body.mass_solar == null && body.radius_km == null ? 'mass and radius' : body.mass_solar == null ? 'mass' : 'radius'}
+            </span>
+          )}
+        </div>
+        <div>
+          Oxygen partial pressure: <span className="text-white font-mono">{po2.toFixed(3)} atm</span> —{' '}
+          {traits.pressure_atm < ARMSTRONG_LIMIT_ATM
+            ? 'below the Armstrong limit, unsurvivable unsuited'
+            : po2 < PO2_MIN_ATM
+            ? 'too little oxygen to stay conscious'
+            : po2 > PO2_MAX_ATM
+            ? 'oxygen-toxic and a severe fire risk'
+            : 'in the breathable range'}
+        </div>
+        <div>
+          Equilibrium temperature:{' '}
+          {eqTempC != null ? (
+            <span className="text-white font-mono">{eqTempC.toFixed(0)}°C</span>
+          ) : (
+            <span className="text-gray-600">No star to derive it from</span>
+          )}
+          <span className="text-gray-600"> (no greenhouse effect included)</span>
+        </div>
+        {radiusEarth != null && radiusEarth > ROCKY_RADIUS_LIMIT_EARTH && (
+          <div className="text-amber-400/90">
+            {radiusEarth.toFixed(2)} R⊕ is above the ~{ROCKY_RADIUS_LIMIT_EARTH} R⊕ Fulton gap — a world this size is very unlikely to still be rocky.
+            It has probably held onto a hydrogen envelope and become a sub-Neptune; consider putting the habitable world on a moon of it instead.
+          </div>
+        )}
+      </div>
+
+      {/* -- Trait editor ------------------------------------------------------ */}
+      <div className="space-y-2 border-t border-gray-800 pt-2">
+        <div className="font-bold text-gray-300 uppercase tracking-wide">Traits</div>
+
+        <TraitSelect label="Atmosphere" value={body.atmosphere} resolved={traits.atmosphere} options={ATMOSPHERE_TYPES} onCommit={v => onPatch({ atmosphere: v })} />
+        <div className="grid grid-cols-2 gap-2">
+          <TraitNumberField label="Pressure (atm)" value={body.pressure_atm} resolved={traits.pressure_atm} min={0} onCommit={v => onPatch({ pressure_atm: v })} />
+          <TraitNumberField label="Oxygen (%)" value={body.oxygen_pct} resolved={traits.oxygen_pct} min={0} max={100} onCommit={v => onPatch({ oxygen_pct: v })} />
+        </div>
+        <TraitSelect label="Hydrosphere" value={body.hydrosphere} resolved={traits.hydrosphere} options={HYDROSPHERE_TYPES} onCommit={v => onPatch({ hydrosphere: v })} />
+        <TraitSelect label="Tectonics" value={body.tectonics} resolved={traits.tectonics} options={TECTONICS_TYPES} onCommit={v => onPatch({ tectonics: v })} />
+        <TraitSelect label="Magnetosphere" value={body.magnetosphere} resolved={traits.magnetosphere} options={MAGNETOSPHERE_TYPES} onCommit={v => onPatch({ magnetosphere: v })} />
+        {/* Biosphere has no class default (it's not scored -- purely what the GM
+            says actually lives here), so "Auto" falls back to Sterile rather than
+            a resolved trait. */}
+        <TraitSelect label="Biosphere" value={body.biosphere} resolved={body.biosphere ?? 'none'} options={BIOSPHERE_TYPES} onCommit={v => onPatch({ biosphere: v })} />
+
+        <div className="grid grid-cols-2 gap-2">
+          <TraitNumberField
+            label="Surface temp (°C)"
+            value={body.surface_temp_c}
+            onCommit={v => onPatch({ surface_temp_c: v })}
+            help="Narrative value -- the score uses the computed equilibrium temperature above, not this."
+          />
+          <TraitNumberField label="Axial tilt (deg)" value={body.axial_tilt_deg} resolved={traits.axial_tilt_deg} unit="°" min={0} max={180} onCommit={v => onPatch({ axial_tilt_deg: v })} />
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <TraitNumberField label="Rotation (hours)" value={body.rotation_hours} onCommit={v => onPatch({ rotation_hours: v })} />
+          <TraitNumberField label="Eccentricity" value={body.eccentricity} resolved={traits.eccentricity} min={0} max={0.99} onCommit={v => onPatch({ eccentricity: v })} />
+        </div>
+
+        <Field label="Resources">
+          <div className="flex flex-wrap gap-1">
+            {RESOURCES.map(r => {
+              const active = body.resources.includes(r.id)
+              return (
+                <button
+                  key={r.id}
+                  type="button"
+                  title={r.note}
+                  onClick={() => toggleResource(r.id)}
+                  className={`text-[11px] px-2 py-1 rounded-full border ${active ? 'bg-green-900/50 border-green-700 text-green-200' : 'bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-500'}`}
+                >
+                  {r.icon} {r.label}
+                </button>
+              )
+            })}
+          </div>
+          {body.resources.length === 0 && (
+            <p className="text-[11px] text-gray-600 mt-1">
+              None set — falls back to the class default{traits.resources.length ? ` (${traits.resources.length} resource${traits.resources.length === 1 ? '' : 's'})` : ''}.
+            </p>
+          )}
+        </Field>
+
+        <Field label="Habitability override">
+          <div className="flex items-center gap-2">
+            <FloatField value={body.habitability_override} min={0} max={100} placeholder="Computed" onCommit={v => onPatch({ habitability_override: v })} />
+            {body.habitability_override != null && (
+              <button onClick={() => onPatch({ habitability_override: null })} className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs shrink-0">Clear</button>
+            )}
+          </div>
+          <p className="text-[11px] text-gray-500 mt-1">Forces the score above to this value instead of the computed one. Clear to go back to computed.</p>
+        </Field>
+      </div>
+    </div>
+  )
+}
+
+// A trait dropdown with an explicit "Auto (from class)" option that writes null,
+// showing what that auto value currently resolves to and the selected option's note.
+function TraitSelect<T extends string>({
+  label, value, resolved, options, onCommit,
+}: {
+  label: string
+  value: T | null
+  resolved: T
+  options: { id: T; label: string; note: string }[]
+  onCommit: (v: T | null) => void
+}) {
+  const resolvedMeta = options.find(o => o.id === resolved)
+  const activeMeta = value != null ? options.find(o => o.id === value) : resolvedMeta
+  return (
+    <Field label={label}>
+      <select
+        value={value ?? ''}
+        onChange={e => onCommit((e.target.value || null) as T | null)}
+        className="w-full bg-gray-900 border border-gray-600 rounded px-2 py-1"
+      >
+        <option value="">Auto (from class) — currently: {resolvedMeta?.label ?? resolved}</option>
+        {options.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
+      </select>
+      {activeMeta && <p className="text-[11px] text-gray-500 mt-1">{activeMeta.note}</p>}
+    </Field>
+  )
+}
+
+// A nullable numeric trait field. Reuses FloatField for the blank-means-null /
+// commit-on-blur behavior; adds a "resolved" hint for traits that fall back to
+// a class default (via resolveTraits) when left unset, and a Clear button.
+function TraitNumberField({
+  label, value, resolved, unit = '', min, max, onCommit, help,
+}: {
+  label: string
+  value: number | null
+  resolved?: number | null
+  unit?: string
+  min?: number
+  max?: number
+  onCommit: (v: number | null) => void
+  help?: string
+}) {
+  return (
+    <Field label={label}>
+      <div className="flex items-center gap-2">
+        <FloatField
+          value={value}
+          min={min}
+          max={max}
+          placeholder={resolved != null ? `Auto: ${resolved}${unit}` : undefined}
+          onCommit={onCommit}
+        />
+        {value != null && (
+          <button onClick={() => onCommit(null)} className="px-2 py-1 rounded bg-gray-700 hover:bg-gray-600 text-xs shrink-0">Clear</button>
+        )}
+      </div>
+      {resolved != null && value == null && (
+        <p className="text-[11px] text-gray-500 mt-1">Auto (from class): {resolved}{unit}</p>
+      )}
+      {help && <p className="text-[11px] text-gray-500 mt-1">{help}</p>}
+    </Field>
   )
 }
 
