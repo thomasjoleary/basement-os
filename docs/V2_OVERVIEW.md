@@ -163,9 +163,39 @@ obvious one:
 - **Axial tilt is weighted low** because the large-moon obliquity-stabilisation
   claim was substantially revised in 2012.
 
-Validated against real bodies: Earth 100/open, Mars 8/sealed-habitat,
-Venus surface 12/extreme, Moon 8/outpost, Europa 8/outpost, a 3.1 g super-Earth
+**Validated against real measured bodies.** Solar system: Earth 100/open,
+Mars 8/sealed-habitat, Venus surface 12/extreme, Moon 8/outpost,
+Titan 19/outpost at 70% self-sufficiency (the best of the moons, as the
+literature has it), Io and Mercury blocked on water, a 3.1 g super-Earth
 30/orbital-only.
+
+Exoplanets, scored against their real host stars and *assuming* the Earth-like
+atmosphere their "potentially habitable" label implicitly hopes for (none of
+these atmospheres has actually been measured):
+
+| Planet | Model | Published ESI | Agreement |
+|---|---|---|---|
+| Proxima Cen b | 100 | 0.87 | ✓ |
+| TRAPPIST-1 e | 100 | 0.85 | ✓ |
+| Kepler-442 b | 95 | 0.836 | ✓ |
+| Teegarden's b | 92 | 0.90 | ✓ |
+| TOI-700 d | 90 | ~0.9 | ✓ |
+| Kepler-452 b | 40 | 0.83 | model lower — correctly |
+| Gliese 667 Cc | 40 | 0.84 | model lower — correctly |
+| Kepler-186 f | 30 | ~0.64 | ✓ |
+| LHS 1140 b | 30 | ~0.79 | model lower — correctly |
+| K2-18 b | 12 | — | ✓ not rocky |
+
+Where the model scores *below* ESI it is on the planets the literature says are
+overstated: Kepler-452 b is only 13–60% likely to be rocky, LHS 1140 b's revised
+density suggests a mini-Neptune or water world, Gliese 667 Cc's detection itself
+is disputed, and K2-18 b is a sub-Neptune whose press coverage ran well ahead of
+the evidence. ESI uses only radius, density and temperature, so it cannot
+express "this may not have a surface"; the Fulton-gap caps here can.
+
+Zone placements match the literature independently: TRAPPIST-1 e lands
+`habitable`, 1 d `optimistic-inner` (published as "likely too hot, inner edge"),
+and Kepler-186 f `too-cold` (published as "near the cold outer edge").
 
 ### Jump time
 

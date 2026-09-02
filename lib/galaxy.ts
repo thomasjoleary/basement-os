@@ -710,9 +710,19 @@ export function resolveTraits(body: SystemBody): BodyTraits {
 // ---------------------------------------------------------------------------
 
 export const EARTH_RADIUS_KM = 6371
-// Above roughly this radius a world is a sub-Neptune rather than a rock: the
-// Fulton gap, an observed scarcity of planets between ~1.5 and 2 Earth radii.
+// The Fulton gap: an observed scarcity of planets between ~1.5 and 2 Earth
+// radii, because worlds above it hold onto a hydrogen envelope and puff up into
+// sub-Neptunes. Between the two figures a world's nature is genuinely
+// uncertain; above the upper one there is essentially no solid surface to
+// stand on, whatever the popular science coverage says.
 export const ROCKY_RADIUS_LIMIT_EARTH = 1.6
+export const SUBNEPTUNE_RADIUS_EARTH = 2.0
+
+// A body's radius in Earth radii, or null when unknown.
+export function radiusEarth(radiusKm: number | null): number | null {
+  if (!radiusKm || radiusKm <= 0) return null
+  return radiusKm / EARTH_RADIUS_KM
+}
 
 // Surface gravity in Earth gravities: g = M / R², both in Earth units.
 export function surfaceGravityG(massSolar: number | null, radiusKm: number | null): number | null {
@@ -818,9 +828,21 @@ export function habitabilityScore(body: SystemBody, ctx: HabitabilityContext): H
   factors.push({ label: 'Breathable air', points: air, max: 35, note: airNote })
 
   // --- Temperature / zone (20)
+  //
+  // An explicitly-set surface temperature beats zone position, because
+  // greenhouse warming decouples the two: Earth's own equilibrium temperature
+  // is -18C and its surface is +15C. Zone placement is the fallback, and it
+  // already assumes an atmosphere doing that work (Kopparapu's edges are the
+  // runaway and maximum greenhouse limits).
   let temp = 0
   let tempNote = 'No star to warm it.'
-  if (ctx.zone) {
+  const surfaceT = body.surface_temp_c
+  if (surfaceT != null) {
+    if (surfaceT >= -15 && surfaceT <= 40) { temp = 20; tempNote = `${surfaceT}°C — temperate.` }
+    else if (surfaceT >= -40 && surfaceT <= 60) { temp = 12; tempNote = `${surfaceT}°C — harsh, but survivable with clothing and shelter.` }
+    else if (surfaceT >= -80 && surfaceT <= 90) { temp = 4; tempNote = `${surfaceT}°C — deadly to be outside in without a suit.` }
+    else { temp = 0; tempNote = `${surfaceT}°C — lethal on contact.` }
+  } else if (ctx.zone) {
     const map: Record<ZonePlacement, [number, string]> = {
       'habitable': [20, 'Squarely in the habitable zone.'],
       'optimistic-inner': [12, 'Just inside the hot edge — habitable only on generous assumptions.'],
@@ -900,6 +922,27 @@ export function habitabilityScore(body: SystemBody, ctx: HabitabilityContext): H
   }
   if (ctx.gravityG != null && (ctx.gravityG < GRAVITY_MIN_G || ctx.gravityG > GRAVITY_MAX_G)) {
     caps.push({ cap: 30, why: `${ctx.gravityG.toFixed(2)} g is outside what a body endures for long, whatever the air is like.` })
+  }
+  // Size: past the Fulton gap a world is a ball of hydrogen with no surface to
+  // stand on. This is what separates the genuinely rocky habitable-zone
+  // candidates from the sub-Neptunes that get reported as though they were.
+  const rE = radiusEarth(body.radius_km)
+  if (rE != null && (body.kind === 'planet' || body.kind === 'moon')) {
+    if (rE > SUBNEPTUNE_RADIUS_EARTH) {
+      caps.push({ cap: 12, why: `At ${rE.toFixed(2)} Earth radii this is a sub-Neptune, not a rock — a thick hydrogen envelope with no surface to stand on.` })
+    } else if (rE > ROCKY_RADIUS_LIMIT_EARTH) {
+      caps.push({ cap: 40, why: `${rE.toFixed(2)} Earth radii puts it in the Fulton gap, where worlds are usually gas-wrapped rather than rocky. Whether it has a surface at all is genuinely uncertain.` })
+    }
+  }
+  // Temperature caps for the same reason as the rest: a frozen or roasting
+  // world is not a garden world however good its air and gravity are.
+  if (surfaceT != null) {
+    if (surfaceT < -80 || surfaceT > 90) caps.push({ cap: 10, why: `${surfaceT}°C is lethal to an unprotected body.` })
+    else if (surfaceT < -40 || surfaceT > 60) caps.push({ cap: 30, why: `${surfaceT}°C means protective gear outdoors, always.` })
+  } else if (ctx.zone === 'too-cold') {
+    caps.push({ cap: 30, why: 'Beyond the outer edge of the habitable zone — surface water stays frozen.' })
+  } else if (ctx.zone === 'too-hot') {
+    caps.push({ cap: 20, why: 'Inside the inner edge of the habitable zone — surface water boils away.' })
   }
 
   const ceiling = caps.length ? Math.min(...caps.map(c => c.cap)) : 100
