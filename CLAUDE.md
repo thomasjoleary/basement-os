@@ -295,7 +295,11 @@ Three deliberate choices against the pop-science version: **magnetosphere is a m
 ### RLS
 GMs manage everything. Players get **read-only access to `discovered` systems only** (and the bodies within them); settings are readable by any authenticated user so players can see travel times. The player policies are written but the builder is GM-only today — they exist so the future player view needs no migration.
 
-**Verified against a local PostgreSQL 16 cluster** with stubbed `auth.uid()`/`profiles`: the migration applies cleanly, is re-runnable, cascades correctly, and the player policies hold (read limited to discovered, writes rejected). Not yet verified against the live Supabase project.
+**Every policy must be scoped `TO authenticated`.** A policy with no `TO` clause defaults to `TO public`, which includes `anon` — the role behind the public `NEXT_PUBLIC_SUPABASE_ANON_KEY` — so "players read discovered systems" silently becomes "anyone on the internet reads discovered systems". `v2_001` originally omitted it (the only migration in the repo that did) and has been patched; `sql/v2_004_rls_scope_authenticated.sql` repairs databases that had the unscoped version applied. Writes were never exposed — `auth.uid()` is NULL for anon.
+
+**Verified** by `sql/v2_rls_verify.sql`, a paste-into-the-SQL-editor harness that impersonates anon/player/GM and rolls back: 11/11 against a local PostgreSQL 16 cluster stubbed with Supabase's roles, grants and `auth.uid()` (the unpatched `v2_001` scores 9/11, failing exactly the two anon reads). **Not yet run against the live Supabase project** — the cloud session's network policy blocks `api.supabase.com` and `*.supabase.co`, so run it by hand; see `docs/SUPABASE_ACCESS.md`.
+
+⚠️ **`gm_notes` is readable by logged-in players** on discovered systems. Policies gate rows, not columns, so `TO authenticated` does not help. Fix it the way `007` did for battlefields (move the column to a GM-only table) before the player view ships; until then keep real secrets out of it.
 
 ## Key Files
 - `app/v2/page.tsx` — v2 home shell (GM-gated)
@@ -304,6 +308,8 @@ GMs manage everything. Players get **read-only access to `discovered` systems on
 - `components/galaxy/GalaxyMap.tsx` — the galaxy canvas (pan/zoom/pinch, procedural spiral backdrop, measure tool)
 - `lib/galaxy.ts` — v2 galaxy types, star/planet/station classes, distance + jump-time math, Kepler helpers, hierarchy helpers (`childrenOf`, `descendantsOf`, `wouldCycle`)
 - `sql/v2_001_galaxy.sql` — v2 galaxy migration (**run manually in the Supabase SQL editor**)
+- `sql/v2_004_rls_scope_authenticated.sql` — RLS repair for databases created before `v2_001` was patched
+- `sql/v2_rls_verify.sql` — RLS PASS/FAIL harness; safe, rolls back, changes nothing
 - `app/character/[id]/page.tsx` — the main character sheet page (everything: view, edit, level-up modal, power level display)
 - `app/leaderboard/page.tsx` — leaderboard (GM: all categories + publish panel; players: published categories only)
 - `app/create/page.tsx` — new character creation form (includes tame_class/species fields for tames)

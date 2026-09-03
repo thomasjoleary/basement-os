@@ -45,6 +45,12 @@ Run in the Supabase SQL editor, in order:
    header comment in the file.
 3. `sql/v2_003_habitability.sql` — required for habitability scoring. Adds the
    per-world trait columns. Additive and safe to re-run.
+4. `sql/v2_004_rls_scope_authenticated.sql` — **only if you applied `v2_001`
+   before it was patched.** Rescopes the RLS policies to `authenticated`; see
+   [RLS](#rls). Harmless to run either way.
+
+Optionally then `sql/v2_rls_verify.sql`, which reports PASS/FAIL for the policies
+and rolls back without changing anything.
 
 Then visit `/v2` → **Galaxy Map**. Until step 1 is done the page shows a
 "migration hasn't been applied" banner rather than a blank screen.
@@ -222,16 +228,72 @@ the bodies within them; settings are readable by any authenticated user.
 The player policies ship now even though the builder is GM-only, so the future
 player view needs no migration.
 
-**Verified** against a local PostgreSQL 16 cluster with stubbed `auth.uid()` and
-`profiles`: the migration applies cleanly, is re-runnable, cascades correctly
-four levels deep, and the player policies hold (reads limited to discovered,
-writes rejected). Not verified against the live Supabase project — worth a
-sanity check with a real player account.
+### The `TO authenticated` bug (fixed by `v2_004`)
 
-⚠️ **`gm_notes` is readable by players** on discovered systems under the current
-policy. Keep genuine secrets out of that column until it's locked down.
+As originally written, **none of the v2 policies had a `TO` clause**. A policy
+without one defaults to `TO public`, and in Supabase that grouping includes
+`anon` — the role behind `NEXT_PUBLIC_SUPABASE_ANON_KEY`, which ships in the
+browser bundle of the deployed site and is therefore public knowledge.
 
----
+So this policy:
+
+```sql
+CREATE POLICY "Players read discovered systems" ON v2_star_systems
+  FOR SELECT USING (discovered = true);
+```
+
+did not mean "players read discovered systems". It meant **"anyone at all reads
+discovered systems"**, `gm_notes` included, with no login required. Same for the
+bodies policy. `v2_001` was the only migration in the repo missing `TO
+authenticated`; every other one has it, and `v2_001`'s own settings policy
+already gated on `auth.uid() IS NOT NULL`, which does exclude anon — the two
+content policies just never got the same treatment.
+
+Writes were never exposed: the GM policies match a `profiles` row against
+`auth.uid()`, which is NULL for anon, so no unauthenticated write could pass
+`WITH CHECK`.
+
+**Both halves are fixed.** `v2_001` now scopes its policies, so a fresh install
+is correct and re-running it no longer reopens the hole. `sql/v2_004_rls_scope_authenticated.sql`
+repairs a database that already had the unscoped version applied — **run it if
+you applied `v2_001` before this change**.
+
+### Verification
+
+`sql/v2_rls_verify.sql` is a runnable harness: paste it into the Supabase SQL
+Editor and it reports PASS/FAIL for eleven properties (anon reads nothing,
+player reads discovered only, player cannot insert/update/delete, GM sees and
+writes everything). It impersonates the roles with `SET ROLE` plus a forged
+`request.jwt.claims`, which is exactly what `auth.uid()` reads, and it runs
+inside a transaction that ends in `ROLLBACK`, so it creates nothing permanent.
+
+Results against a local PostgreSQL 16 cluster stubbed with Supabase's roles,
+grants and `auth.uid()`:
+
+| Scenario | Result |
+|---|---|
+| Original unscoped `v2_001` | **9/11** — anon read both systems and bodies |
+| `v2_001` + `v2_004` | 11/11 |
+| Patched `v2_001` alone, fresh database | 11/11 |
+
+Still **not** run against the live Supabase project — see
+[SUPABASE_ACCESS.md](./SUPABASE_ACCESS.md#network-access-required); the egress
+policy on Claude's cloud sessions blocks Supabase, so the harness has to be run
+by hand for now. That local cluster replicates Supabase's default grants to
+`anon`/`authenticated`; if the live project's grants were ever changed the
+harness will say so, reporting "denied (no table GRANT)" instead of "RLS
+filtered".
+
+### Still open
+
+**`gm_notes` is readable by logged-in players** on discovered systems and their
+bodies. `TO authenticated` does not help here — policies gate rows, not
+columns. The established fix in this repo is what `007` did for battlefields:
+move the column into a separate GM-only table (`battlefield_gm_notes`) so the
+player-readable row holds no private data. That touches app code, so it is
+listed under "Ideas not yet built" rather than done. **Until then, keep genuine
+secrets out of `gm_notes`** — it is exposed to every player the moment a system
+is marked discovered.
 
 ## Key files
 
@@ -257,3 +319,6 @@ policy. Keep genuine secrets out of that column until it's locked down.
 - **3D system view** — `react-three-fiber`, lazy-loaded so it never touches the
   bundle for other pages.
 - **Ground maps** for planet surfaces.
+- **Move `gm_notes` into GM-only tables** (`v2_star_system_gm_notes` /
+  `v2_system_body_gm_notes`), the way `007` did for battlefields, so player-
+  readable rows carry no private prose. Needed before the player view ships.

@@ -139,8 +139,17 @@ CREATE TRIGGER v2_galaxy_settings_updated_at
 -- only -- the builder is GM-only today, but shipping the player-read policies
 -- now means the future player view needs no migration.
 --
--- NOTE: the player policies are written but untested against a live database.
--- Verify them with a player account before relying on them to hide anything.
+-- Every policy is scoped TO authenticated. Without that clause a policy
+-- defaults to TO public, which includes `anon` -- the role behind the public
+-- NEXT_PUBLIC_SUPABASE_ANON_KEY -- and "players read discovered systems"
+-- silently becomes "anyone on the internet reads discovered systems".
+-- v2_004_rls_scope_authenticated.sql exists to repair databases that had the
+-- original unscoped version applied; this file is correct on a fresh run and
+-- re-running it no longer reopens that hole.
+--
+-- Verified by sql/v2_rls_verify.sql (11/11), which impersonates anon, a player
+-- and a GM. gm_notes is still readable by logged-in players on discovered
+-- systems -- see the note on that policy below.
 -- =========================================================================
 ALTER TABLE v2_star_systems ENABLE ROW LEVEL SECURITY;
 ALTER TABLE v2_system_bodies ENABLE ROW LEVEL SECURITY;
@@ -149,6 +158,7 @@ ALTER TABLE v2_galaxy_settings ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "GMs manage star systems" ON v2_star_systems;
 CREATE POLICY "GMs manage star systems" ON v2_star_systems
   FOR ALL
+  TO authenticated
   USING (EXISTS (SELECT 1 FROM profiles WHERE profiles.id = auth.uid() AND profiles.role = 'gm'))
   WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE profiles.id = auth.uid() AND profiles.role = 'gm'));
 
@@ -157,17 +167,20 @@ CREATE POLICY "GMs manage star systems" ON v2_star_systems
 DROP POLICY IF EXISTS "Players read discovered systems" ON v2_star_systems;
 CREATE POLICY "Players read discovered systems" ON v2_star_systems
   FOR SELECT
+  TO authenticated
   USING (discovered = true);
 
 DROP POLICY IF EXISTS "GMs manage system bodies" ON v2_system_bodies;
 CREATE POLICY "GMs manage system bodies" ON v2_system_bodies
   FOR ALL
+  TO authenticated
   USING (EXISTS (SELECT 1 FROM profiles WHERE profiles.id = auth.uid() AND profiles.role = 'gm'))
   WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE profiles.id = auth.uid() AND profiles.role = 'gm'));
 
 DROP POLICY IF EXISTS "Players read bodies of discovered systems" ON v2_system_bodies;
 CREATE POLICY "Players read bodies of discovered systems" ON v2_system_bodies
   FOR SELECT
+  TO authenticated
   USING (EXISTS (
     SELECT 1 FROM v2_star_systems s
     WHERE s.id = v2_system_bodies.system_id AND s.discovered = true
@@ -176,6 +189,7 @@ CREATE POLICY "Players read bodies of discovered systems" ON v2_system_bodies
 DROP POLICY IF EXISTS "GMs manage galaxy settings" ON v2_galaxy_settings;
 CREATE POLICY "GMs manage galaxy settings" ON v2_galaxy_settings
   FOR ALL
+  TO authenticated
   USING (EXISTS (SELECT 1 FROM profiles WHERE profiles.id = auth.uid() AND profiles.role = 'gm'))
   WITH CHECK (EXISTS (SELECT 1 FROM profiles WHERE profiles.id = auth.uid() AND profiles.role = 'gm'));
 
@@ -183,6 +197,7 @@ CREATE POLICY "GMs manage galaxy settings" ON v2_galaxy_settings
 DROP POLICY IF EXISTS "Authenticated read galaxy settings" ON v2_galaxy_settings;
 CREATE POLICY "Authenticated read galaxy settings" ON v2_galaxy_settings
   FOR SELECT
+  TO authenticated
   USING (auth.uid() IS NOT NULL);
 
 -- =========================================================================
