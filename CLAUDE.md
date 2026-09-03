@@ -5,6 +5,13 @@ A D&D campaign management web app. The GM runs the game; players view and intera
 
 **Stack:** Next.js (App Router) · TypeScript · Tailwind CSS 4 · Supabase (PostgreSQL + Auth + RLS)
 
+## Database access
+`.mcp.json` configures the Supabase MCP server, so a session **may** have live database access — scoped to this project, with `database`/`debugging`/`docs` features and write enabled. It is inert unless `SUPABASE_ACCESS_TOKEN` and `SUPABASE_PROJECT_REF` are set in the environment. See `docs/SUPABASE_ACCESS.md`.
+
+**Migrations still belong in `sql/` and still get committed**, whether or not they were applied through MCP — the files are the record of the schema. Apply, then verify, then commit.
+
+**Write code that survives an unapplied migration.** Supabase returns only the columns that exist, so newer ones come back `undefined`, not `null` — which slips past `?? default` guards and crashes on `.includes()`. Normalise rows at the boundary (see `normalizeBody()` in `lib/galaxy.ts`) rather than guarding each read site.
+
 ---
 
 ## Database: `characters` table
@@ -211,7 +218,98 @@ A per-encounter tactical map of 5ft squares. GM authoring + **player fog-of-war 
 ### Related privacy behavior
 - App-wide HP/mana redaction beyond the battlefield was deliberately **not** done. Instead, `app/character/[id]/page.tsx` auto-redirects a non-GM to `/` when they open a character sheet whose `user_id` is set and isn't theirs (`router.replace('/')`). The leaderboard intentionally shows everyone's stats.
 
+---
+
+# Basement OS v2 (space setting) — in progress
+
+**Docs:** `docs/V2_OVERVIEW.md` (status, setup, data model, open ideas) and `docs/V2_SETTING.md` (in-world fiction: jump drives, stars). Keep those current alongside this file.
+
+A **second campaign system** being built alongside the D&D one, not a replacement. The legacy app stays live and untouched; v2 shares the same site and the same logins (`auth.users` / `profiles`), but **all of its data lives in `v2_`-prefixed tables** so no legacy query can ever see it.
+
+- Route root: `app/v2/page.tsx` — GM-gated shell (non-GM → alert + redirect to `/`), same pattern as `/words` and `/leaderboard`. Not linked from the legacy home page; reachable only by typing `/v2`.
+- Eventually `/v2` becomes the post-login home page, with a button back to the old one.
+
+## v2 Galaxy Map
+
+A GM authoring tool for the campaign's star map. Systems are nodes positioned in **light-years**; ships jump between them and the map computes travel time.
+
+### Tables (`sql/v2_001_galaxy.sql`)
+| Table | Purpose |
+|---|---|
+| `v2_star_systems` | Map nodes: `name`, `x`/`y`/`z` (light-years), `description`, `gm_notes`, `discovered`, `tags` |
+| `v2_system_bodies` | Everything inside a system, **self-nesting** via `parent_id` |
+| `v2_galaxy_settings` | Singleton (`id = 1`): `galaxy_name`. (Its `jump_charge_hours` / `jump_speed_ly_per_hour` columns are **dead** — see Travel time.) |
+
+**`z` is stored but unused** by the current top-down map — it exists so a future 3D view needs no migration.
+
+### The body hierarchy (the core design)
+`v2_system_bodies.parent_id` is a self-referencing FK with `ON DELETE CASCADE`:
+- `parent_id IS NULL` → orbits the system barycentre (i.e. a star, or a free-floating station)
+- otherwise → orbits that body
+
+That single pointer is what makes moons moons: a moon is just a body whose parent is a planet, and a station orbiting a moon of a gas giant is three levels deep. `kind` is one of `star | planet | moon | station | belt`; `body_class` indexes into the matching class list in `lib/galaxy.ts`.
+
+**Deleting a body deletes everything orbiting it** (DB-level cascade) — the editor warns with a descendant count before confirming.
+
+### Travel time
+`jump time = charge_hours + (distance_ly ÷ speed_ly_per_hour)`
+
+A fixed drive spin-up plus cruise time, so short hops are relatively costlier.
+
+**These are NOT database-backed.** Jump performance is a property of the ship and its components, not the galaxy, so it lives in `DRIVE_PROFILES` / `JumpDrive` in `lib/galaxy.ts` and will eventually be read off a ship record. The galaxy map's drive picker is a GM estimating tool that persists nothing. The two matching columns left in `v2_galaxy_settings` are unused (kept rather than forcing another migration).
+
+Drive design follows the setting's fiction — long charge "sharpens" the jump so it cuts cleanly (low power); a near-zero-charge "hammer drive" punches through by force (high power). See `docs/V2_SETTING.md`.
+
+### Orbital mechanics
+Kepler's third law in solar units: **`P(years) = √(a(AU)³ ÷ M(solar masses))`** — verified against Jupiter (5.2 AU, 1 M☉ → 11.86 years).
+
+`mass_solar` is stored in **solar masses for every body** so this math stays uniform; the editor displays planets/moons in Earth masses and converts on save (1 M☉ = 332,946 Earth masses). `orbital_period_days` is an optional override — when null, the period is derived from the parent's mass via `resolvePeriodDays()`.
+
+### Star classification (real astronomy)
+`STAR_CLASSES` in `lib/galaxy.ts` uses **real stellar classification under approachable labels** ("Yellow Star" for G-type, "Red Dwarf" for M-type), each carrying its real spectral type, temperature/mass/radius/luminosity ranges, and abundance.
+
+Colours are **Mitchell Charity blackbody values** (CIE 1931, sRGB/D65) — the same table planetarium software uses. Note O/B stars are **blue-white, not saturated blue**: blackbody chromaticity converges to pale blue-white as temperature rises, so no thermal starlight is ever deeply blue.
+
+Includes the remnants — white dwarf, neutron star, pulsar, **black hole**. A black hole has no photosphere, so `isLightless()` is true for it and temperature/luminosity readouts are suppressed rather than printed as zeros. `schwarzschildRadiusKm()` gives its event horizon (2.95 km per solar mass).
+
+### Habitable zones
+The system builder shades where liquid water is possible (toggle in the diagram header; only shown when a **star** is at the centre of the view). Edges use the **Kopparapu et al. (2013/2014)** polynomial — conservative = runaway→maximum greenhouse, optimistic = recent Venus→early Mars. Verified against the Sun (0.981–1.689 AU) and TRAPPIST-1 (0.025–0.049 AU). The fit is valid 2600–7200 K; outside that the UI flags the edges as rough.
+
+**Luminosity is derived, not stored**: main-sequence stars use the Eker et al. (2018) mass–luminosity relation (valid 0.179–31 M☉); giants/remnants fall back to the class luminosity range, since that relation is main-sequence-only.
+
+`STAR_HABITABILITY` in `lib/galaxy.ts` holds the per-class verdict on whether that *kind* of star could host life at all (lifetime, UV, flares, tidal locking) — a separate question from where its zone falls. Planets show a zone verdict + tidal-lock warning in the inspector and a 🌱 in the tree; moons are judged at their planet's distance from the star. See `docs/V2_SETTING.md`.
+
+### Habitability & settlement scores (`sql/v2_003`)
+**Two scores per world, deliberately separate** — they answer different questions and routinely disagree (Mars: 8/100 habitability, but a strong sealed-habitat colony):
+- `habitabilityScore(body, ctx)` — unprotected surface survival, 0–100. Weights: breathable air 35 (uses **oxygen partial pressure**, not percentage) · temperature/zone 20 · water 15 · gravity 12 · climate stability 12 · radiation shelter 6.
+- `settlementRating(body, ctx, habitability)` — can a tech species build here? Everything except gravity is a cost, since pressure/temperature/air/radiation can all be walled off. **Gravity is asymmetric**: above 1.8 g is a hard blocker (`orbital-only`), below 0.3 g is only a caveat yielding the `outpost` tier — a lunar-style base is viable and low gravity makes launch/construction cheaper; only a multi-generational population is doubtful. Partial gravity has never been tested on humans, so that floor is a game convention, not a measured threshold.
+
+**Hard limits are ceilings, not deductions** — otherwise a lethal world coasts to a high score on the factors it passes. Caps: below the Armstrong limit (0.0618 atm) → 8 · toxic/corrosive air → 12 · unbreathable → 25 · gravity outside 0.3–1.8 g → 30 · radius > 2.0 R⊕ (sub-Neptune, no surface) → 12, or > 1.6 R⊕ (Fulton gap, uncertain) → 40 · surface temp beyond ±80/90 °C → 10, or a `too-cold`/`too-hot` zone → 30/20. `surface_temp_c` when set overrides zone placement, since greenhouse warming decouples the two (Earth's equilibrium temp is −18 °C).
+
+Validated against real bodies incl. exoplanets with published ESI — see the table in `docs/V2_OVERVIEW.md`. Where the model disagrees with ESI it is on planets the literature says are overstated (Kepler-452 b, LHS 1140 b, K2-18 b), because ESI cannot express "this may not have a solid surface".
+
+Trait columns are **all nullable**, falling back to `CLASS_TRAIT_DEFAULTS` via `resolveTraits(body)` so an unedited world still scores. Gravity, oxygen partial pressure and equilibrium temperature are derived, never stored.
+
+Three deliberate choices against the pop-science version: **magnetosphere is a minor modifier, never a gate** (Venus counterexample; polar-wind escape); **axial tilt is weighted low** (the large-moon obliquity claim was revised in 2012); **tidal locking is not treated as fatal** (substellar cloud feedback). See `docs/V2_SETTING.md`.
+
+### RLS
+GMs manage everything. Players get **read-only access to `discovered` systems only** (and the bodies within them); settings are readable by any authenticated user so players can see travel times. The player policies are written but the builder is GM-only today — they exist so the future player view needs no migration.
+
+**Every policy must be scoped `TO authenticated`.** A policy with no `TO` clause defaults to `TO public`, which includes `anon` — the role behind the public `NEXT_PUBLIC_SUPABASE_ANON_KEY` — so "players read discovered systems" silently becomes "anyone on the internet reads discovered systems". `v2_001` originally omitted it (the only migration in the repo that did) and has been patched; `sql/v2_004_rls_scope_authenticated.sql` repairs databases that had the unscoped version applied. Writes were never exposed — `auth.uid()` is NULL for anon.
+
+**Verified** by `sql/v2_rls_verify.sql`, a paste-into-the-SQL-editor harness that impersonates anon/player/GM and rolls back: 11/11 against a local PostgreSQL 16 cluster stubbed with Supabase's roles, grants and `auth.uid()` (the unpatched `v2_001` scores 9/11, failing exactly the two anon reads). **Not yet run against the live Supabase project** — the cloud session's network policy blocks `api.supabase.com` and `*.supabase.co`, so run it by hand; see `docs/SUPABASE_ACCESS.md`.
+
+⚠️ **`gm_notes` is readable by logged-in players** on discovered systems. Policies gate rows, not columns, so `TO authenticated` does not help. Fix it the way `007` did for battlefields (move the column to a GM-only table) before the player view ships; until then keep real secrets out of it.
+
 ## Key Files
+- `app/v2/page.tsx` — v2 home shell (GM-gated)
+- `app/v2/galaxy/page.tsx` — galaxy map: systems as nodes, create/drag/measure, settings + nearest-neighbour panel
+- `app/v2/galaxy/[id]/page.tsx` — system builder: hierarchical body tree, inspector, orbit schematic
+- `components/galaxy/GalaxyMap.tsx` — the galaxy canvas (pan/zoom/pinch, procedural spiral backdrop, measure tool)
+- `lib/galaxy.ts` — v2 galaxy types, star/planet/station classes, distance + jump-time math, Kepler helpers, hierarchy helpers (`childrenOf`, `descendantsOf`, `wouldCycle`)
+- `sql/v2_001_galaxy.sql` — v2 galaxy migration (**run manually in the Supabase SQL editor**)
+- `sql/v2_004_rls_scope_authenticated.sql` — RLS repair for databases created before `v2_001` was patched
+- `sql/v2_rls_verify.sql` — RLS PASS/FAIL harness; safe, rolls back, changes nothing
 - `app/character/[id]/page.tsx` — the main character sheet page (everything: view, edit, level-up modal, power level display)
 - `app/leaderboard/page.tsx` — leaderboard (GM: all categories + publish panel; players: published categories only)
 - `app/create/page.tsx` — new character creation form (includes tame_class/species fields for tames)
