@@ -33,11 +33,61 @@ In Claude Code on the web: environment settings → environment variables.
 | `SUPABASE_PROJECT_REF` | the ref from step 2 |
 
 **4. Start a new session.** MCP config and environment variables are read at
-session start, so an already-running session will not pick this up.
+session start, so an already-running session will not pick this up — and the
+session must start on a branch that actually contains `.mcp.json`.
 
-To check it worked, ask Claude to list the `v2_` tables. If a variable is
-missing, the server loads with the literal `${VAR}` text and reports a
-missing-variable warning rather than failing silently.
+**5. Allow Supabase through the network policy** if you are using cloud
+sessions. See [Network access required](#network-access-required) — without it
+the two variables above are set correctly and nothing works anyway.
+
+---
+
+## Network access required
+
+**This is the blocker that is easiest to miss, because nothing in this repo
+controls it.** The MCP server talks to `api.supabase.com`, and both that host
+and `<project-ref>.supabase.co` must be reachable from the session.
+
+Claude Code cloud sessions run behind an egress proxy that enforces the
+environment's **network policy**. On a restrictive policy both hosts are refused
+at CONNECT with a `403`, and the failure surfaces as a plain
+`curl: (56) CONNECT tunnel failed` — nothing mentions Supabase, and the MCP
+server just appears not to work.
+
+Check it from inside a session:
+
+```
+curl -sS "$HTTPS_PROXY/__agentproxy/status"     # recentRelayFailures names blocked hosts
+curl -sS -o /dev/null -w '%{http_code}\n' https://api.supabase.com/v1/projects
+```
+
+A `403` from the proxy is an org/environment policy denial, not something to
+retry or work around. Fix it by allowing `api.supabase.com` and
+`*.supabase.co` in the environment's network policy — environment settings in
+[claude.ai/code](https://claude.ai/code), documented at
+<https://code.claude.com/docs/en/claude-code-on-the-web>. Until then, cloud
+sessions can write migrations but cannot run them, and RLS has to be verified
+by pasting `sql/v2_rls_verify.sql` into the SQL editor by hand.
+
+## Troubleshooting
+
+**`SUPABASE_PROJECT_REF` must be the bare ref, not a URL.** Paste
+`abcdefghijklmnopqrst`, *not*
+`https://supabase.com/dashboard/project/abcdefghijklmnopqrst`. The full URL
+looks right and is the obvious thing to copy from the address bar, but it turns
+the server's argument into `--project-ref=https://...`, which never matches a
+project. This has bitten a session already.
+
+**`.mcp.json` must exist on the branch the session starts on.** MCP config is
+read once, at session start, from the checkout as it lands. A session that
+starts on a branch without this file (`master`, say) has no Supabase server at
+all, and checking out the right branch afterwards does not retroactively load
+it — you need a new session started on a branch that has it.
+
+**Quick check that it worked:** ask Claude to run `list_tables` and name the
+`v2_` tables. If a variable is missing the server loads with the literal
+`${VAR}` text and reports a missing-variable warning rather than failing
+silently.
 
 ---
 
