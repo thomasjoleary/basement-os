@@ -5,6 +5,13 @@ A D&D campaign management web app. The GM runs the game; players view and intera
 
 **Stack:** Next.js (App Router) · TypeScript · Tailwind CSS 4 · Supabase (PostgreSQL + Auth + RLS)
 
+## Database access
+`.mcp.json` configures the Supabase MCP server, so a session **may** have live database access — scoped to this project, with `database`/`debugging`/`docs` features and write enabled. It is inert unless `SUPABASE_ACCESS_TOKEN` and `SUPABASE_PROJECT_REF` are set in the environment. See `docs/SUPABASE_ACCESS.md`.
+
+**Migrations still belong in `sql/` and still get committed**, whether or not they were applied through MCP — the files are the record of the schema. Apply, then verify, then commit.
+
+**Write code that survives an unapplied migration.** Supabase returns only the columns that exist, so newer ones come back `undefined`, not `null` — which slips past `?? default` guards and crashes on `.includes()`. Normalise rows at the boundary (see `normalizeBody()` in `lib/galaxy.ts`) rather than guarding each read site.
+
 ---
 
 ## Database: `characters` table
