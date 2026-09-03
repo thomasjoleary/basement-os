@@ -244,10 +244,29 @@ CREATE POLICY "Players read discovered systems" ON v2_star_systems
 
 did not mean "players read discovered systems". It meant **"anyone at all reads
 discovered systems"**, `gm_notes` included, with no login required. Same for the
-bodies policy. `v2_001` was the only migration in the repo missing `TO
-authenticated`; every other one has it, and `v2_001`'s own settings policy
-already gated on `auth.uid() IS NOT NULL`, which does exclude anon — the two
-content policies just never got the same treatment.
+bodies policy. `v2_001`'s own settings policy already gated on
+`auth.uid() IS NOT NULL`, which does exclude anon — the two content policies
+just never got the same treatment.
+
+**This is a repo-wide pattern, not a v2 slip.** Most migrations here omit the
+`TO` clause. Most of them do not leak, because their `USING` clause requires
+`auth.uid()` to match a profile or character row and `auth.uid()` is NULL for
+anon. **A missing `TO` clause only exposes data when the `USING` clause never
+consults `auth.uid()`.** On the live database exactly three policies met that
+description: the two v2 ones above, and `map_markers`'s "Anyone can view visible
+markers" (`USING (is_visible = true)`), fixed by
+`sql/008_scope_map_markers_read.sql`.
+
+To re-check after any future migration — the result should be empty:
+
+```sql
+SELECT tablename, policyname, qual
+FROM pg_policies
+WHERE schemaname = 'public'
+  AND 'public' = ANY(roles)
+  AND cmd IN ('SELECT', 'ALL')
+  AND (qual IS NULL OR qual NOT LIKE '%uid()%');
+```
 
 Writes were never exposed: the GM policies match a `profiles` row against
 `auth.uid()`, which is NULL for anon, so no unauthenticated write could pass
@@ -276,13 +295,15 @@ grants and `auth.uid()`:
 | `v2_001` + `v2_004` | 11/11 |
 | Patched `v2_001` alone, fresh database | 11/11 |
 
-Still **not** run against the live Supabase project — see
-[SUPABASE_ACCESS.md](./SUPABASE_ACCESS.md#network-access-required); the egress
-policy on Claude's cloud sessions blocks Supabase, so the harness has to be run
-by hand for now. That local cluster replicates Supabase's default grants to
-`anon`/`authenticated`; if the live project's grants were ever changed the
-harness will say so, reporting "denied (no table GRANT)" instead of "RLS
-filtered".
+**Confirmed against the live project.** With network access opened up, an
+unauthenticated PostgREST request carrying the public anon key returned every
+discovered system and body — the exposure was real, not theoretical. `gm_notes`
+was empty on those rows, so nothing sensitive actually leaked.
+
+Also confirmed: `anon` holds full table grants (`SELECT, INSERT, UPDATE, DELETE`)
+on all three `v2_` tables, so **RLS is the only thing between these tables and
+the public internet**. The local cluster replicated that correctly, and it means
+the `TO authenticated` scoping is load-bearing rather than belt-and-braces.
 
 ### Still open
 

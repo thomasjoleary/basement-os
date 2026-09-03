@@ -295,7 +295,9 @@ Three deliberate choices against the pop-science version: **magnetosphere is a m
 ### RLS
 GMs manage everything. Players get **read-only access to `discovered` systems only** (and the bodies within them); settings are readable by any authenticated user so players can see travel times. The player policies are written but the builder is GM-only today — they exist so the future player view needs no migration.
 
-**Every policy must be scoped `TO authenticated`.** A policy with no `TO` clause defaults to `TO public`, which includes `anon` — the role behind the public `NEXT_PUBLIC_SUPABASE_ANON_KEY` — so "players read discovered systems" silently becomes "anyone on the internet reads discovered systems". `v2_001` originally omitted it (the only migration in the repo that did) and has been patched; `sql/v2_004_rls_scope_authenticated.sql` repairs databases that had the unscoped version applied. Writes were never exposed — `auth.uid()` is NULL for anon.
+**Every policy must be scoped `TO authenticated`.** A policy with no `TO` clause defaults to `TO public`, which includes `anon` — the role behind the public `NEXT_PUBLIC_SUPABASE_ANON_KEY` — so "players read discovered systems" silently becomes "anyone on the internet reads discovered systems". Confirmed live: an unauthenticated request with the anon key returned every discovered system and body. `anon` holds full table grants on the `v2_` tables, so **RLS is the only gate**.
+
+Most migrations in this repo omit the `TO` clause; most do not leak, because their `USING` clause requires `auth.uid()` to match and that is NULL for anon. **A missing `TO` only exposes data when `USING` never consults `auth.uid()`** — true of exactly three live policies: the two v2 ones (fixed by `sql/v2_004_rls_scope_authenticated.sql`) and `map_markers`'s "Anyone can view visible markers" (fixed by `sql/008_scope_map_markers_read.sql`). Both source migrations are patched too. Writes were never exposed. Re-check with the `pg_policies` query in `docs/V2_OVERVIEW.md`.
 
 **Verified** by `sql/v2_rls_verify.sql`, a paste-into-the-SQL-editor harness that impersonates anon/player/GM and rolls back: 11/11 against a local PostgreSQL 16 cluster stubbed with Supabase's roles, grants and `auth.uid()` (the unpatched `v2_001` scores 9/11, failing exactly the two anon reads). **Not yet run against the live Supabase project** — the cloud session's network policy blocks `api.supabase.com` and `*.supabase.co`, so run it by hand; see `docs/SUPABASE_ACCESS.md`.
 
@@ -310,6 +312,7 @@ GMs manage everything. Players get **read-only access to `discovered` systems on
 - `sql/v2_001_galaxy.sql` — v2 galaxy migration (**run manually in the Supabase SQL editor**)
 - `sql/v2_004_rls_scope_authenticated.sql` — RLS repair for databases created before `v2_001` was patched
 - `sql/v2_rls_verify.sql` — RLS PASS/FAIL harness; safe, rolls back, changes nothing
+- `sql/008_scope_map_markers_read.sql` — legacy RLS fix: `map_markers` was readable by anonymous visitors
 - `app/character/[id]/page.tsx` — the main character sheet page (everything: view, edit, level-up modal, power level display)
 - `app/leaderboard/page.tsx` — leaderboard (GM: all categories + publish panel; players: published categories only)
 - `app/create/page.tsx` — new character creation form (includes tame_class/species fields for tames)

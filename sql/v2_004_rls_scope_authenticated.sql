@@ -19,11 +19,15 @@
 -- discovered systems", gm_notes column included, with no login required.
 -- Same for the matching policy on v2_system_bodies.
 --
--- v2_001 is the only migration in this repo that omits TO authenticated --
--- every other one (complete_rls_policies, player_notes_system,
--- add_published_leaderboard, words_of_power_schema, ...) scopes its policies.
--- Its own settings policy even gates on `auth.uid() IS NOT NULL`, which does
+-- v2_001's own settings policy gates on `auth.uid() IS NOT NULL`, which does
 -- exclude anon; the two content policies just never got the same treatment.
+--
+-- Many migrations in this repo omit the TO clause, but most do not leak: their
+-- USING clause requires auth.uid() to match a profile or character row, and
+-- auth.uid() is NULL for anon. A missing TO clause only exposes data when the
+-- USING clause never consults auth.uid(). On the live database exactly three
+-- policies met that description -- the two fixed here, plus map_markers's
+-- "Anyone can view visible markers" (see sql/008_scope_map_markers_read.sql).
 --
 -- Writes were never exposed: the GM policies match on a profiles row for
 -- auth.uid(), and auth.uid() is NULL for anon, so no unauthenticated write

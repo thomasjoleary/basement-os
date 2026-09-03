@@ -42,9 +42,14 @@ ALTER TABLE map_markers ENABLE ROW LEVEL SECURITY;
 
 -- RLS Policies
 
--- Everyone can view visible markers
+-- Every logged-in user can view visible markers.
+-- TO authenticated is required: without it the policy defaults to TO public,
+-- which includes anon, and this USING clause never checks auth.uid() -- so the
+-- markers would be readable by anyone with the public anon key. See
+-- sql/008_scope_map_markers_read.sql.
 CREATE POLICY "Anyone can view visible markers" ON map_markers
   FOR SELECT
+  TO authenticated
   USING (is_visible = true);
 
 -- GMs can view all markers (including hidden)

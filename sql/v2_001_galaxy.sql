@@ -145,7 +145,8 @@ CREATE TRIGGER v2_galaxy_settings_updated_at
 -- silently becomes "anyone on the internet reads discovered systems".
 -- v2_004_rls_scope_authenticated.sql exists to repair databases that had the
 -- original unscoped version applied; this file is correct on a fresh run and
--- re-running it no longer reopens that hole.
+-- re-running it no longer reopens that hole. Confirmed live: before the fix, an
+-- unauthenticated request with the anon key returned every discovered system.
 --
 -- Verified by sql/v2_rls_verify.sql (11/11), which impersonates anon, a player
 -- and a GM. gm_notes is still readable by logged-in players on discovered
