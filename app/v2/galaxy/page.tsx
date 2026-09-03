@@ -15,6 +15,7 @@ import {
   DEFAULT_DRIVE,
   STAR_CLASSES,
   systemColor,
+  normalizeBody,
   nearestSystems,
   formatLy,
   formatDuration,
@@ -100,7 +101,7 @@ export default function GalaxyMapPage() {
     if (bodyRes.error) {
       if (!sysRes.error) setError(describeError(bodyRes.error))
     } else {
-      setBodies((bodyRes.data ?? []) as SystemBody[])
+      setBodies((bodyRes.data ?? []).map(normalizeBody))
     }
 
     // Missing singleton row (or the table itself missing, or nothing has been

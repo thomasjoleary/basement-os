@@ -46,6 +46,7 @@ import {
   BIOSPHERE_TYPES,
   RESOURCES,
   resolveTraits,
+  normalizeBody,
   surfaceGravityG,
   oxygenPartialPressureAtm,
   ARMSTRONG_LIMIT_ATM,
@@ -176,7 +177,7 @@ export default function SystemBuilderPage() {
     if (sysErr) { setError(friendlyError(sysErr)); return }
     if (bodErr) { setError(friendlyError(bodErr)); return }
     setSystem(sys as StarSystem)
-    setBodies((bods ?? []) as SystemBody[])
+    setBodies((bods ?? []).map(normalizeBody))
   }
 
   useEffect(() => {
@@ -224,7 +225,7 @@ export default function SystemBuilderPage() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'v2_system_bodies', filter: `system_id=eq.${id}` }, payload => {
         setBodies(prev => {
           if (payload.eventType === 'DELETE') return prev.filter(b => b.id !== (payload.old as { id: string }).id)
-          const row = payload.new as SystemBody
+          const row = normalizeBody(payload.new)
           const idx = prev.findIndex(b => b.id === row.id)
           if (idx === -1) return [...prev, row]
           const next = [...prev]
@@ -276,7 +277,7 @@ export default function SystemBuilderPage() {
     const { data, error: err } = await supabase.from('v2_system_bodies').insert(row).select().single()
     if (err) { setError(friendlyError(err)); return }
     if (data) {
-      const created = data as SystemBody
+      const created = normalizeBody(data)
       setBodies(prev => (prev.some(b => b.id === created.id) ? prev : [...prev, created]))
       setSelectedId(created.id)
       if (opts.parent_id) setFocusId(opts.parent_id) // jump the diagram to where we just added
@@ -302,7 +303,7 @@ export default function SystemBuilderPage() {
     const { data, error: err } = await supabase.from('v2_system_bodies').insert(row).select().single()
     if (err) { setError(friendlyError(err)); return }
     if (data) {
-      const created = data as SystemBody
+      const created = normalizeBody(data)
       setBodies(prev => [...prev, created])
       setSelectedId(created.id)
     }

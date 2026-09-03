@@ -689,6 +689,33 @@ const TRAIT_FALLBACK: BodyTraits = {
   tectonics: 'dead', magnetosphere: 'none', axial_tilt_deg: 20, eccentricity: 0.02, resources: [],
 }
 
+// Supabase returns only the columns that actually exist, so when a migration
+// has not been applied yet the newer ones come back UNDEFINED rather than null.
+// Undefined slips past `?? default` guards in some spots and blows up on
+// `.includes()` in others, so every row is normalised here at the boundary
+// instead of guarding each read site. Keeps the app degrading gracefully
+// against an older database rather than crashing the page.
+export function normalizeBody(row: Record<string, unknown>): SystemBody {
+  const r = row as unknown as SystemBody
+  return {
+    ...r,
+    atmosphere: r.atmosphere ?? null,
+    pressure_atm: r.pressure_atm ?? null,
+    oxygen_pct: r.oxygen_pct ?? null,
+    hydrosphere: r.hydrosphere ?? null,
+    surface_temp_c: r.surface_temp_c ?? null,
+    tectonics: r.tectonics ?? null,
+    magnetosphere: r.magnetosphere ?? null,
+    axial_tilt_deg: r.axial_tilt_deg ?? null,
+    rotation_hours: r.rotation_hours ?? null,
+    eccentricity: r.eccentricity ?? null,
+    biosphere: r.biosphere ?? null,
+    // The one that actually crashed: `.includes()` on undefined.
+    resources: Array.isArray(r.resources) ? r.resources : [],
+    habitability_override: r.habitability_override ?? null,
+  }
+}
+
 // A body's effective traits: what the GM set, else the class default, else nothing.
 export function resolveTraits(body: SystemBody): BodyTraits {
   const d = CLASS_TRAIT_DEFAULTS[body.body_class] ?? {}
