@@ -52,7 +52,8 @@ import {
   ARMSTRONG_LIMIT_ATM,
   PO2_MIN_ATM,
   PO2_MAX_ATM,
-  equilibriumTempC,
+  computedSurfaceTemp,
+  resolveThermal,
   habitabilityScore,
   settlementRating,
   HABITABILITY_BANDS,
@@ -139,13 +140,13 @@ function starAndDistance(
 function habitabilityContextFor(body: SystemBody, bodiesById: Map<string, SystemBody>) {
   const parent = body.parent_id ? bodiesById.get(body.parent_id) ?? null : null
   const starCtx = starAndDistance(body, parent, bodiesById)
-  const hz = starCtx
-    ? habitableZone(starLuminositySolar(starCtx.star.body_class, starCtx.star.mass_solar), starTeffK(starCtx.star.body_class))
-    : null
+  const luminosity = starCtx ? starLuminositySolar(starCtx.star.body_class, starCtx.star.mass_solar) : null
+  const hz = starCtx ? habitableZone(luminosity, starTeffK(starCtx.star.body_class)) : null
   const zone = hz && starCtx ? zonePlacement(starCtx.auFromStar, hz) : null
   const gravityG = surfaceGravityG(body.mass_solar, body.radius_km)
   const tidallyLocked = starCtx ? likelyTidallyLocked(starCtx.auFromStar, starCtx.star.mass_solar) : false
-  return { ctx: { zone, gravityG, tidallyLocked }, starCtx }
+  const thermal = resolveThermal(body, luminosity, starCtx?.auFromStar ?? null)
+  return { ctx: { zone, gravityG, tidallyLocked, thermal }, starCtx, luminosity }
 }
 
 export default function SystemBuilderPage() {
@@ -1097,13 +1098,16 @@ function HabitabilitySection({
 }) {
   const [showBreakdown, setShowBreakdown] = useState(false)
 
-  const { ctx, starCtx } = habitabilityContextFor(body, bodiesById)
+  const { ctx, starCtx, luminosity } = habitabilityContextFor(body, bodiesById)
   const score = habitabilityScore(body, ctx)
   const rating = settlementRating(body, ctx, score.score)
   const traits = resolveTraits(body)
 
-  const luminosity = starCtx ? starLuminositySolar(starCtx.star.body_class, starCtx.star.mass_solar) : null
-  const eqTempC = starCtx ? equilibriumTempC(luminosity, starCtx.auFromStar) : null
+  const thermal = ctx.thermal
+  // What the atmosphere currently on this world would produce, shown even when
+  // the GM has overridden it -- so the override is a visible choice rather than
+  // a silent one.
+  const modelled = starCtx ? computedSurfaceTemp(body, luminosity, starCtx.auFromStar) : null
   const po2 = oxygenPartialPressureAtm(traits)
   const radiusEarth = body.radius_km != null ? body.radius_km / EARTH_RADIUS_KM : null
 
@@ -1197,14 +1201,43 @@ function HabitabilitySection({
             ? 'oxygen-toxic and a severe fire risk'
             : 'in the breathable range'}
         </div>
-        <div>
-          Equilibrium temperature:{' '}
-          {eqTempC != null ? (
-            <span className="text-white font-mono">{eqTempC.toFixed(0)}°C</span>
-          ) : (
-            <span className="text-gray-600">No star to derive it from</span>
+        {/* Surface temperature, and where the number came from. The equilibrium
+            figure alone misleads -- Earth's is -18C -- so the greenhouse step
+            is shown rather than folded away. */}
+        <div className="space-y-0.5">
+          <div>
+            Surface temperature:{' '}
+            {thermal != null ? (
+              <>
+                <span className="text-white font-mono">{thermal.surfaceTempC}°C</span>
+                <span className="text-gray-600">
+                  {thermal.source === 'gm' ? ' (set by hand)' : ' (computed)'}
+                </span>
+              </>
+            ) : (
+              <span className="text-gray-600">No star to derive it from</span>
+            )}
+          </div>
+          {modelled != null && (
+            <div className="text-gray-500">
+              <span className="font-mono">{modelled.eqTempC}°C</span> equilibrium at albedo{' '}
+              <span className="font-mono">{modelled.albedo?.toFixed(2)}</span>
+              {modelled.greenhouseDeltaC ? (
+                <>
+                  , <span className="font-mono text-gray-400">+{modelled.greenhouseDeltaC}°C</span> greenhouse
+                  {' '}(τ={modelled.opticalDepth!.toFixed(2)})
+                </>
+              ) : ', no greenhouse warming'}
+            </div>
           )}
-          <span className="text-gray-600"> (no greenhouse effect included)</span>
+          {thermal?.source === 'gm' && modelled != null && modelled.surfaceTempC !== thermal.surfaceTempC && (
+            <div className="text-amber-400/90">
+              The atmosphere set here would give {modelled.surfaceTempC}°C. The hand-set value wins — clear the field to use the model.
+            </div>
+          )}
+          {modelled?.confidence === 'rough' && (
+            <div className="text-amber-400/90">{modelled.note}</div>
+          )}
         </div>
         {radiusEarth != null && radiusEarth > ROCKY_RADIUS_LIMIT_EARTH && (
           <div className="text-amber-400/90">
@@ -1236,7 +1269,7 @@ function HabitabilitySection({
             label="Surface temp (°C)"
             value={body.surface_temp_c}
             onCommit={v => onPatch({ surface_temp_c: v })}
-            help="Narrative value -- the score uses the computed equilibrium temperature above, not this."
+            help="Overrides the computed temperature. Leave empty to let the atmosphere and orbit decide it."
           />
           <TraitNumberField label="Axial tilt (deg)" value={body.axial_tilt_deg} resolved={traits.axial_tilt_deg} unit="°" min={0} max={180} onCommit={v => onPatch({ axial_tilt_deg: v })} />
         </div>

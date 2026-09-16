@@ -137,6 +137,101 @@ in the conservative zone, and a tidal-locking warning where `a⁶/M²` says one 
 would always be toward the star. Moons are judged at their *planet's* distance
 from the star, which is the distance that actually matters.
 
+### Surface temperature from atmosphere
+
+Equilibrium temperature is not what anyone stands in: Earth's is −18 °C and its
+surface is +15 °C. The difference is the greenhouse effect, which is entirely a
+property of the atmosphere — so an airless world in Earth's orbit is far colder
+than Earth, and a thick CO₂ world far hotter.
+
+Modelled as a **grey atmosphere**, the standard first-order treatment:
+
+```
+T_surface = T_eq · (1 + ¾τ)^¼        τ = potency(atmosphere) × pressure_atm
+T_eq      = 278.5 K · (1 − A)^¼ · (L/L☉)^¼ / √(a/AU)
+```
+
+Albedo `A` comes from `bondAlbedo()` (hydrosphere and pressure), and τ from
+`GREENHOUSE_POTENCY` per atmosphere type. Both are **calibrated against measured
+bodies, not derived from composition** — this is a fit, not radiative transfer.
+Potency figures are anchored to Earth (1 atm → +33 °C), Titan (1.45 atm → +11 K)
+and Venus (92 atm → 464 °C).
+
+**Precedence:** GM-set `surface_temp_c` → computed → zone placement. The fiction
+is always allowed to beat the physics, and the inspector shows what the
+atmosphere *would* give so an override is a visible choice rather than a silent
+one.
+
+#### Why this changes verdicts
+
+Habitable-zone edges are defined for the atmosphere that would be **most
+favourable** — Kopparapu's outer edge assumes a CO₂ loading tuned for maximum
+greenhouse warming. So "in the habitable zone" means *an atmosphere exists that
+would keep this world temperate*, not *this world is temperate*. A world can sit
+squarely in the zone and still be frozen under the air it actually has.
+
+That is exactly the **TRAPPIST-1 g** case that was previously logged as an
+unresolved edge. Its zone placement was never wrong; it receives only 0.25 S⊕,
+so under an Earth-like atmosphere it computes to **−69 °C** — matching the
+literature's "likely icy" without anyone setting `surface_temp_c` by hand. The
+zone answer and the temperature answer were addressing different questions.
+
+#### Validation
+
+`npm run validate:thermal` (source: `scripts/validate-thermal.ts`) checks the
+model against measured bodies and asserts a tolerance on each. **10/10 asserted
+cases pass**, with one documented limitation.
+
+| Body | Model | Measured | Note |
+|---|---|---|---|
+| Earth | 15 °C | 15 °C | calibration anchor |
+| Venus | 464 °C | 464 °C | calibration anchor |
+| Mars | −63 °C | −63 °C | calibration anchor |
+| Moon | −3 °C | −3 °C | vs *blackbody* temp; see below |
+| Mercury | 160 °C | 167 °C | |
+| Titan | −190 °C | −179 °C | real albedo is haze-darkened |
+| Europa | −173 °C | −171 °C | |
+| Callisto | −173 °C | −139 °C | **known limitation** |
+| TRAPPIST-1 e | −15 °C | −14 °C | Earth-like atmosphere assumed |
+| TRAPPIST-1 g | −69 °C | −68 °C | Earth-like atmosphere assumed |
+| Proxima Cen b | −8 °C | −6 °C | Earth-like atmosphere assumed |
+
+Two honest caveats, both encoded in the harness rather than hidden:
+
+- **Airless slow rotators.** The Moon is compared against its blackbody
+  temperature (270.4 K), not the commonly quoted −20 °C *mean*. Those are
+  different quantities: radiated power goes as T⁴, so a body with a 300-degree
+  day/night swing has a mean surface temperature well below its equilibrium
+  temperature. The model computes the latter and claims nothing about the former.
+- **One ice albedo cannot span real icy surfaces.** Europa is clean ice at 0.62;
+  Callisto is dark dirty ice at ~0.15. `bondAlbedo()` uses 0.55, which fits
+  Europa and runs Callisto 34 °C too cold. Set `surface_temp_c` by hand for a
+  dirty-ice world. Callisto is kept in the harness as a reported known miss so
+  the limitation stays measured instead of deleted.
+
+#### Effect on existing scores
+
+Replacing the zone proxy moves four bodies. The harness scores each one twice
+with identical inputs — once through the old zone-only path, once with the
+computed temperature — so the delta is this change and nothing else.
+
+| Body | Was | Now | Why |
+|---|---|---|---|
+| Titan | 19 | **10** | −190 °C trips the lethal-temperature ceiling; was capped at 30 by "too-cold zone". Settlement tier unchanged (still `outpost`). |
+| Venus | 12 | **10** | 464 °C ceiling (10) binds tighter than the toxic-air one (12). |
+| Teegarden's b | 92 | **100** | Zone called it optimistic-inner (12/20); computed 25 °C is simply temperate (20/20). |
+| TOI-700 d | 87 | **95** | Same: optimistic-inner by zone, 6 °C by computation. |
+
+Everything else is unmoved, including all four caps-driven verdicts
+(Kepler-452 b, Kepler-186 f, LHS 1140 b, K2-18 b).
+
+> **Separately noted:** the exoplanet table below quotes Gliese 667 Cc at 40.
+> That planet does not transit, so it has **no measured radius** — only a minimum
+> mass — and its score is decided entirely by the radius assumed. 1.50 R⊕ scores
+> 90; anything above the 1.6 R⊕ Fulton limit is capped at 40. The temperature
+> model does not affect it either way, but the quoted figure is an assumption,
+> not a result.
+
 ### Habitability & settlement scoring
 
 Two scores per world, from `sql/v2_003` trait columns plus derived physics. They
@@ -170,10 +265,14 @@ obvious one:
   claim was substantially revised in 2012.
 
 **Validated against real measured bodies.** Solar system: Earth 100/open,
-Mars 8/sealed-habitat, Venus surface 12/extreme, Moon 8/outpost,
-Titan 19/outpost at 70% self-sufficiency (the best of the moons, as the
-literature has it), Io and Mercury blocked on water, a 3.1 g super-Earth
-30/orbital-only.
+Mars 8/sealed-habitat, Venus surface 10/extreme, Moon 8/outpost,
+Titan 10/outpost at 70% self-sufficiency (still the best of the moons to settle,
+as the literature has it — its *habitability* is near-zero at −190 °C, which is
+exactly why the two scores are kept separate), Io and Mercury blocked on water,
+a 3.1 g super-Earth 30/orbital-only.
+
+Venus and Titan moved down when surface temperature became computed rather than
+inferred from zone placement — see [Effect on existing scores](#effect-on-existing-scores).
 
 Exoplanets, scored against their real host stars and *assuming* the Earth-like
 atmosphere their "potentially habitable" label implicitly hopes for (none of
@@ -184,8 +283,8 @@ these atmospheres has actually been measured):
 | Proxima Cen b | 100 | 0.87 | ✓ |
 | TRAPPIST-1 e | 100 | 0.85 | ✓ |
 | Kepler-442 b | 95 | 0.836 | ✓ |
-| Teegarden's b | 92 | 0.90 | ✓ |
-| TOI-700 d | 90 | ~0.9 | ✓ |
+| Teegarden's b | 100 | 0.90 | ✓ |
+| TOI-700 d | 95 | ~0.9 | ✓ |
 | Kepler-452 b | 40 | 0.83 | model lower — correctly |
 | Gliese 667 Cc | 40 | 0.84 | model lower — correctly |
 | Kepler-186 f | 30 | ~0.64 | ✓ |
@@ -202,6 +301,10 @@ express "this may not have a surface"; the Fulton-gap caps here can.
 Zone placements match the literature independently: TRAPPIST-1 e lands
 `habitable`, 1 d `optimistic-inner` (published as "likely too hot, inner edge"),
 and Kepler-186 f `too-cold` (published as "near the cold outer edge").
+
+TRAPPIST-1 g's long-standing "in zone but the literature says icy" discrepancy is
+**resolved** by the temperature model, which computes −69 °C for it without any
+manual override — see [Why this changes verdicts](#why-this-changes-verdicts).
 
 ### Jump time
 

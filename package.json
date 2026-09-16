@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "validate:thermal": "tsc --outDir .validate-tmp --module commonjs --target es2020 --moduleResolution node --skipLibCheck scripts/validate-thermal.ts && node .validate-tmp/scripts/validate-thermal.js; rm -rf .validate-tmp"
   },
   "dependencies": {
     "@supabase/auth-helpers-nextjs": "^0.15.0",

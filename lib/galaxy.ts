@@ -773,10 +773,164 @@ export const PO2_MAX_ATM = 0.5
 
 // Equilibrium temperature in Celsius, ignoring greenhouse effects.
 export function equilibriumTempC(luminositySolar: number | null, au: number, albedo = 0.3): number | null {
+  const k = equilibriumTempK(luminositySolar, au, albedo)
+  return k == null ? null : k - 273.15
+}
+
+// Same, in Kelvin -- the greenhouse model works in absolute temperature.
+export function equilibriumTempK(luminositySolar: number | null, au: number, albedo = 0.3): number | null {
   if (!luminositySolar || luminositySolar <= 0 || au <= 0) return null
   // 278.5 K is the equilibrium temperature at 1 AU from a 1 L-sun star at zero albedo.
-  const kelvin = 278.5 * ((1 - albedo) ** 0.25) * (luminositySolar ** 0.25) / Math.sqrt(au)
-  return kelvin - 273.15
+  return 278.5 * ((1 - albedo) ** 0.25) * (luminositySolar ** 0.25) / Math.sqrt(au)
+}
+
+// ---------------------------------------------------------------------------
+// Surface temperature from atmosphere and orbit
+//
+// Equilibrium temperature alone is not what anyone stands in: Earth's is -18C
+// and its surface is +15C. The difference is the greenhouse effect, and it is
+// entirely a property of the atmosphere -- which means an airless world in
+// Earth's orbit is far colder than Earth, and a thick CO2 world much hotter.
+//
+// Modelled as a GREY ATMOSPHERE, the standard first-order treatment:
+//
+//     T_surface = T_eq * (1 + (3/4) * tau) ^ (1/4)
+//
+// where tau is the infrared optical depth. This is a fit, not a line-by-line
+// radiative transfer code, and it is calibrated against measured bodies rather
+// than derived from composition. It reproduces Earth, Mars, Venus and Titan --
+// four worlds spanning 0.006 to 92 atmospheres and 650 degrees -- which is far
+// more than the zone-placement proxy it replaces could do.
+//
+// WHY THIS MATTERS BEYOND REALISM: habitable-zone edges are defined for
+// atmospheres chosen to be maximally favourable (Kopparapu's outer edge assumes
+// a CO2 loading tuned for maximum greenhouse warming). So "in the habitable
+// zone" means "an atmosphere exists that would keep this world temperate", not
+// "this world is temperate". A world can sit squarely in the zone and still be
+// frozen under the atmosphere it actually has. Computing the temperature is
+// what lets the two diverge, the way they do in the literature.
+// ---------------------------------------------------------------------------
+
+// Bond albedo -- the fraction of incoming starlight reflected straight back.
+// Values are the measured ones for the closest solar-system analogue, because
+// there is no useful way to derive this from first principles for an
+// imagined world.
+export function bondAlbedo(traits: BodyTraits): number {
+  // A thick atmosphere means a thick cloud deck, and that dominates whatever
+  // the ground looks like: Venus reflects 77% of the light that reaches it
+  // despite having a basalt surface.
+  if (traits.pressure_atm >= 10) return 0.75
+  // Ice is the brightest natural surface there is. This is the feedback that
+  // keeps a frozen world frozen once it gets there.
+  if (traits.hydrosphere === 'ice') return 0.55
+  if (traits.hydrosphere === 'ocean_world') return 0.28
+  if (traits.hydrosphere === 'seas') return 0.29        // Earth: 0.29
+  if (traits.hydrosphere === 'trace') return 0.25       // Mars: 0.25
+  return 0.12                                            // bare rock: Moon 0.11, Mercury 0.12
+}
+
+// Infrared optical depth contributed per atmosphere of pressure, by composition.
+// Calibrated so the grey model reproduces the measured surface temperature of
+// the body each figure is anchored to.
+export const GREENHOUSE_POTENCY: Record<AtmosphereType, number> = {
+  none: 0,
+  trace: 0.1,
+  thin: 0.5,
+  breathable: 0.814,  // Earth: 1 atm N2/O2 with trace CO2 and water vapour -> +33C
+  dense: 0.558,       // Titan: 1.45 atm N2/CH4 -> +11K
+  toxic: 1.5,         // CO2-dominated, the usual toxic case
+  corrosive: 1.471,   // Venus: 92 atm CO2 with sulphuric acid cloud -> 464C
+}
+
+// Total infrared optical depth of the atmosphere.
+export function greenhouseOpticalDepth(traits: BodyTraits): number {
+  return GREENHOUSE_POTENCY[traits.atmosphere] * traits.pressure_atm
+}
+
+// Beyond roughly Venus's optical depth the grey fit is extrapolating past
+// anything it was calibrated on, so the result is flagged rather than trusted.
+export const GREY_MODEL_TAU_LIMIT = 150
+
+export interface ThermalState {
+  // The temperature used for scoring, whatever its provenance.
+  surfaceTempC: number
+  source: 'gm' | 'computed'
+  // Only populated when computed.
+  eqTempC: number | null
+  greenhouseDeltaC: number | null
+  albedo: number | null
+  opticalDepth: number | null
+  // 'rough' means the grey fit is outside its calibrated range, or the body is
+  // one where "surface temperature" is not a meaningful idea in the first place.
+  confidence: 'good' | 'rough'
+  note: string
+}
+
+// Compute a surface temperature from the star, the orbit and the atmosphere.
+// Returns null when there is no star to work from.
+export function computedSurfaceTemp(
+  body: SystemBody,
+  luminositySolar: number | null,
+  auFromStar: number,
+): ThermalState | null {
+  const t = resolveTraits(body)
+  const albedo = bondAlbedo(t)
+  const eqK = equilibriumTempK(luminositySolar, auFromStar, albedo)
+  if (eqK == null) return null
+
+  const tau = greenhouseOpticalDepth(t)
+  const surfK = eqK * ((1 + 0.75 * tau) ** 0.25)
+  const eqC = eqK - 273.15
+  const surfC = surfK - 273.15
+
+  let confidence: ThermalState['confidence'] = 'good'
+  let note: string
+  if (tau <= 0) {
+    note = `No atmosphere to trap heat, so the surface sits at its equilibrium temperature of ${Math.round(eqC)}°C.`
+  } else {
+    note = `${Math.round(eqC)}°C equilibrium, warmed ${Math.round(surfC - eqC)}°C by ${t.pressure_atm} atm of ${t.atmosphere} atmosphere.`
+  }
+  // A gas giant has no surface for a temperature to belong to, and the grey fit
+  // has nothing to say about the interior of one.
+  if (t.pressure_atm >= 100) {
+    confidence = 'rough'
+    note += ' At this pressure there is no solid surface for the figure to describe.'
+  } else if (tau > GREY_MODEL_TAU_LIMIT) {
+    confidence = 'rough'
+    note += ' Beyond the optical depth the model was calibrated against, so treat the figure as indicative only.'
+  }
+
+  return {
+    surfaceTempC: Math.round(surfC),
+    source: 'computed',
+    eqTempC: Math.round(eqC),
+    greenhouseDeltaC: Math.round(surfC - eqC),
+    albedo,
+    opticalDepth: tau,
+    confidence,
+    note,
+  }
+}
+
+// What the GM set always wins: the fiction is allowed to beat the physics, and
+// a measured value for a real world beats a model of it. Falls back to the
+// computed temperature, and to nothing when there is no star.
+export function resolveThermal(
+  body: SystemBody,
+  luminositySolar: number | null,
+  auFromStar: number | null,
+): ThermalState | null {
+  if (body.surface_temp_c != null) {
+    return {
+      surfaceTempC: body.surface_temp_c,
+      source: 'gm',
+      eqTempC: null, greenhouseDeltaC: null, albedo: null, opticalDepth: null,
+      confidence: 'good',
+      note: 'Set explicitly, overriding the computed value.',
+    }
+  }
+  if (auFromStar == null) return null
+  return computedSurfaceTemp(body, luminositySolar, auFromStar)
 }
 
 // ---------------------------------------------------------------------------
@@ -817,6 +971,9 @@ export interface HabitabilityContext {
   zone: ZonePlacement | null
   gravityG: number | null
   tidallyLocked: boolean
+  // Surface temperature: GM-set, else computed from atmosphere and orbit, else
+  // null when there is no star to work from. Zone placement is the fallback.
+  thermal: ThermalState | null
 }
 
 // Weights reflect what actually kills you fastest, and what regulates a climate
@@ -856,19 +1013,26 @@ export function habitabilityScore(body: SystemBody, ctx: HabitabilityContext): H
 
   // --- Temperature / zone (20)
   //
-  // An explicitly-set surface temperature beats zone position, because
-  // greenhouse warming decouples the two: Earth's own equilibrium temperature
-  // is -18C and its surface is +15C. Zone placement is the fallback, and it
-  // already assumes an atmosphere doing that work (Kopparapu's edges are the
-  // runaway and maximum greenhouse limits).
+  // A real temperature beats zone position, because greenhouse warming
+  // decouples the two: Earth's own equilibrium temperature is -18C and its
+  // surface is +15C. That temperature is the GM's when they set one, otherwise
+  // computed from the atmosphere and the orbit.
+  //
+  // Zone placement survives only as the fallback when there is no star to
+  // compute from -- and note it answers a DIFFERENT question: Kopparapu's edges
+  // assume whatever atmosphere would be most favourable, so "in the zone" means
+  // a temperate atmosphere is possible here, not that this world has one. A
+  // world can sit in the zone and still be frozen under the air it actually
+  // has, which is exactly what the computed figure catches.
   let temp = 0
   let tempNote = 'No star to warm it.'
-  const surfaceT = body.surface_temp_c
+  const surfaceT = ctx.thermal?.surfaceTempC ?? null
   if (surfaceT != null) {
     if (surfaceT >= -15 && surfaceT <= 40) { temp = 20; tempNote = `${surfaceT}°C — temperate.` }
     else if (surfaceT >= -40 && surfaceT <= 60) { temp = 12; tempNote = `${surfaceT}°C — harsh, but survivable with clothing and shelter.` }
     else if (surfaceT >= -80 && surfaceT <= 90) { temp = 4; tempNote = `${surfaceT}°C — deadly to be outside in without a suit.` }
     else { temp = 0; tempNote = `${surfaceT}°C — lethal on contact.` }
+    if (ctx.thermal) tempNote += ` ${ctx.thermal.note}`
   } else if (ctx.zone) {
     const map: Record<ZonePlacement, [number, string]> = {
       'habitable': [20, 'Squarely in the habitable zone.'],
@@ -1081,8 +1245,17 @@ export function settlementRating(
   if (t.pressure_atm > 0 && t.pressure_atm < ARMSTRONG_LIMIT_ATM) costs.push('Effectively vacuum outdoors — pressure suits at all times.')
   if (t.atmosphere === 'none') costs.push('No atmosphere: sealing is straightforward, but there is nothing to shield against radiation, so build under regolith.')
   if (t.pressure_atm < 0.1) costs.push('Little atmospheric shielding — bury the habitat or accept the dose.')
-  if (ctx.zone === 'too-hot') costs.push('Fierce heat load; cooling runs continuously.')
-  if (ctx.zone === 'too-cold') costs.push('Deep cold; heating is a permanent power draw.')
+  // Thermal load is a running power cost, not a blocker -- a wall can be built
+  // against it. Prefer the actual temperature where there is one, since zone
+  // placement describes the orbit rather than the world in it.
+  const settleT = ctx.thermal?.surfaceTempC ?? null
+  if (settleT != null) {
+    if (settleT > 60) costs.push(`${settleT}°C outside: cooling runs continuously, and waste heat has to go somewhere.`)
+    else if (settleT < -40) costs.push(`${settleT}°C outside: heating is a permanent power draw.`)
+  } else {
+    if (ctx.zone === 'too-hot') costs.push('Fierce heat load; cooling runs continuously.')
+    if (ctx.zone === 'too-cold') costs.push('Deep cold; heating is a permanent power draw.')
+  }
 
   // --- Tier: how much has to be built before anyone can live there.
   let tier: SettlementTier
@@ -1093,7 +1266,7 @@ export function settlementRating(
   } else if (habitability >= 45) {
     tier = 'easy'
     summary = 'Nearly liveable. Habitats are light, and the outdoors is survivable with a mask or warm clothes.'
-  } else if (t.atmosphere === 'corrosive' || t.pressure_atm > 20 || (ctx.zone === 'too-hot' && t.pressure_atm > 5)) {
+  } else if (t.atmosphere === 'corrosive' || t.pressure_atm > 20 || ((settleT != null ? settleT > 60 : ctx.zone === 'too-hot') && t.pressure_atm > 5)) {
     tier = 'extreme'
     summary = 'Heat, pressure and corrosion together push this to the edge of what can be built. Consider the upper atmosphere instead of the surface.'
   } else if (selfSufficiency >= 40) {

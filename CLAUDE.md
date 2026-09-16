@@ -284,9 +284,15 @@ The system builder shades where liquid water is possible (toggle in the diagram 
 - `habitabilityScore(body, ctx)` — unprotected surface survival, 0–100. Weights: breathable air 35 (uses **oxygen partial pressure**, not percentage) · temperature/zone 20 · water 15 · gravity 12 · climate stability 12 · radiation shelter 6.
 - `settlementRating(body, ctx, habitability)` — can a tech species build here? Everything except gravity is a cost, since pressure/temperature/air/radiation can all be walled off. **Gravity is asymmetric**: above 1.8 g is a hard blocker (`orbital-only`), below 0.3 g is only a caveat yielding the `outpost` tier — a lunar-style base is viable and low gravity makes launch/construction cheaper; only a multi-generational population is doubtful. Partial gravity has never been tested on humans, so that floor is a game convention, not a measured threshold.
 
+**Surface temperature is computed from the atmosphere**, not inferred from zone placement. Grey-atmosphere model in `lib/galaxy.ts`: `T_surf = T_eq · (1 + ¾τ)^¼`, with albedo from `bondAlbedo()` (hydrosphere + pressure) and optical depth `τ = GREENHOUSE_POTENCY[atmosphere] × pressure_atm`. Both are **calibrated against measured bodies, not derived** — anchored on Earth (+33 °C), Titan (+11 K) and Venus (464 °C). Precedence: GM-set `surface_temp_c` → computed → zone placement (fallback only when there is no star).
+
+This matters because **zone placement answers a different question**: Kopparapu's edges assume whatever atmosphere would be most favourable, so "in the habitable zone" means a temperate atmosphere is *possible* here, not that this world *is* temperate. That is why TRAPPIST-1 g sat in-zone while the literature called it icy — at 0.25 S⊕ under an Earth-like atmosphere it computes to −69 °C. **That known edge case is now resolved**; it needs no manual override.
+
+Validate with `npm run validate:thermal` (`scripts/validate-thermal.ts`) after touching `bondAlbedo`, `GREENHOUSE_POTENCY` or `computedSurfaceTemp`. It asserts tolerances against 10 measured bodies and re-checks the habitability deltas. Two documented limitations live in the harness: airless slow rotators (the Moon is checked against its blackbody temperature, since a T⁴-averaged mean is a different quantity) and one ice albedo not spanning clean Europa (0.62) vs dirty Callisto (0.15).
+
 **Hard limits are ceilings, not deductions** — otherwise a lethal world coasts to a high score on the factors it passes. Caps: below the Armstrong limit (0.0618 atm) → 8 · toxic/corrosive air → 12 · unbreathable → 25 · gravity outside 0.3–1.8 g → 30 · radius > 2.0 R⊕ (sub-Neptune, no surface) → 12, or > 1.6 R⊕ (Fulton gap, uncertain) → 40 · surface temp beyond ±80/90 °C → 10, or a `too-cold`/`too-hot` zone → 30/20. `surface_temp_c` when set overrides zone placement, since greenhouse warming decouples the two (Earth's equilibrium temp is −18 °C).
 
-Validated against real bodies incl. exoplanets with published ESI — see the table in `docs/V2_OVERVIEW.md`. Where the model disagrees with ESI it is on planets the literature says are overstated (Kepler-452 b, LHS 1140 b, K2-18 b), because ESI cannot express "this may not have a solid surface".
+Validated against real bodies incl. exoplanets with published ESI — see the table in `docs/V2_OVERVIEW.md`. Computing temperature moved four scores (Titan 19→10 and Venus 12→10 as the lethal-temperature ceiling now binds; Teegarden's b 92→100 and TOI-700 d 87→95 as the optimistic-inner zone proxy was understating them); everything else is unmoved. Where the model disagrees with ESI it is on planets the literature says are overstated (Kepler-452 b, LHS 1140 b, K2-18 b), because ESI cannot express "this may not have a solid surface".
 
 Trait columns are **all nullable**, falling back to `CLASS_TRAIT_DEFAULTS` via `resolveTraits(body)` so an unedited world still scores. Gravity, oxygen partial pressure and equilibrium temperature are derived, never stored.
 
@@ -313,6 +319,7 @@ Most migrations in this repo omit the `TO` clause; most do not leak, because the
 - `sql/v2_004_rls_scope_authenticated.sql` — RLS repair for databases created before `v2_001` was patched
 - `sql/v2_rls_verify.sql` — RLS PASS/FAIL harness; safe, rolls back, changes nothing
 - `sql/008_scope_map_markers_read.sql` — legacy RLS fix: `map_markers` was readable by anonymous visitors
+- `scripts/validate-thermal.ts` — surface-temperature model validation (`npm run validate:thermal`)
 - `app/character/[id]/page.tsx` — the main character sheet page (everything: view, edit, level-up modal, power level display)
 - `app/leaderboard/page.tsx` — leaderboard (GM: all categories + publish panel; players: published categories only)
 - `app/create/page.tsx` — new character creation form (includes tame_class/species fields for tames)
