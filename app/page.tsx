@@ -142,6 +142,9 @@ export default function Home() {
       </div>
 
       <div className="flex justify-center gap-4 mb-8 flex-wrap">
+        <Link href="/v2/ships" className="bg-gray-800 border border-gray-600 px-6 py-2 rounded hover:bg-gray-700 text-gray-300 font-bold">
+          Ships
+        </Link>
         <a href="/wiki" className="bg-gray-800 border border-gray-600 px-6 py-2 rounded hover:bg-gray-700 hover:border-red-500 transition-colors text-gray-300 font-bold flex items-center gap-2">
             <span>📖</span> Open Wiki
         </a>

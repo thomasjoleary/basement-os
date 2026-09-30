@@ -310,6 +310,11 @@ Most migrations in this repo omit the `TO` clause; most do not leak, because the
 ⚠️ **`gm_notes` is readable by logged-in players** on discovered systems. Policies gate rows, not columns, so `TO authenticated` does not help. Fix it the way `007` did for battlefields (move the column to a GM-only table) before the player view ships; until then keep real secrets out of it.
 
 ## Key Files
+- `docs/V2_SHIPS.md` — ship builder setup, editing, data model and test boundaries
+- `app/v2/ships/` / `components/ships/` — GM ship editor and assigned-player inspection
+- `lib/ships.ts` / `lib/ship-templates.ts` — shared ship plan model and independent starter copies
+- `sql/v2_005_ships.sql` — atomic ship save, RLS, validated plans and separate GM notes
+- `npm run test:ships` / `npm run test:ships:ui` — local PostgreSQL permissions and browser interaction tests
 - `app/v2/page.tsx` — v2 home shell (GM-gated)
 - `app/v2/galaxy/page.tsx` — galaxy map: systems as nodes, create/drag/measure, settings + nearest-neighbour panel
 - `app/v2/galaxy/[id]/page.tsx` — system builder: hierarchical body tree, inspector, orbit schematic

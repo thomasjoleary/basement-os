@@ -8,6 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "test:e2e": "playwright test",
+    "test:ships": "node scripts/test-ships.mjs",
+    "test:ships:ui": "playwright test --config playwright.ships.config.ts",
     "validate:thermal": "tsc --outDir .validate-tmp --module commonjs --target es2020 --moduleResolution node --skipLibCheck scripts/validate-thermal.ts && node .validate-tmp/scripts/validate-thermal.js; rm -rf .validate-tmp"
   },
   "dependencies": {
@@ -24,6 +26,7 @@
     "sharp": "^0.34.5"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@playwright/test": "^1.61.0",
     "@tailwindcss/postcss": "^4",
     "@types/leaflet": "^1.9.21",

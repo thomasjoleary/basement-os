@@ -62,6 +62,9 @@ export default function BasementOSv2() {
       </div>
 
       <div className="flex justify-center gap-4 mb-10 flex-wrap">
+        <Link href="/v2/ships" className="bg-cyan-900 border border-cyan-700 px-6 py-2 rounded hover:bg-cyan-800 text-cyan-200 font-bold">
+          Ships & deck plans
+        </Link>
         <Link
           href="/v2/galaxy"
           className="bg-indigo-900 border border-indigo-700 px-6 py-2 rounded hover:bg-indigo-800 transition-colors text-indigo-200 font-bold flex items-center gap-2"

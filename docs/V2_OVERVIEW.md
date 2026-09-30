@@ -15,8 +15,8 @@ For in-world fiction — jump drives, stars, places — see
 | `/v2` GM-gated shell | Built |
 | Galaxy map + system authoring | Built |
 | System builder (stars, planets, moons, stations) | Built |
-| Player-facing view | Not started (RLS policies already written for it) |
-| Ships & components | Not started |
+| Player-facing galaxy view | Not started (RLS policies already written for it) |
+| Ships & components | Deck-plan builder and inventory built; no simulation. See [Ships](./V2_SHIPS.md). |
 | Ground maps for planets | Not started |
 | 3D system view | Not started (`z` already stored, no migration needed) |
 
@@ -26,9 +26,11 @@ For in-world fiction — jump drives, stars, places — see
 (`auth.users` / `profiles`), so the same account works in both versions, but no
 legacy query can reach v2 data and vice versa.
 
-**Access.** `/v2` and everything under it is GM-only — the same
+**Access.** `/v2` and the galaxy builder are GM-only — the same
 `getSession → profiles.role === 'gm' → redirect` pattern used by `/words` and
-`/leaderboard`. It isn't linked from the legacy home page.
+`/leaderboard`. The v2 shell isn't linked from the legacy home page.
+The separate `/v2/ships` route is linked from both home pages: GMs edit all
+ships, while assigned owners/crew get database-enforced read-only access.
 
 **Eventually** `/v2` becomes the post-login home page, with a button back to the
 old one.
@@ -438,7 +440,9 @@ is marked discovered.
 - **Hyperlanes.** Jumps are currently any-to-any. A `v2_hyperlanes` table would
   restrict travel to fixed routes, which makes chokepoints and blockades
   possible.
-- **Ships & components**, carrying the jump drive stats described above.
+- **Ship simulation / drive integration**. The [ship builder](./V2_SHIPS.md) now
+  records decks and components, but does not attach simulation stats or drive
+  modifiers to them.
 - **Player view** of the galaxy, gated on `discovered`.
 - **3D system view** — `react-three-fiber`, lazy-loaded so it never touches the
   bundle for other pages.
