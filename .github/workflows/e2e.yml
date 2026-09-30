@@ -22,6 +22,12 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install chromium --with-deps
 
+      - name: Test ship model and database permissions locally
+        run: npm run test:ships
+
+      - name: Test ship editor locally
+        run: npm run test:ships:ui
+
       - name: Wait for Vercel deployment
         id: vercel
         run: |
