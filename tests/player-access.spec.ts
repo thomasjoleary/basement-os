@@ -13,6 +13,9 @@ const AUTH_STORAGE_KEY = `sb-${projectRef}-auth-token`
 
 let savedSession: object
 
+// These tests use real accounts; do not capture account/data traces or screenshots.
+test.use({ trace: 'off', screenshot: 'off' })
+
 async function injectSession(page: Page) {
   // Navigate to the app first to establish the domain context for localStorage
   await page.goto(BASE_URL)
@@ -90,5 +93,38 @@ test.describe('Player character sheet access', () => {
     }
     await page.goto(`${BASE_URL}/character/${otherCharacterId}`)
     await expect(page).toHaveURL(`${BASE_URL}/`, { timeout: 10000 })
+  })
+
+  test.describe('Live ship schema smoke', () => {
+    test('preview reads migrated ship storage without errors or campaign writes', async ({ page }) => {
+      let browserErrors = 0, failedShipRequests = 0, writeAttempts = 0, privateNoteReads = 0
+      page.on('pageerror', () => { browserErrors++ })
+      page.on('console', message => { if (message.type() === 'error') browserErrors++ })
+      page.on('requestfailed', request => { if (new URL(request.url()).pathname.includes('v2_ship')) failedShipRequests++ })
+      // Fail closed if a future UI regression attempts any REST mutation.
+      await page.route(`${new URL(SUPABASE_URL).origin}/rest/v1/**`, async route => {
+        if (!['GET', 'HEAD'].includes(route.request().method())) {
+          writeAttempts++; await route.abort(); return
+        }
+        if (new URL(route.request().url()).pathname.includes('v2_ship_gm_notes')) privateNoteReads++
+        await route.continue()
+      })
+      for (const reload of [false, true]) {
+        const responsePromise = page.waitForResponse(response => new URL(response.url()).pathname === '/rest/v1/v2_ships')
+        if (reload) await page.reload()
+        else await page.goto(`${BASE_URL}/v2/ships`)
+        const response = await responsePromise
+        expect(response.request().method()).toBe('GET')
+        expect(response.status()).toBe(200)
+        expect(new URL(response.url()).origin).toBe(new URL(SUPABASE_URL).origin)
+        expect(Array.isArray(await response.json())).toBe(true)
+        await expect(page.getByRole('heading', { name: 'Ships', exact: true })).toBeVisible()
+        await expect(page.getByText('Loading ships…', { exact: true })).toHaveCount(0)
+        await expect(page.locator('main').getByRole('alert')).toHaveCount(0)
+        await expect(page.getByRole('button', { name: 'New ship', exact: true })).toHaveCount(0)
+      }
+      expect({ browserErrors, failedShipRequests, writeAttempts, privateNoteReads }).toEqual({ browserErrors: 0, failedShipRequests: 0, writeAttempts: 0, privateNoteReads: 0 })
+      console.log('::notice title=Live ship schema smoke::Ship list and reload passed against migrated schema; HTTP 200; zero browser errors, failed ship requests, private-note reads or campaign writes. No template copies created.')
+    })
   })
 })
