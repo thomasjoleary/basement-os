@@ -5,7 +5,7 @@ import ShipGrid, { type Selection, type ShipTool } from './ShipGrid'
 import { type Ship, type ShipPlan, type Part, type Connection, QUALITIES, CONDITIONS, newDeck, newId, removeDeck, removeRoom, movePart, validatePlan } from '@/lib/ships'
 import { type Profile, saveShip } from '@/lib/ship-api'
 
-const inputClass = 'block w-full mt-1 bg-gray-950 border border-gray-600 rounded px-2 py-2 text-sm disabled:border-transparent disabled:bg-gray-900 disabled:text-gray-200'
+const inputClass = 'block min-w-0 max-w-full w-full mt-1 bg-gray-950 border border-gray-600 rounded px-2 py-2 text-sm disabled:border-transparent disabled:bg-gray-900 disabled:text-gray-200'
 function Field({ label, value, onChange, type = 'text', min, max }: { label: string; value: string | number; onChange: (v: string) => void; type?: string; min?: number; max?: number }) {
   return <label className="block text-xs text-gray-400">{label}<input aria-label={label} type={type} value={value} min={min} max={max} maxLength={type === 'text' ? 120 : undefined} onChange={e => onChange(e.target.value)} className={inputClass} /></label>
 }
@@ -76,22 +76,22 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles }
   return <main className="min-h-screen bg-gray-900 text-white p-4 md:p-6">
     <div className="max-w-[1600px] mx-auto">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <div><Link href="/v2/ships" onClick={e => { if (busy || (dirty && !window.confirm('Leave without saving your changes?'))) e.preventDefault() }} className="text-sm text-gray-400">← Back to ships</Link><h1 className="text-2xl font-bold mt-2">{ship.name}</h1><p className="text-xs text-gray-400 mt-1">{isGM ? dirty ? 'Unsaved changes' : 'All changes saved' : 'Assigned crew · read-only'} · Revision {ship.version}</p></div>
+        <div className="min-w-0 max-w-full [overflow-wrap:anywhere]"><Link href="/v2/ships" onClick={e => { if (busy || (dirty && !window.confirm('Leave without saving your changes?'))) e.preventDefault() }} className="text-sm text-gray-400">← Back to ships</Link><h1 className="text-2xl font-bold mt-2">{ship.name}</h1><p className="text-xs text-gray-400 mt-1">{isGM ? dirty ? 'Unsaved changes' : 'All changes saved' : 'Assigned crew · read-only'} · Revision {ship.version}</p></div>
         {isGM && <div className="flex gap-2"><button disabled={busy || !dirty} onClick={cancel} className="rounded border border-gray-600 px-4 py-2 disabled:opacity-40">Discard changes</button><button disabled={busy || !dirty} onClick={save} className="rounded bg-cyan-700 px-4 py-2 font-semibold disabled:opacity-40">{busy ? 'Saving…' : 'Save ship'}</button></div>}
       </div>
       {message && <p role="status" className="rounded border border-cyan-800 bg-gray-800 p-3 mb-4 text-sm">{message}</p>}
       <div className="flex flex-wrap gap-2 items-center mb-4">
-        <label className="text-sm">Deck<select aria-label="Current deck" value={deck.id} onChange={e => switchDeck(e.target.value)} className="ml-2 bg-gray-800 border border-gray-600 rounded p-2">{ship.plan.decks.map(d => <option value={d.id} key={d.id}>{d.name}</option>)}</select></label>
+        <label className="text-sm flex items-center gap-2 min-w-0 max-w-full">Deck<select aria-label="Current deck" value={deck.id} onChange={e => switchDeck(e.target.value)} className="w-52 min-w-0 max-w-full bg-gray-800 border border-gray-600 rounded p-2">{ship.plan.decks.map(d => <option value={d.id} key={d.id}>{d.name}</option>)}</select></label>
         {isGM && <button disabled={busy || ship.plan.decks.length >= 20} onClick={() => { const d = newDeck(`Deck ${ship.plan.decks.length + 1}`); change({ ...ship.plan, decks: [...ship.plan.decks, d] }); switchDeck(d.id) }} className="text-sm border border-gray-600 rounded p-2">Add deck</button>}
         {(isGM ? ['select', 'pan', 'room', 'wall', 'door', 'label', 'fixture'] : ['select', 'pan']).map(t => <button key={t} aria-pressed={tool === t} disabled={busy} onClick={() => { setTool(t as ShipTool); setSelection(null) }} className={`capitalize rounded px-3 py-2 text-sm ${tool === t ? 'bg-cyan-800 border border-cyan-500' : 'bg-gray-800 border border-gray-700'}`}>{t}</button>)}
         {isGM && <button disabled={busy} onClick={addConnection} className="text-sm rounded p-2 border border-gray-600">Connect decks</button>}
       </div>
-      <div className="grid lg:grid-cols-[minmax(0,1fr)_340px] gap-4 items-start">
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px] gap-4 items-start">
         <ShipGrid key={`${deck.id}:${tool}`} deck={deck} plan={ship.plan} editable={isGM && !busy} tool={tool} selection={selection} onSelect={inspect} onChange={change} onDeck={switchDeck} onMessage={setMessage} />
-        <aside className="border border-gray-700 bg-gray-800 rounded-xl overflow-hidden">
+        <aside className="min-w-0 [overflow-wrap:anywhere] border border-gray-700 bg-gray-800 rounded-xl overflow-hidden">
           <div className="flex border-b border-gray-700">{(['inspect', 'inventory', 'ship'] as const).map(t => <button key={t} onClick={() => setTab(t)} className={`flex-1 text-sm py-3 ${tab === t ? 'text-cyan-300 bg-gray-900' : 'text-gray-400'}`}>{t[0].toUpperCase() + t.slice(1)}</button>)}</div>
           <div className="p-4 space-y-4 max-h-[720px] overflow-y-auto">
-            {tab === 'ship' && <fieldset disabled={!isGM || busy} className="space-y-4">
+            {tab === 'ship' && <fieldset disabled={!isGM || busy} className="min-w-0 space-y-4">
               <Field label="Ship name" value={ship.name} onChange={name => setShip({ ...ship, name })} />
               <Notes label="Public description" value={ship.description} onChange={description => setShip({ ...ship, description })} />
               {isGM ? <>
@@ -107,7 +107,7 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles }
             </>}
             {tab === 'inspect' && <>
               {!selection && <>
-                <fieldset disabled={!isGM || busy} className="space-y-3">
+                <fieldset disabled={!isGM || busy} className="min-w-0 space-y-3">
                   <h2 className="font-semibold">Deck setup</h2><Field label="Deck name" value={deck.name} onChange={name => change({ ...ship.plan, decks: ship.plan.decks.map(d => d.id === deck.id ? { ...d, name } : d) })} />
                   <div className="grid grid-cols-2 gap-2">{(['width', 'height'] as const).map(axis => <Field key={axis} label={`Deck ${axis}`} type="number" min={4} max={100} value={deck[axis]} onChange={v => { const size = Number(v); if (size >= 4 && size <= 100) { const plan = { ...ship.plan, decks: ship.plan.decks.map(d => d.id === deck.id ? { ...d, [axis]: size } : d) }; const invalid = validatePlan(plan); if (invalid) setMessage('Move or remove items before shrinking the deck.'); else change(plan) } }} />)}</div>
                   {isGM && <button disabled={ship.plan.decks.length === 1} className="text-sm text-red-300 disabled:opacity-30" onClick={() => { if (!confirm('Delete this deck and all its rooms, fixtures and connections?')) return; const plan = removeDeck(ship.plan, deck.id); change(plan); switchDeck(plan.decks[0].id) }}>Delete deck</button>}
@@ -119,7 +119,7 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles }
                 {ship.plan.connections.filter(c => c.from_deck === deck.id || c.to_deck === deck.id).map(c => <button key={c.id} className="block text-sm text-violet-300" onClick={() => inspect({ kind: 'connection', id: c.id })}>{c.name}</button>)}
               </>}
               {selection && <button className="text-xs text-cyan-300" onClick={() => setSelection(null)}>← Deck setup</button>}
-              <fieldset disabled={!isGM || busy} className="space-y-3">
+              <fieldset disabled={!isGM || busy} className="min-w-0 space-y-3">
                 {room && <><h2 className="font-semibold">Room</h2><Field label="Room name" value={room.name} onChange={name => change({ ...ship.plan, decks: ship.plan.decks.map(d => d.id === deck.id ? { ...d, rooms: d.rooms.map(r => r.id === room.id ? { ...r, name } : r) } : d) })} /><p className="text-xs text-gray-400">{room.width} × {room.height} cells · ({room.x}, {room.y})</p><Notes label="Public room notes" value={room.notes} onChange={notes => change({ ...ship.plan, decks: ship.plan.decks.map(d => d.id === deck.id ? { ...d, rooms: d.rooms.map(r => r.id === room.id ? { ...r, notes } : r) } : d) })} /></>}
                 {mark && <><h2 className="font-semibold capitalize">{mark.kind}</h2><Field label="Label / name" value={mark.name} onChange={name => change({ ...ship.plan, decks: ship.plan.decks.map(d => d.id === deck.id ? { ...d, marks: d.marks.map(m => m.id === mark.id ? { ...m, name } : m) } : d) })} /><p className="text-xs text-gray-400">({mark.x}, {mark.y}) · {mark.length} cells · {mark.vertical ? 'vertical' : 'horizontal'}</p></>}
                 {part && <>

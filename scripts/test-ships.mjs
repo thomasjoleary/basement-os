@@ -18,10 +18,26 @@ function model(name) {
   return exports
 }
 const { instantiateTemplate } = model('ship-templates')
-const { validatePlan, movePart, removeRoom, removeDeck, QUALITIES } = model('ships')
+const { validatePlan, movePart, removeRoom, removeDeck, QUALITIES, partFootprint } = model('ships')
 let passed = 0
 function check(name, fn) { fn(); passed++; console.log(`PASS ${name}`) }
 const fighter = instantiateTemplate('fighter'), freighter = instantiateTemplate('freighter')
+check('exterior template components have bounded footprints, paired wing boosters and aft engines', () => {
+  for (const plan of [fighter, freighter]) for (const p of plan.parts) {
+    const d = plan.decks.find(d => d.id === p.deck_id), size = partFootprint(p.type)
+    assert.ok(p.x + size.width <= d.width && p.y + size.height <= d.height)
+    if (size.width > 1) assert.equal(p.room_id, null)
+  }
+  const wings = fighter.parts.filter(p => p.type.endsWith('wing'))
+  const boosters = fighter.parts.filter(p => p.type === 'Booster')
+  assert.equal(wings.length, 2); assert.equal(boosters.length, 2)
+  for (const wing of wings) assert.equal(boosters.filter(b => b.x >= wing.x && b.x + 2 <= wing.x + 4 && b.y >= wing.y && b.y + 3 <= wing.y + 5).length, 1)
+  const rear = freighter.parts.filter(p => p.type === 'Booster')
+  assert.equal(rear.length, 3)
+  for (const b of rear) assert.ok(freighter.decks.find(d => d.id === b.deck_id).rooms.every(r => r.y + r.height <= b.y))
+  const moved = movePart(fighter, wings[0].id, fighter.decks[0], { x: 100, y: 100 }).parts.find(p => p.id === wings[0].id)
+  assert.equal(moved.x, fighter.decks[0].width - 4); assert.equal(moved.y, fighter.decks[0].height - 5)
+})
 check('both templates validate and copies have independent IDs', () => {
   assert.equal(validatePlan(fighter), null); assert.equal(validatePlan(freighter), null)
   const other = instantiateTemplate('freighter')
@@ -41,7 +57,7 @@ check('deleting rooms/decks cleans dependent links, keeps final deck', () => {
   const noRoom = removeRoom(fighter, fighter.parts[0].room_id)
   assert.equal(noRoom.parts[0].room_id, null); assert.equal(validatePlan(noRoom), null)
   const noDeck = removeDeck(freighter, freighter.decks[0].id)
-  assert.equal(noDeck.connections.length, 0); assert.equal(noDeck.parts.length, 4)
+  assert.equal(noDeck.connections.length, 0); assert.deepEqual(noDeck.parts, freighter.parts.filter(p => p.deck_id !== freighter.decks[0].id))
   assert.equal(validatePlan(noDeck), null); assert.equal(removeDeck(noDeck, noDeck.decks[0].id).decks.length, 1)
 })
 

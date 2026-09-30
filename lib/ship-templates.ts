@@ -6,7 +6,7 @@ function deck(id: string, name: string, width: number, height: number, rooms: Ro
 function room(id: string, name: string, x: number, y: number, width: number, height: number): Room {
   return { id, name, x, y, width, height, notes: '' }
 }
-function part(id: string, name: string, type: string, deck_id: string, room_id: string, x: number, y: number): Part {
+function part(id: string, name: string, type: string, deck_id: string, room_id: string | null, x: number, y: number): Part {
   return { id, name, type, deck_id, room_id, x, y, quantity: 1, quality: 'Store-bought', black_market: false, condition: 'Working', notes: '' }
 }
 const fighter: ShipPlan = {
@@ -19,7 +19,7 @@ const freighter: ShipPlan = {
   schema_version: 1,
   decks: [
     deck('upper', 'Crew deck', 20, 18, [room('bridge', 'Cockpit', 5, 1, 10, 4), room('bedroom', 'Bedroom', 2, 5, 7, 6), room('galley', 'Kitchen', 11, 5, 7, 6), room('hall', 'Crew passage', 9, 5, 2, 11), room('wash', 'Washroom', 2, 11, 7, 5), room('stores', 'Stores', 11, 11, 7, 5)]),
-    deck('lower', 'Cargo deck', 20, 18, [room('cargo', 'Cargo hold', 2, 1, 16, 10), room('engineering', 'Engineering', 2, 11, 16, 5)]),
+    deck('lower', 'Cargo deck', 20, 21, [room('cargo', 'Cargo hold', 2, 1, 16, 10), room('engineering', 'Engineering', 2, 11, 16, 5)]),
   ],
   parts: [part('helm', 'Flight console', 'Control', 'upper', 'bridge', 8, 2), part('nav', 'Navigation console', 'Control', 'upper', 'bridge', 12, 2), part('bunk', 'Crew bunk', 'Furniture', 'upper', 'bedroom', 4, 7), part('stove', 'Cooking station', 'Appliance', 'upper', 'galley', 14, 7), part('water', 'Water recycler', 'Life support', 'upper', 'wash', 4, 13), part('wc', 'Toilet', 'Sanitation', 'upper', 'wash', 7, 13), part('crates', 'Cargo restraints', 'Cargo', 'lower', 'cargo', 5, 5), part('engine', 'Main propulsion', 'Propulsion', 'lower', 'engineering', 5, 13), part('reactor', 'Power unit', 'Power', 'lower', 'engineering', 10, 13), part('life', 'Life support', 'Life support', 'lower', 'engineering', 15, 13)],
   connections: [{ id: 'lift', name: 'Cargo lift', kind: 'lift', from_deck: 'upper', from: { x: 10, y: 13 }, to_deck: 'lower', to: { x: 10, y: 8 } }],
@@ -38,9 +38,32 @@ freighter.decks[0].marks = [
   { id: 'r-door5', kind: 'door', name: 'Stores door', x: 11, y: 13, length: 1, vertical: true },
 ]
 freighter.decks[1].marks = [{ id: 'r-door6', kind: 'door', name: 'Engineering hatch', x: 9, y: 11, length: 2, vertical: false }]
+// Exterior components use the same inspectable, movable inventory records as fixtures.
+// Their type selects a visual footprint; no simulation rules or extra persisted fields.
+const flight = fighter.decks[0]
+flight.width = 18; flight.height = 20
+flight.rooms.forEach(r => { r.x += 3; r.y += 1 })
+flight.marks.forEach(m => { m.x += 3; m.y += 1 })
+fighter.parts.forEach(p => { p.x += 3; p.y += 1 })
+fighter.parts.push(
+  part('port-wing', 'Port wing', 'Port wing', 'flight', null, 1, 9),
+  part('starboard-wing', 'Starboard wing', 'Starboard wing', 'flight', null, 13, 9),
+  part('port-booster', 'Port wing booster', 'Booster', 'flight', null, 2, 11),
+  part('starboard-booster', 'Starboard wing booster', 'Booster', 'flight', null, 14, 11),
+  part('nose-hull', 'Forward hull panel', 'Hull panel', 'flight', null, 8, 1),
+  part('aft-hull', 'Aft hull panel', 'Hull panel', 'flight', null, 8, 16),
+)
+freighter.parts.push(
+  part('crew-nose', 'Forward hull panel', 'Hull panel', 'upper', null, 9, 0),
+  part('crew-aft', 'Aft hull panel', 'Hull panel', 'upper', null, 9, 16),
+  ...[4, 9, 14].flatMap((x, i) => [
+    part(`rear-hull-${i}`, `Rear engine mount ${i + 1}`, 'Hull panel', 'lower', null, x, 16),
+    part(`rear-booster-${i}`, `Rear booster ${i + 1}`, 'Booster', 'lower', null, x, 17),
+  ]),
+)
 export const SHIP_TEMPLATES = [
-  { id: 'fighter', name: 'Compact fighter', description: 'One deck · cockpit, bunk, toilet and essential systems.', plan: fighter },
-  { id: 'freighter', name: 'Freighter', description: 'Two decks · crew quarters, kitchen, cargo hold, engineering and a lift.', plan: freighter },
+  { id: 'fighter', name: 'Compact fighter', description: 'One deck · cockpit, bunk, toilet, essential systems and two booster-equipped wings.', plan: fighter },
+  { id: 'freighter', name: 'Freighter', description: 'Two decks · crew quarters, kitchen, cargo hold, engineering, a lift and three rear boosters.', plan: freighter },
 ] as const
 export function instantiateTemplate(id: string): ShipPlan {
   const template = SHIP_TEMPLATES.find(t => t.id === id)

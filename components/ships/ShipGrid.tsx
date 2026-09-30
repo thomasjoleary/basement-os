@@ -1,11 +1,11 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { type Deck, type ShipPlan, type Point, type Room, newId, roomAt, movePart, newPart } from '@/lib/ships'
+import { type Deck, type ShipPlan, type Point, type Room, newId, roomAt, movePart, newPart, partFootprint } from '@/lib/ships'
 
 export type ShipTool = 'select' | 'pan' | 'room' | 'wall' | 'door' | 'label' | 'fixture'
 export type Selection = { kind: 'room' | 'mark' | 'part' | 'connection'; id: string } | null
-type Gesture = { start: Point; current: Point; client: Point; pan: Point; part?: string; mode: ShipTool }
+type Gesture = { start: Point; current: Point; client: Point; pan: Point; part?: string; origin?: Point; mode: ShipTool }
 
 export default function ShipGrid({ deck, plan, editable, tool, selection, onSelect, onChange, onDeck, onMessage }: {
   deck: Deck; plan: ShipPlan; editable: boolean; tool: ShipTool; selection: Selection
@@ -44,7 +44,7 @@ export default function ShipGrid({ deck, plan, editable, tool, selection, onSele
         }
       } else onSelect(null)
     }
-    gesture.current = { start: p, current: p, client: { x: e.clientX, y: e.clientY }, pan, part, mode }
+    gesture.current = { start: p, current: p, client: { x: e.clientX, y: e.clientY }, pan, part, origin: plan.parts.find(item => item.id === part), mode }
     setDraft(gesture.current)
     e.currentTarget.setPointerCapture(e.pointerId)
   }
@@ -64,7 +64,10 @@ export default function ShipGrid({ deck, plan, editable, tool, selection, onSele
     gesture.current = null; setDraft(null)
     if (!g || !editable || g.mode === 'pan') return
     const p = point(e)
-    if (g.part) { onChange(movePart(plan, g.part, deck, p)); return }
+    if (g.part && g.origin) {
+      if (p.x !== g.start.x || p.y !== g.start.y) onChange(movePart(plan, g.part, deck, { x: g.origin.x + p.x - g.start.x, y: g.origin.y + p.y - g.start.y }))
+      return
+    }
     let next = { ...deck }
     if (g.mode === 'room') {
       const r: Room = { id: newId(), name: `Room ${deck.rooms.length + 1}`, x: Math.min(g.start.x, p.x), y: Math.min(g.start.y, p.y), width: Math.abs(p.x - g.start.x) + 1, height: Math.abs(p.y - g.start.y) + 1, notes: '' }
@@ -86,7 +89,7 @@ export default function ShipGrid({ deck, plan, editable, tool, selection, onSele
     if (g.mode !== 'select') onChange({ ...plan, decks: plan.decks.map(d => d.id === deck.id ? next : d) })
   }
   const selected = (id: string) => selection?.id === id
-  return <div className="relative rounded-xl border border-gray-700 bg-gray-950 overflow-hidden">
+  return <div className="min-w-0 relative rounded-xl border border-gray-700 bg-gray-950 overflow-hidden">
     <div className="flex items-center justify-between p-3 border-b border-gray-800 gap-2">
       <span className="text-xs text-gray-400">{deck.width} × {deck.height} grid · {Math.round(zoom * 100)}%</span>
       <div className="flex gap-2">
@@ -116,7 +119,25 @@ export default function ShipGrid({ deck, plan, editable, tool, selection, onSele
           <title>{m.name}</title>
         </g>)}
         {plan.parts.filter(p => p.deck_id === deck.id).map(p => {
-          const at = draft?.part === p.id ? draft.current : p
+          const size = partFootprint(p.type)
+          const at = draft?.part === p.id && draft.origin ? {
+            x: Math.max(0, Math.min(deck.width - size.width, draft.origin.x + draft.current.x - draft.start.x)),
+            y: Math.max(0, Math.min(deck.height - size.height, draft.origin.y + draft.current.y - draft.start.y)),
+          } : p
+          const exterior = size.width > 1
+          const stroke = selected(p.id) ? '#67e8f9' : p.black_market ? '#f472b6' : '#93c5fd'
+          const fill = selected(p.id) ? '#155e75' : '#334155'
+          if (exterior) return <g key={p.id} data-kind="part" data-id={p.id} transform={`translate(${at.x * 32} ${at.y * 32})`}>
+            {p.type === 'Port wing' || p.type === 'Starboard wing' ? <>
+              <polygon points={p.type === 'Port wing' ? '128,0 0,64 0,144 128,160' : '0,0 128,64 128,144 0,160'} fill={fill} stroke={stroke} strokeWidth="3" />
+              <path d={p.type === 'Port wing' ? 'M116 20L14 72M116 36L14 88' : 'M12 20L114 72M12 36L114 88'} stroke="#64748b" strokeWidth="3" />
+            </> : p.type === 'Booster' ? <>
+              <path d="M10 4H54L60 70H4Z" fill={fill} stroke={stroke} strokeWidth="3" />
+              <path d="M4 70H60L54 92H10Z" fill="#78350f" stroke="#fbbf24" strokeWidth="3" />
+              <path d="M20 14V58M44 14V58" stroke="#94a3b8" strokeWidth="3" />
+            </> : <rect x="2" y="2" width="60" height="28" rx="4" fill={fill} stroke={stroke} strokeWidth="3" />}
+            <title>{p.name} — {p.quality} — {p.condition}</title>
+          </g>
           return <g key={p.id} data-kind="part" data-id={p.id} transform={`translate(${at.x * 32 + 16} ${at.y * 32 + 16})`}>
             <rect x="-11" y="-10" width="22" height="20" rx="4" fill={selected(p.id) ? '#0891b2' : '#334155'} stroke={p.black_market ? '#f472b6' : '#93c5fd'} strokeWidth="2" />
             <text textAnchor="middle" y="4" fontSize="10" fill="white">{p.name.slice(0, 2).toUpperCase()}</text><title>{p.name} · {p.quality} · {p.condition}</title>

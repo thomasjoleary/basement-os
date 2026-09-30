@@ -1,7 +1,8 @@
 # Ships and deck plans
 
 Ships are a GM-authored map and inventory system, not a combat, flight or power
-simulation. `/v2/ships` is available from the existing home page and the v2 home.
+simulation. `/v2/ships` is linked from the v2 home. Assigned players can also open the
+ship list directly; the v1 homepage has no Ships button.
 GMs see all ships; players see only ships they own or are assigned to as crew.
 
 ## Enable
@@ -54,7 +55,12 @@ actionable error. Development tests never require production credentials.
 The fighter has a cockpit, bunk cabin, toilet and engineering area with control,
 propulsion, power and life support. The freighter has a crew deck (cockpit,
 bedroom, kitchen, washroom, stores) and a cargo deck (hold and engineering),
-connected by a lift, with basic equipment. These are layouts, not ship stats.
+connected by a lift, with basic equipment and three rear boosters on the cargo
+deck. The fighter has two wings with one booster on each. Hull panels, wings and
+boosters are inspectable inventory records, with shapes derived from their Type
+(`Hull panel`, `Port wing`, `Starboard wing`, `Booster`). These types use visual
+footprints only. No migration is needed. Template updates affect new copies only;
+existing ships are never overwritten. These are layouts, not ship stats.
 
 ## Data and permissions
 
@@ -123,3 +129,11 @@ power budgets, damage simulation, hyperlane rules or drive modifiers are added.
   original version. Unrelated lint cleanup is not included.
 - Production database state and live-account end-to-end tests were not checked.
   Local screenshots are in ignored `test-results/`; they are not hosted links.
+
+## Follow-up verification — 2026-09-30
+
+- 19 model/database checks and 8 Chromium scenarios passed, including
+  exterior component inspection and page-width assertions at 1024, 1280,
+  1366, 1440 and 1536px with long names, zoom and pan.
+- Fighter and freighter cargo-deck screenshots inspected at 1366px.
+- TypeScript and focused ship ESLint checks passed.

@@ -49,6 +49,7 @@ async function drag(page: Page, from: { x: number; y: number }, to: { x: number;
 
 test('templates create independent ships, repeated creation and cancel', async ({ page }) => {
   const api = await backend(page)
+  await page.setViewportSize({ width: 1366, height: 800 })
   await page.goto('/v2/ships')
   await page.getByRole('button', { name: 'New ship', exact: true }).click()
   await page.getByLabel('Ship name').fill('Cancel this')
@@ -60,7 +61,15 @@ test('templates create independent ships, repeated creation and cancel', async (
     await page.getByLabel('Starting plan').selectOption(template)
     await page.getByRole('button', { name: 'Create ship', exact: true }).dblclick()
     await expect(page.getByRole('heading', { name: `New ${template}` })).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1366)
+    if (template === 'freighter') await page.getByLabel('Current deck').selectOption({ label: 'Cargo deck' })
     await page.screenshot({ path: `test-results/ship-template-${template}.png`, fullPage: true })
+    const current = [...api.ships.values()].find(s => s.name === `New ${template}`)!
+    const booster = current.plan.parts.find(p => p.type === 'Booster')!
+    await page.locator(`[data-kind="part"][data-id="${booster.id}"]`).click()
+    await expect(page.getByLabel('Component name')).toHaveValue(booster.name)
+    await expect(page.getByLabel('Type', { exact: true })).toHaveValue('Booster')
+    await expect(page.getByText('All changes saved', { exact: false })).toBeVisible()
     await page.getByRole('link', { name: 'Back to ships' }).click()
   }
   expect(api.stats.saves).toBe(2); expect(api.ships.size).toBe(3)
@@ -209,4 +218,26 @@ test('mobile deck and inventory controls remain usable', async ({ page }) => {
   await expect(page.getByLabel('Component name')).toHaveValue('Main propulsion')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: 'test-results/ship-mobile.png', fullPage: true })
+})
+
+test('laptop layout contains long names while canvas zoom and pan stay inside the map', async ({ page }) => {
+  const api = await backend(page)
+  const ship = api.ships.get(shipId)!
+  ship.name = 'LongShipName'.repeat(10)
+  ship.plan.decks[0].name = 'LongDeckName'.repeat(10)
+  for (const width of [1024, 1280, 1366, 1440, 1536]) {
+    await page.setViewportSize({ width, height: 800 })
+    await page.goto(`/v2/ships/${shipId}`)
+    await expect(page.getByRole('heading', { name: ship.name })).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth), `page width at ${width}`).toBeLessThanOrEqual(width)
+    await page.getByRole('button', { name: 'pan', exact: true }).click()
+    await page.getByRole('button', { name: 'Zoom in', exact: true }).click()
+    await drag(page, await cell(page, 3, 3), await cell(page, 8, 5))
+    expect(await page.evaluate(() => document.documentElement.scrollWidth), `panned page width at ${width}`).toBeLessThanOrEqual(width)
+    await page.getByRole('button', { name: 'Fit deck' }).click()
+    await page.getByRole('button', { name: 'Ship', exact: true }).click()
+    await expect(page.getByLabel('GM-only notes')).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width)
+    if (width === 1366) await page.screenshot({ path: 'test-results/ship-laptop-long-names.png', fullPage: true })
+  }
 })

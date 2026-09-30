@@ -23,8 +23,16 @@ export function emptyPlan(): ShipPlan {
 export function roomAt(deck: Deck, p: Point): Room | undefined {
   return deck.rooms.find(r => p.x >= r.x && p.y >= r.y && p.x < r.x + r.width && p.y < r.y + r.height)
 }
+// Visual footprints are derived from ordinary component types (schema v1 unchanged).
+export function partFootprint(type: string) {
+  if (type === 'Port wing' || type === 'Starboard wing') return { width: 4, height: 5 }
+  if (type === 'Booster') return { width: 2, height: 3 }
+  if (type === 'Hull panel') return { width: 2, height: 1 }
+  return { width: 1, height: 1 }
+}
 export function movePart(plan: ShipPlan, id: string, deck: Deck, p: Point): ShipPlan {
-  const pos = { x: Math.max(0, Math.min(deck.width - 1, p.x)), y: Math.max(0, Math.min(deck.height - 1, p.y)) }
+  const size = partFootprint(plan.parts.find(part => part.id === id)?.type ?? '')
+  const pos = { x: Math.max(0, Math.min(deck.width - size.width, p.x)), y: Math.max(0, Math.min(deck.height - size.height, p.y)) }
   return { ...plan, parts: plan.parts.map(part => part.id === id ? { ...part, ...pos, deck_id: deck.id, room_id: roomAt(deck, pos)?.id ?? null } : part) }
 }
 export function removeDeck(plan: ShipPlan, id: string): ShipPlan {
