@@ -101,9 +101,11 @@ test.describe('Player character sheet access', () => {
       page.on('pageerror', () => { browserErrors++ })
       page.on('console', message => { if (message.type() === 'error') browserErrors++ })
       page.on('requestfailed', request => { if (new URL(request.url()).pathname.includes('v2_ship')) failedShipRequests++ })
-      // Fail closed if a future UI regression attempts any REST mutation.
+      // Fail closed for mutations; the approval-status RPC is explicitly read-only.
       await page.route(`${new URL(SUPABASE_URL).origin}/rest/v1/**`, async route => {
-        if (!['GET', 'HEAD'].includes(route.request().method())) {
+        const request = route.request()
+        const isStatusRead = request.method() === 'POST' && new URL(request.url()).pathname === '/rest/v1/rpc/campaign_access_status'
+        if (!['GET', 'HEAD'].includes(request.method()) && !isStatusRead) {
           writeAttempts++; await route.abort(); return
         }
         if (new URL(route.request().url()).pathname.includes('v2_ship_gm_notes')) privateNoteReads++

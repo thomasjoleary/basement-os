@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { startAuthorizedRefresh } from '@/lib/authorized-refresh'
 import Link from 'next/link'
 import {
   BodyKind,
@@ -222,7 +223,7 @@ export default function SystemBuilderPage() {
   useEffect(() => {
     if (!isGM) return
     const channel = supabase
-      .channel(`v2-galaxy-system-${id}`)
+      .channel(`v2-galaxy-system-${id}`, { config: { private: true } })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'v2_system_bodies', filter: `system_id=eq.${id}` }, payload => {
         setBodies(prev => {
           if (payload.eventType === 'DELETE') return prev.filter(b => b.id !== (payload.old as { id: string }).id)
@@ -238,7 +239,12 @@ export default function SystemBuilderPage() {
         setSystem(payload.new as StarSystem)
       })
       .subscribe()
-    return () => { supabase.removeChannel(channel) }
+    const stopRefresh = startAuthorizedRefresh(async () => {
+      const [sys, bods] = await Promise.all([supabase.from('v2_star_systems').select('id').eq('id', id).maybeSingle(), supabase.from('v2_system_bodies').select('id').eq('system_id', id)])
+      if (!sys.error && !sys.data) { setSystem(null); setError('This system is no longer available.') }
+      if (bods.data) { const ids = new Set(bods.data.map(b => b.id)); setBodies(prev => prev.filter(b => ids.has(b.id))) }
+    })
+    return () => { stopRefresh(); supabase.removeChannel(channel) }
   }, [id, isGM])
 
   // ---- Mutations ------------------------------------------------------------

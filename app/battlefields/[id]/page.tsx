@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { startAuthorizedRefresh } from '@/lib/authorized-refresh'
 import { useParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import BattlefieldGrid from '@/components/battlefield/BattlefieldGrid'
@@ -134,12 +135,13 @@ export default function BattlefieldEditorPage() {
   useEffect(() => {
     if (isGM) return
     const channel = supabase
-      .channel(`bf-player-${id}`)
+      .channel(`bf-player-${id}`, { config: { private: true } })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'battlefields', filter: `id=eq.${id}` }, () => { loadPlayer() })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'battlefield_visibility', filter: `battlefield_id=eq.${id}` }, () => { loadPlayer() })
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'characters' }, () => { loadPlayer() })
       .subscribe()
-    return () => { supabase.removeChannel(channel) }
+    const stopRefresh = startAuthorizedRefresh(loadPlayer)
+    return () => { stopRefresh(); supabase.removeChannel(channel) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, isGM])
 
@@ -147,7 +149,7 @@ export default function BattlefieldEditorPage() {
   useEffect(() => {
     if (!isGM) return
     const channel = supabase
-      .channel(`battlefield-${id}`)
+      .channel(`battlefield-${id}`, { config: { private: true } })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'battlefield_entities', filter: `battlefield_id=eq.${id}` }, payload => {
         setEntities(prev => {
           if (payload.eventType === 'DELETE') return prev.filter(e => e.id !== (payload.old as { id: string }).id)
@@ -187,12 +189,28 @@ export default function BattlefieldEditorPage() {
         })
       })
       .subscribe()
-    return () => { supabase.removeChannel(channel) }
+    const stopRefresh = startAuthorizedRefresh(async () => {
+      const [bf, ents, pres, vis, rev, chars] = await Promise.all([
+        supabase.from('battlefields').select('id').eq('id', id).maybeSingle(),
+        supabase.from('battlefield_entities').select('id').eq('battlefield_id', id),
+        supabase.from('battlefield_presets').select('id'),
+        supabase.from('battlefield_visibility').select('id').eq('battlefield_id', id),
+        supabase.from('battlefield_entity_reveals').select('id').eq('battlefield_id', id),
+        supabase.from('characters').select('id'),
+      ])
+      if (!bf.error && !bf.data) setBattlefield(null)
+      if (ents.data) { const ids = new Set(ents.data.map(e => e.id)); setEntities(prev => prev.filter(e => ids.has(e.id))) }
+      if (pres.data) { const ids = new Set(pres.data.map(p => p.id)); setPresets(prev => prev.filter(p => ids.has(p.id))) }
+      if (vis.data) { const ids = new Set(vis.data.map(v => v.id)); setVisibility(prev => prev.filter(v => ids.has(v.id))) }
+      if (rev.data) { const ids = new Set(rev.data.map(r => r.id)); setReveals(prev => prev.filter(r => ids.has(r.id))) }
+      if (chars.data) { const ids = new Set(chars.data.map(c => c.id)); setAllChars(prev => prev.filter(c => ids.has(c.id))) }
+    })
+    return () => { stopRefresh(); supabase.removeChannel(channel) }
   }, [id, isGM])
 
   // ---- Ping channel (broadcast, both roles) -----------------------------
   useEffect(() => {
-    const ch = supabase.channel(`bf-ping-${id}`, { config: { broadcast: { self: true } } })
+    const ch = supabase.channel(`bf-ping-${id}`, { config: { private: true, broadcast: { self: true } } })
     ch.on('broadcast', { event: 'ping' }, ({ payload }) => {
       const pid = Date.now() + Math.random()
       setPings(prev => [...prev, { id: pid, x: payload.x, y: payload.y, color: payload.color || '#fbbf24' }])

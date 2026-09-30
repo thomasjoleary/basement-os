@@ -10,7 +10,8 @@
     "test:e2e": "playwright test",
     "test:ships": "node scripts/test-ships.mjs",
     "test:ships:ui": "playwright test --config playwright.ships.config.ts",
-    "validate:thermal": "tsc --outDir .validate-tmp --module commonjs --target es2020 --moduleResolution node --skipLibCheck scripts/validate-thermal.ts && node .validate-tmp/scripts/validate-thermal.js; rm -rf .validate-tmp"
+    "validate:thermal": "tsc --outDir .validate-tmp --module commonjs --target es2020 --moduleResolution node --skipLibCheck scripts/validate-thermal.ts && node .validate-tmp/scripts/validate-thermal.js; rm -rf .validate-tmp",
+    "test:registration": "node scripts/test-registration.mjs"
   },
   "dependencies": {
     "@supabase/auth-helpers-nextjs": "^0.15.0",

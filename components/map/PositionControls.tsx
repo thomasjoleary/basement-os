@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { startAuthorizedRefresh } from '@/lib/authorized-refresh'
 
 interface Character {
   id: string
@@ -74,14 +75,15 @@ export default function PositionControls({
     
     // Subscribe to changes
     const subscription = supabase
-      .channel('position_controls_changes')
+      .channel('position_controls_changes', { config: { private: true } })
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'player_positions' },
         () => fetchPositions()
       )
       .subscribe()
+    const stopRefresh = startAuthorizedRefresh(fetchPositions)
     
-    return () => {
+    return () => { stopRefresh();
       subscription.unsubscribe()
     }
   }, [isGM])

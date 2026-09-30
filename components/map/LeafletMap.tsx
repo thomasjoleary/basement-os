@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react'
 import 'leaflet/dist/leaflet.css'
 import { supabase } from '@/lib/supabase'
+import { startAuthorizedRefresh } from '@/lib/authorized-refresh'
 import polygonClipping from 'polygon-clipping'
 
 // Biome data from MapOfWorld.map
@@ -179,14 +180,15 @@ export default function LeafletMap({
     
     // Subscribe to realtime changes
     const sub = supabase
-      .channel('marker_visibility_changes')
+      .channel('marker_visibility_changes', { config: { private: true } })
       .on('postgres_changes', 
         { event: '*', schema: 'public', table: 'player_marker_visibility' },
         fetchVisibility
       )
       .subscribe()
+    const stopRefresh = startAuthorizedRefresh(fetchVisibility)
     
-    return () => { sub.unsubscribe() }
+    return () => { stopRefresh(); sub.unsubscribe() }
   }, [isGM, playerCharacterId])
 
   // Fetch markers from database
@@ -234,11 +236,12 @@ export default function LeafletMap({
     
     // Subscribe to realtime
     const sub = supabase
-      .channel('fog_changes')
+      .channel('fog_changes', { config: { private: true } })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'player_fog_polygons' }, fetchFog)
       .subscribe()
+    const stopRefresh = startAuthorizedRefresh(fetchFog)
     
-    return () => { sub.unsubscribe() }
+    return () => { stopRefresh(); sub.unsubscribe() }
   }, [])
   
   // Fetch player positions
@@ -267,11 +270,12 @@ export default function LeafletMap({
     
     // Subscribe to realtime
     const sub = supabase
-      .channel('position_changes')
+      .channel('position_changes', { config: { private: true } })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'player_positions' }, fetchPositions)
       .subscribe()
+    const stopRefresh = startAuthorizedRefresh(fetchPositions)
     
-    return () => { sub.unsubscribe() }
+    return () => { stopRefresh(); sub.unsubscribe() }
   }, [isGM, playerCharacterId])
   
   // Compute union of screen polygons (players only)

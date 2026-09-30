@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { supabase } from '@/lib/supabase'
+import { startAuthorizedRefresh } from '@/lib/authorized-refresh'
 
 interface FogPolygon {
   id: string
@@ -100,14 +101,15 @@ export default function FogLayer({
     
     // Subscribe to realtime changes
     const subscription = supabase
-      .channel('fog_polygons_changes')
+      .channel('fog_polygons_changes', { config: { private: true } })
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'player_fog_polygons' },
         () => fetchFogPolygons()
       )
       .subscribe()
+    const stopRefresh = startAuthorizedRefresh(fetchFogPolygons)
     
-    return () => {
+    return () => { stopRefresh();
       subscription.unsubscribe()
     }
   }, [isGM, playerCharacterId])

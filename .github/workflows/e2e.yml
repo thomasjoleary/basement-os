@@ -25,6 +25,9 @@ jobs:
       - name: Test ship model and database permissions locally
         run: npm run test:ships
 
+      - name: Test registration approval permissions locally
+        run: npm run test:registration
+
       - name: Test ship editor locally
         run: npm run test:ships:ui
 

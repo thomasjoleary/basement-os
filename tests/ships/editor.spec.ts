@@ -15,6 +15,7 @@ async function backend(page: Page, role: 'gm' | 'player' | 'outsider' | 'anon' =
   await page.route('http://127.0.0.1:54321/**', async route => {
     const url = new URL(route.request().url()), path = url.pathname
     const fulfill = (data: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(data) })
+    if (path.includes('/rpc/campaign_access_status')) return fulfill({ status: 'approved', is_gm: role === 'gm' })
     if (path.includes('/profiles')) return fulfill(url.searchParams.get('select') === 'role' ? { role: role === 'gm' ? 'gm' : 'player' } : [{ id: gm, username: 'GM' }, { id: player, username: 'Pilot' }])
     if (path.includes('/v2_ship_gm_notes')) { stats.notesReads++; return fulfill({ notes: notes.get(url.searchParams.get('ship_id')?.slice(3) ?? '') ?? '' }) }
     if (path.includes('/rpc/v2_save_ship')) {
@@ -116,6 +117,13 @@ test('room/fixture editing, quality tags, deck changes, save/reload and discard'
   await expect(page.getByLabel('Component name')).toHaveValue('Repair bench')
   await expect(page.getByLabel('Black Market', { exact: true })).toBeChecked()
   await page.getByLabel('Component name').fill('Unsaved rename')
+  await page.evaluate(async () => {
+    const channel = new BroadcastChannel('sb-127-auth-token')
+    channel.postMessage({ event: 'TOKEN_REFRESHED', session: JSON.parse(localStorage.getItem('sb-127-auth-token')!) })
+    await new Promise(resolve => setTimeout(resolve, 100))
+    channel.close()
+  })
+  await expect(page.getByLabel('Component name')).toHaveValue('Unsaved rename')
   page.once('dialog', dialog => dialog.dismiss())
   await page.getByRole('link', { name: 'Back to ships' }).click()
   await expect(page.getByLabel('Component name')).toHaveValue('Unsaved rename')
@@ -205,7 +213,7 @@ test('unassigned and anonymous users cannot open a ship editor', async ({ page, 
   // New page shares storage: explicitly remove the previous test session.
   await anonymous.evaluate(() => localStorage.clear())
   await anonymous.reload()
-  await expect(anonymous).toHaveURL(/\/login$/)
+  await expect(anonymous.getByRole('link', { name: 'Sign in or request access' })).toBeVisible()
 })
 
 test('mobile deck and inventory controls remain usable', async ({ page }) => {

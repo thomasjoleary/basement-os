@@ -57,3 +57,19 @@ definitions/privileges, table grants and publication flags, then removes the gat
 Rollback reopens pre-approval access for pending accounts and requires explicit
 review. It does not restore deleted accounts. The private rollback table contains
 only schema/privilege definitions, not account data or credentials.
+
+## Companion UI and local verification
+
+The root access gate keeps campaign pages unmounted until approval is verified,
+with explicit pending, sign-in and missing-setup states. `/approvals` provides GM
+review, cancel, guarded approval and retry. Signup copy explains confirmation and
+approval. Same-account token refresh preserves unsaved ship edits. All Realtime
+channels use private mode. Deletions refresh within 15 seconds while visible or
+on focus; editor refreshes remove missing records without replacing live drafts.
+
+Local results: 11 registration SQL checks; 8 ship browser scenarios; 5 approval
+browser scenarios (including deletion refresh and mobile GM review); focused
+new-code ESLint, TypeScript and production build passed. Ship model/database suite
+has 19 passing checks. Screenshots of pending and mobile GM review were inspected.
+Deployed GraphQL/WebSocket protocol checks and private-only project configuration
+remain the connector rollout step. No live campaign records were created here.

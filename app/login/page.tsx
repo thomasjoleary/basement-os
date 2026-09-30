@@ -40,7 +40,7 @@ export default function Login() {
       if (error) {
         setMessage({ text: error.message, type: 'error' })
       } else {
-        setMessage({ text: 'Check your email for the confirmation link!', type: 'success' })
+        setMessage({ text: 'Check your email for the confirmation link. After confirmation, a GM must approve your account before campaign access.', type: 'success' })
       }
     } else {
       const { error } = await supabase.auth.signInWithPassword({
@@ -68,7 +68,7 @@ export default function Login() {
   const subtitle = isForgotPassword
     ? 'Enter your email and we\'ll send a reset link.'
     : isSignUp
-    ? 'Create a new profile to track your journey.'
+    ? 'Request an account. Campaign access requires GM approval.'
     : 'Log in to access your character sheet.'
 
   return (
