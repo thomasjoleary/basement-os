@@ -49,11 +49,20 @@ const db = new PGlite()
 const gm = '10000000-0000-0000-0000-000000000001', owner = '10000000-0000-0000-0000-000000000002', crew = '10000000-0000-0000-0000-000000000003', stranger = '10000000-0000-0000-0000-000000000004'
 const id = '20000000-0000-0000-0000-000000000001', second = '20000000-0000-0000-0000-000000000002'
 await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE SCHEMA auth;
+  -- Reproduce Supabase's explicit anon defaults, not just PostgreSQL's PUBLIC grant.
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT EXECUTE ON FUNCTIONS TO anon, authenticated;
+  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated;
   CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
   GRANT USAGE ON SCHEMA auth TO anon, authenticated;
-  CREATE TABLE profiles(id uuid PRIMARY KEY, username text, role text);
-  GRANT SELECT ON profiles TO authenticated;
-  INSERT INTO profiles VALUES ('${gm}', 'GM', 'gm'), ('${owner}', 'Owner', 'player'), ('${crew}', 'Crew', 'player'), ('${stranger}', 'Stranger', 'player');`)
+  CREATE TABLE profiles(id uuid PRIMARY KEY, username text, role text, avatar_url text, created_at timestamptz DEFAULT now());
+  REVOKE ALL ON profiles FROM PUBLIC, anon, authenticated;
+  GRANT SELECT, UPDATE ON profiles TO authenticated;
+  ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
+  CREATE POLICY profiles_read ON profiles FOR SELECT TO authenticated USING (true);
+  CREATE POLICY profiles_self_edit ON profiles FOR UPDATE TO authenticated USING (id = auth.uid()) WITH CHECK (id = auth.uid());
+  INSERT INTO profiles(id,username,role) VALUES ('${gm}', 'GM', 'gm'), ('${owner}', 'Owner', 'player'), ('${crew}', 'Crew', 'player'), ('${stranger}', 'Stranger', 'player');`)
+const profileMigration = readFileSync(new URL('../sql/v2_006_profile_update_columns.sql', import.meta.url), 'utf8')
+await db.exec(profileMigration); await db.exec(profileMigration)
 const migration = readFileSync(new URL('../sql/v2_005_ships.sql', import.meta.url), 'utf8')
 await db.exec(migration); await db.exec(migration)
 console.log('PASS migration applies and is rerunnable'); passed++
@@ -67,6 +76,39 @@ async function save(shipId, version, plan = freighter, notes = 'GM SECRET', ship
   return (await db.query('SELECT * FROM v2_save_ship($1,$2,$3,$4,$5,$6,$7,$8)', [shipId, version, 'Test ship', 'Public description', shipOwner, shipCrew, JSON.stringify(plan), notes])).rows[0]
 }
 try {
+  await test('explicit anon default grants are revoked on both ship entry functions', async () => {
+    for (const signature of ['public.v2_ship_is_gm()', 'public.v2_save_ship(uuid,integer,text,text,uuid,uuid[],jsonb,text)']) {
+      const { rows } = await db.query("SELECT has_function_privilege('anon', $1, 'EXECUTE') AS anon_execute, has_function_privilege('authenticated', $1, 'EXECUTE') AS authenticated_execute", [signature])
+      assert.equal(rows[0].anon_execute, false, `${signature} must deny anon even with explicit default grants`)
+      assert.equal(rows[0].authenticated_execute, true, `${signature} must remain callable by authenticated users`)
+    }
+  })
+  await test('ship table/helper privileges are deliberately bounded despite broad defaults', async () => {
+    for (const table of ['public.v2_ships', 'public.v2_ship_gm_notes']) {
+      for (const privilege of ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'TRIGGER', 'REFERENCES']) {
+        const { rows } = await db.query("SELECT has_table_privilege('authenticated', $1, $2) AS member, has_table_privilege('anon', $1, $2) AS anon", [table, privilege])
+        assert.equal(rows[0].member, ['SELECT', 'INSERT', 'UPDATE', 'DELETE'].includes(privilege), `${table} ${privilege}`)
+        assert.equal(rows[0].anon, false)
+      }
+      const version = Number((await db.query("SHOW server_version_num")).rows[0].server_version_num)
+      if (version >= 170000) assert.equal((await db.query("SELECT has_table_privilege('authenticated', $1, 'MAINTAIN') AS allowed", [table])).rows[0].allowed, false)
+    }
+    for (const [signature, authExpected] of [['public.v2_ship_check_plan(jsonb)', true], ['public.v2_ship_before_write()', false]]) {
+      const { rows } = await db.query("SELECT has_function_privilege('anon', $1, 'EXECUTE') AS anon, has_function_privilege('authenticated', $1, 'EXECUTE') AS member", [signature])
+      assert.equal(rows[0].anon, false); assert.equal(rows[0].member, authExpected)
+    }
+    assert.equal((await db.query("SELECT prosecdef FROM pg_proc WHERE oid = 'public.v2_ship_is_gm()'::regprocedure")).rows[0].prosecdef, false)
+  })
+  await as(owner)
+  await test('profile role/id/created_at updates fail while self username/avatar edits succeed', async () => {
+    await assert.rejects(() => db.query("UPDATE profiles SET role='gm' WHERE id=$1", [owner]), /permission denied/)
+    await assert.rejects(() => db.query('UPDATE profiles SET id=id WHERE id=$1', [owner]), /permission denied/)
+    await assert.rejects(() => db.query('UPDATE profiles SET created_at=now() WHERE id=$1', [owner]), /permission denied/)
+    const { rows } = await db.query('UPDATE profiles SET username=$1, avatar_url=$2 WHERE id=$3 RETURNING username,avatar_url,role', ['Renamed', 'https://example.invalid/avatar.png', owner])
+    assert.deepEqual(rows[0], { username: 'Renamed', avatar_url: 'https://example.invalid/avatar.png', role: 'player' })
+    assert.equal((await db.query("UPDATE profiles SET username='no' WHERE id=$1 RETURNING id", [crew])).rows.length, 0)
+    assert.equal((await db.query('SELECT public.v2_ship_is_gm() AS gm')).rows[0].gm, false)
+  })
   await as(gm)
   await test('GM atomic create persists decks, links, assignments and private notes', async () => {
     const ship = await save(id, 0)
@@ -101,6 +143,7 @@ try {
   })
   await as(null, 'anon')
   await test('anonymous reads and save RPC are denied', async () => {
+    await assert.rejects(() => db.query('SELECT public.v2_ship_is_gm()'), /permission denied/)
     await assert.rejects(() => db.query('SELECT * FROM v2_ships'), /permission denied/)
     await assert.rejects(() => db.query('SELECT * FROM v2_ship_gm_notes'), /permission denied/)
     await assert.rejects(() => save(id, 1), /permission denied/)

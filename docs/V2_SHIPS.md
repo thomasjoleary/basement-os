@@ -9,6 +9,9 @@ GMs see all ships; players see only ships they own or are assigned to as crew.
 1. Apply `sql/v2_005_ships.sql` in the intended Supabase environment after the
    existing `profiles` table exists. It is transactional and rerunnable. It does
    not alter the galaxy, characters or their existing access policies.
+   Also apply the separately approved `sql/v2_006_profile_update_columns.sql`:
+   authenticated users retain username/avatar updates under existing self-row
+   RLS, but cannot change their role, ID or creation timestamp.
 2. Run `npm ci`, `npm run test:ships`, and `npx tsc --noEmit` locally. Browser
    checks: `npx playwright install chromium`, then `npm run test:ships:ui`.
 3. Start the app with its usual Supabase environment variables. Visit
@@ -73,6 +76,11 @@ rows. Anonymous table access and anonymous save RPC execution are revoked.
 expected revision, and updates the ship and private notes in one transaction.
 The UI never requests the private-notes table for a player. Authorization does
 not rely on the hidden editing controls or the client-side role check.
+The GM helper is security-invoker. Both exposed entry functions explicitly
+revoke `PUBLIC` and `anon` execution, including direct Supabase default grants.
+Ship-table grants are reset before granting authenticated CRUD only (no
+TRUNCATE/TRIGGER/REFERENCES/MAINTAIN). The validator is callable by authenticated
+saves; the trigger function is not callable by either API role.
 
 There is no realtime subscription yet; readers reload to see changes. Revoked
 access is enforced on subsequent database requests. Like any already-rendered
@@ -101,7 +109,9 @@ power budgets, damage simulation, hyperlane rules or drive modifiers are added.
 
 ## Local verification — 2026-09-30
 
-- `npm run test:ships`: 15 model/database checks passed.
+- `npm run test:ships`: 18 model/database checks passed, including explicit
+  anonymous function defaults, broad table defaults and approved profile-column
+  restrictions. The anonymous-grant regression failed before the correction.
 - `npm run test:ships:ui`: all 7 Chromium scenarios passed. After visual spacing
   and label adjustments, the 3 affected template/player/mobile scenarios passed
   again. Both templates and mobile inspection screenshots were visually reviewed.

@@ -3,9 +3,9 @@
 BEGIN;
 
 CREATE OR REPLACE FUNCTION public.v2_ship_is_gm() RETURNS boolean
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public
+LANGUAGE sql STABLE SECURITY INVOKER SET search_path = public
 AS $$ SELECT EXISTS (SELECT 1 FROM public.profiles WHERE id = auth.uid() AND role = 'gm') $$;
-REVOKE ALL ON FUNCTION public.v2_ship_is_gm() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.v2_ship_is_gm() FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.v2_ship_is_gm() TO authenticated;
 
 CREATE TABLE IF NOT EXISTS public.v2_ships (
@@ -108,6 +108,9 @@ BEGIN
   END LOOP;
 END $$;
 
+REVOKE ALL ON FUNCTION public.v2_ship_check_plan(jsonb) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.v2_ship_check_plan(jsonb) TO authenticated;
+
 CREATE OR REPLACE FUNCTION public.v2_ship_before_write() RETURNS trigger
 LANGUAGE plpgsql SET search_path = public AS $$
 BEGIN
@@ -119,6 +122,9 @@ BEGIN
   NEW.updated_at := now();
   RETURN NEW;
 END $$;
+-- Trigger execution does not require callers to hold EXECUTE on the trigger
+-- function; its nested validator does run with the caller's permissions.
+REVOKE ALL ON FUNCTION public.v2_ship_before_write() FROM PUBLIC, anon, authenticated;
 DROP TRIGGER IF EXISTS v2_ship_validate ON public.v2_ships;
 CREATE TRIGGER v2_ship_validate BEFORE INSERT OR UPDATE ON public.v2_ships FOR EACH ROW EXECUTE FUNCTION public.v2_ship_before_write();
 
@@ -130,8 +136,9 @@ DROP POLICY IF EXISTS "Assigned players read ships" ON public.v2_ships;
 CREATE POLICY "Assigned players read ships" ON public.v2_ships FOR SELECT TO authenticated USING (owner_id = auth.uid() OR auth.uid() = ANY(crew_ids));
 DROP POLICY IF EXISTS "GM private ship notes" ON public.v2_ship_gm_notes;
 CREATE POLICY "GM private ship notes" ON public.v2_ship_gm_notes FOR ALL TO authenticated USING (public.v2_ship_is_gm()) WITH CHECK (public.v2_ship_is_gm());
+-- Clear Supabase's explicit default grants before granting the intended API.
+REVOKE ALL ON public.v2_ships, public.v2_ship_gm_notes FROM PUBLIC, anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.v2_ships, public.v2_ship_gm_notes TO authenticated;
-REVOKE ALL ON public.v2_ships, public.v2_ship_gm_notes FROM anon;
 
 -- Security invoker: callers retain RLS, and every save additionally requires GM.
 -- Lock/version check protects against lost updates; ship + notes commit together.
@@ -154,6 +161,6 @@ BEGIN
     ON CONFLICT ON CONSTRAINT v2_ship_gm_notes_pkey DO UPDATE SET notes=EXCLUDED.notes;
   RETURN result;
 END $$;
-REVOKE ALL ON FUNCTION public.v2_save_ship(uuid,integer,text,text,uuid,uuid[],jsonb,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.v2_save_ship(uuid,integer,text,text,uuid,uuid[],jsonb,text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.v2_save_ship(uuid,integer,text,text,uuid,uuid[],jsonb,text) TO authenticated;
 COMMIT;

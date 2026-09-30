@@ -63,6 +63,16 @@ test.describe('Player character sheet access', () => {
   })
 
   test.beforeEach(async ({ page }) => {
+    // Report only the non-secret project ref actually contacted by the preview.
+    // CI's existing Vercel bypass is used normally; no credentials are logged.
+    const observed = new Set<string>()
+    page.on('request', request => {
+      const host = new URL(request.url()).hostname
+      if (/^[a-z0-9]+\.supabase\.co$/.test(host) && !observed.has(host)) {
+        observed.add(host)
+        console.log(`::notice title=Observed preview Supabase project::${host.split('.')[0]}`)
+      }
+    })
     await injectSession(page)
   })
 
