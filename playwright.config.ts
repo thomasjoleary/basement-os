@@ -8,6 +8,7 @@ const bypassSecret = process.env.VERCEL_AUTOMATION_BYPASS_SECRET
 
 export default defineConfig({
   testDir: './tests',
+  testIgnore: '**/registration/**',
   fullyParallel: false,
   retries: process.env.CI ? 1 : 0,
   workers: 1,

@@ -40,3 +40,8 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .validate-tmp/
+
+# Local browser verification artifacts
+/test-results/
+/playwright-report/
+/.local-playwright.config.ts

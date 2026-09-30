@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { startAuthorizedRefresh } from '@/lib/authorized-refresh'
 
 interface Character {
   id: string
@@ -92,7 +93,7 @@ export default function FogControls({
     
     // Subscribe to changes
     const subscription = supabase
-      .channel('fog_controls_changes')
+      .channel('fog_controls_changes', { config: { private: true } })
       .on('postgres_changes',
         { 
           event: '*', 
@@ -103,8 +104,9 @@ export default function FogControls({
         () => fetchPolygons()
       )
       .subscribe()
+    const stopRefresh = startAuthorizedRefresh(fetchPolygons)
     
-    return () => {
+    return () => { stopRefresh();
       subscription.unsubscribe()
     }
   }, [isGM, selectedCharacterId])

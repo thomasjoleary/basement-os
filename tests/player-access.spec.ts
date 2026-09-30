@@ -11,6 +11,9 @@ const PLAYER_PASSWORD = process.env.PLAYER_PASSWORD!
 const projectRef = new URL(SUPABASE_URL).hostname.split('.')[0]
 const AUTH_STORAGE_KEY = `sb-${projectRef}-auth-token`
 
+// Live accounts: never attach credential-bearing traces or campaign screenshots.
+test.use({ trace: 'off', screenshot: 'off' })
+
 let savedSession: object
 
 async function injectSession(page: Page) {
@@ -37,6 +40,9 @@ test.describe('Player character sheet access', () => {
       password: PLAYER_PASSWORD,
     })
     if (error || !authData.user) throw new Error(`Auth setup failed: ${error?.message}`)
+    const { data: access, error: accessError } = await supabase.rpc('campaign_access_status')
+    expect(accessError).toBeNull()
+    expect(access?.status).toBe('approved')
     playerUserId = authData.user.id
     savedSession = authData.session!
 
@@ -70,7 +76,16 @@ test.describe('Player character sheet access', () => {
     if (!ownCharacterId) {
       test.skip(true, 'No character is assigned to the test player account')
     }
+    const read = page.waitForResponse(response => {
+      const url = new URL(response.url())
+      return url.pathname === '/rest/v1/characters' && url.searchParams.get('id') === `eq.${ownCharacterId}`
+    })
     await page.goto(`${BASE_URL}/character/${ownCharacterId}`)
+    const response = await read
+    expect(response.status()).toBe(200)
+    expect((await response.json()).id).toBe(ownCharacterId)
+    await expect(page.getByRole('heading', { name: 'Waiting for GM approval' })).toHaveCount(0)
+    console.log('::notice title=Approved production player read::Existing approved player received own character through authorized API.')
     await expect(page).toHaveURL(new RegExp(`/character/${ownCharacterId}`))
   })
 

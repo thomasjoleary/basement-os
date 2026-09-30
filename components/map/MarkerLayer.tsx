@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { startAuthorizedRefresh } from '@/lib/authorized-refresh'
 
 interface MapMarker {
   id: string
@@ -62,14 +63,15 @@ export default function MarkerLayer({
     
     // Subscribe to realtime changes
     const subscription = supabase
-      .channel('map_markers_changes')
+      .channel('map_markers_changes', { config: { private: true } })
       .on('postgres_changes', 
         { event: '*', schema: 'public', table: 'map_markers' },
         () => fetchMarkers()
       )
       .subscribe()
+    const stopRefresh = startAuthorizedRefresh(fetchMarkers)
     
-    return () => {
+    return () => { stopRefresh();
       subscription.unsubscribe()
     }
   }, [isGM])

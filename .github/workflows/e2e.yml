@@ -22,6 +22,11 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install chromium --with-deps
 
+      - name: Test registration permissions and UI
+        run: |
+          npm run test:registration
+          npm run test:registration:ui
+
       - name: Wait for Vercel deployment
         id: vercel
         run: |

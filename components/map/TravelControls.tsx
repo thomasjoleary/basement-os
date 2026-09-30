@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
+import { startAuthorizedRefresh } from '@/lib/authorized-refresh'
 
 interface Character {
   id: string
@@ -107,11 +108,12 @@ export default function TravelControls({
     
     // Subscribe to changes
     const sub = supabase
-      .channel('travel_changes')
+      .channel('travel_changes', { config: { private: true } })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'active_travels' }, fetchTravels)
       .subscribe()
+    const stopRefresh = startAuthorizedRefresh(fetchTravels)
     
-    return () => { sub.unsubscribe() }
+    return () => { stopRefresh(); sub.unsubscribe() }
   }, [isGM])
 
   // Convert distance to real-world miles (same scale as distance tool)

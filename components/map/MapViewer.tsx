@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import dynamic from 'next/dynamic'
 import { supabase } from '@/lib/supabase'
+import { startAuthorizedRefresh } from '@/lib/authorized-refresh'
 import { useTravelAnimation } from './useTravelAnimation'
 
 // Import LeafletMap dynamically to avoid SSR issues
@@ -178,11 +179,12 @@ export default function MapViewer({ isGM }: MapViewerProps) {
     
     // Subscribe to changes
     const sub = supabase
-      .channel('map_travel_changes')
+      .channel('map_travel_changes', { config: { private: true } })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'active_travels' }, fetchTravels)
       .subscribe()
+    const stopRefresh = startAuthorizedRefresh(fetchTravels)
     
-    return () => { sub.unsubscribe() }
+    return () => { stopRefresh(); sub.unsubscribe() }
   }, [isGM])
   
   // Animate active travels (GM only)

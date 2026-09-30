@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
+import { startAuthorizedRefresh } from '@/lib/authorized-refresh'
 import GalaxyMap, { GalaxyTool, GalaxyFocusRequest } from '@/components/galaxy/GalaxyMap'
 import {
   StarSystem,
@@ -114,7 +115,7 @@ export default function GalaxyMapPage() {
   useEffect(() => {
     if (!isGM) return
     const channel = supabase
-      .channel('v2-galaxy-systems')
+      .channel('v2-galaxy-systems', { config: { private: true } })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'v2_star_systems' }, payload => {
         setSystems(prev => {
           if (payload.eventType === 'DELETE') return prev.filter(s => s.id !== (payload.old as { id: string }).id)
@@ -127,7 +128,12 @@ export default function GalaxyMapPage() {
         })
       })
       .subscribe()
-    return () => { supabase.removeChannel(channel) }
+    const stopRefresh = startAuthorizedRefresh(async () => {
+      const [systems, bodies] = await Promise.all([supabase.from('v2_star_systems').select('id'), supabase.from('v2_system_bodies').select('id')])
+      if (systems.data) { const ids = new Set(systems.data.map(s => s.id)); setSystems(prev => prev.filter(s => ids.has(s.id))) }
+      if (bodies.data) { const ids = new Set(bodies.data.map(b => b.id)); setBodies(prev => prev.filter(b => ids.has(b.id))) }
+    })
+    return () => { stopRefresh(); supabase.removeChannel(channel) }
   }, [isGM])
 
   // ---- Derived: colour per system, from its primary star -------------------
