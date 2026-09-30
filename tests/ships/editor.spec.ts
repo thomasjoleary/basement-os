@@ -249,3 +249,74 @@ test('laptop layout contains long names while canvas zoom and pan stay inside th
     if (width === 1366) await page.screenshot({ path: 'test-results/ship-laptop-long-names.png', fullPage: true })
   }
 })
+
+
+test('selection cannot move a fixture when the canvas reflows under a stationary pointer', async ({ page }) => {
+  await backend(page)
+  await page.setViewportSize({ width: 1366, height: 900 })
+  await page.goto(`/v2/ships/${shipId}`)
+  await expect(page.getByTestId('ship-grid')).toBeVisible()
+  const at = await cell(page, 8, 2)
+  await page.mouse.move(at.x, at.y); await page.mouse.down()
+  await expect(page.getByLabel('Component name')).toHaveValue('Flight console')
+  await page.getByTestId('ship-grid').evaluate(el => { el.style.transform = 'translateY(64px)' })
+  await page.mouse.up()
+  await expect(page.getByLabel('Position x')).toHaveValue('8')
+  await expect(page.getByLabel('Position y')).toHaveValue('2')
+  await expect(page.getByText('All changes saved', { exact: false })).toBeVisible()
+})
+
+
+test('different inspector heights keep laptop canvas and viewport fixed across repeated selections', async ({ page }) => {
+  await backend(page)
+  for (const [width, height] of [[1024, 768], [1280, 800], [1366, 900], [1440, 900]]) {
+    await page.setViewportSize({ width, height })
+    await page.goto(`/v2/ships/${shipId}`)
+    const grid = page.getByTestId('ship-grid')
+    await expect(grid).toBeVisible()
+    const before = await grid.boundingBox()
+    const scroll = await page.evaluate(() => ({ x: scrollX, y: scrollY }))
+    for (let repeat = 0; repeat < 3; repeat++) {
+      for (const [x, y] of [[8, 2], [6, 3], [10, 13], [0, 0]]) {
+        const at = await cell(page, x, y); await page.mouse.click(at.x, at.y)
+        expect(await grid.boundingBox()).toEqual(before)
+        expect(await page.evaluate(() => ({ x: scrollX, y: scrollY }))).toEqual(scroll)
+        await expect(page.getByText('All changes saved', { exact: false })).toBeVisible()
+      }
+    }
+    const at = await cell(page, 8, 2); await page.mouse.click(at.x, at.y)
+    await expect(page.getByLabel('Position x')).toHaveValue('8')
+    await expect(page.getByLabel('Position y')).toHaveValue('2')
+    expect(await page.locator('aside').evaluate(el => el.scrollHeight <= el.clientHeight)).toBe(true)
+    if (width === 1366) await page.screenshot({ path: 'test-results/ship-stable-inspector-laptop.png', fullPage: true })
+  }
+})
+
+test('part drag requires deliberate movement and cancelled capture never commits', async ({ page }) => {
+  await backend(page)
+  await page.setViewportSize({ width: 1366, height: 900 })
+  await page.goto(`/v2/ships/${shipId}`)
+  await expect(page.getByTestId('ship-grid')).toBeVisible()
+  let at = await cell(page, 8, 2)
+  await page.mouse.move(at.x, at.y); await page.mouse.down(); await page.mouse.move(at.x + 3, at.y + 3); await page.mouse.up()
+  await expect(page.getByText('All changes saved', { exact: false })).toBeVisible()
+  for (const event of ['pointercancel', 'lostpointercapture']) {
+    at = await cell(page, 8, 2)
+    await page.mouse.move(at.x, at.y); await page.mouse.down()
+    const to = await cell(page, 9, 3); await page.mouse.move(to.x, to.y, { steps: 5 })
+    await page.getByTestId('ship-grid').dispatchEvent(event, { pointerId: 1 })
+    await page.mouse.up()
+    await expect(page.getByLabel('Position x')).toHaveValue('8')
+    await expect(page.getByLabel('Position y')).toHaveValue('2')
+    await expect(page.getByText('All changes saved', { exact: false })).toBeVisible()
+  }
+  await drag(page, await cell(page, 8, 2), await cell(page, 9, 3))
+  await expect(page.getByLabel('Position x')).toHaveValue('9')
+  await expect(page.getByLabel('Position y')).toHaveValue('3')
+  await page.getByRole('button', { name: 'Save ship', exact: true }).click()
+  await expect(page.getByRole('status')).toHaveText('Ship saved.')
+  await page.reload()
+  const to = await cell(page, 9, 3); await page.mouse.click(to.x, to.y)
+  await expect(page.getByLabel('Position x')).toHaveValue('9')
+  await expect(page.getByLabel('Position y')).toHaveValue('3')
+})

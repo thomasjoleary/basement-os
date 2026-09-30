@@ -46,3 +46,6 @@ body {
   background: none !important;
   border: none !important;
 }
+
+/* Keep map coordinates stable when inspector content changes page overflow. */
+html:has([data-ship-editor]) { scrollbar-gutter: stable; }

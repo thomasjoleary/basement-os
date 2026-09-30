@@ -73,7 +73,7 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles }
     if (connection) change({ ...ship.plan, connections: ship.plan.connections.filter(c => c.id !== connection.id) })
     setSelection(null)
   }
-  return <main className="min-h-screen bg-gray-900 text-white p-4 md:p-6">
+  return <main data-ship-editor className="min-h-screen bg-gray-900 text-white p-4 md:p-6">
     <div className="max-w-[1600px] mx-auto">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <div className="min-w-0 max-w-full [overflow-wrap:anywhere]"><Link href="/v2/ships" onClick={e => { if (busy || (dirty && !window.confirm('Leave without saving your changes?'))) e.preventDefault() }} className="text-sm text-gray-400">← Back to ships</Link><h1 className="text-2xl font-bold mt-2">{ship.name}</h1><p className="text-xs text-gray-400 mt-1">{isGM ? dirty ? 'Unsaved changes' : 'All changes saved' : 'Assigned crew · read-only'} · Revision {ship.version}</p></div>
@@ -88,9 +88,9 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles }
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px] gap-4 items-start">
         <ShipGrid key={`${deck.id}:${tool}`} deck={deck} plan={ship.plan} editable={isGM && !busy} tool={tool} selection={selection} onSelect={inspect} onChange={change} onDeck={switchDeck} onMessage={setMessage} />
-        <aside className="min-w-0 [overflow-wrap:anywhere] border border-gray-700 bg-gray-800 rounded-xl overflow-hidden">
-          <div className="flex border-b border-gray-700">{(['inspect', 'inventory', 'ship'] as const).map(t => <button key={t} onClick={() => setTab(t)} className={`flex-1 text-sm py-3 ${tab === t ? 'text-cyan-300 bg-gray-900' : 'text-gray-400'}`}>{t[0].toUpperCase() + t.slice(1)}</button>)}</div>
-          <div className="p-4 space-y-4 max-h-[720px] overflow-y-auto">
+        <aside className="min-w-0 h-[min(640px,75dvh)] flex flex-col [overflow-wrap:anywhere] [overflow-anchor:none] border border-gray-700 bg-gray-800 rounded-xl overflow-hidden">
+          <div className="flex shrink-0 border-b border-gray-700">{(['inspect', 'inventory', 'ship'] as const).map(t => <button key={t} onClick={() => setTab(t)} className={`flex-1 text-sm py-3 ${tab === t ? 'text-cyan-300 bg-gray-900' : 'text-gray-400'}`}>{t[0].toUpperCase() + t.slice(1)}</button>)}</div>
+          <div className="p-4 space-y-4 min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
             {tab === 'ship' && <fieldset disabled={!isGM || busy} className="min-w-0 space-y-4">
               <Field label="Ship name" value={ship.name} onChange={name => setShip({ ...ship, name })} />
               <Notes label="Public description" value={ship.description} onChange={description => setShip({ ...ship, description })} />

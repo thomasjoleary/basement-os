@@ -5,7 +5,7 @@ import { type Deck, type ShipPlan, type Point, type Room, newId, roomAt, movePar
 
 export type ShipTool = 'select' | 'pan' | 'room' | 'wall' | 'door' | 'label' | 'fixture'
 export type Selection = { kind: 'room' | 'mark' | 'part' | 'connection'; id: string } | null
-type Gesture = { start: Point; current: Point; client: Point; pan: Point; part?: string; origin?: Point; mode: ShipTool }
+type Gesture = { start: Point; current: Point; client: Point; pan: Point; part?: string; origin?: Point; mode: ShipTool; pointerId: number; inverse: DOMMatrix; scale: Point; dragging: boolean }
 
 export default function ShipGrid({ deck, plan, editable, tool, selection, onSelect, onChange, onDeck, onMessage }: {
   deck: Deck; plan: ShipPlan; editable: boolean; tool: ShipTool; selection: Selection
@@ -20,16 +20,17 @@ export default function ShipGrid({ deck, plan, editable, tool, selection, onSele
     window.addEventListener('keydown', cancel)
     return () => window.removeEventListener('keydown', cancel)
   }, [])
-  function point(e: React.PointerEvent): Point {
-    const matrix = group.current?.getScreenCTM()
-    if (!matrix) return { x: 0, y: 0 }
-    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(matrix.inverse())
+  function point(e: React.PointerEvent, inverse = group.current?.getScreenCTM()?.inverse()): Point {
+    if (!inverse) return { x: 0, y: 0 }
+    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(inverse)
     return { x: Math.max(0, Math.min(deck.width - 1, Math.floor(p.x / 32))), y: Math.max(0, Math.min(deck.height - 1, Math.floor(p.y / 32))) }
   }
   function down(e: React.PointerEvent<SVGSVGElement>) {
-    if (e.button !== 0 && e.button !== 1) return
+    if ((e.button !== 0 && e.button !== 1) || gesture.current) return
+    const inverse = group.current?.getScreenCTM()?.inverse(), matrix = svg.current?.getScreenCTM()
+    if (!inverse || !matrix) return
     e.preventDefault()
-    const p = point(e)
+    const p = point(e, inverse)
     const mode = e.button === 1 ? 'pan' : editable ? tool : tool === 'pan' ? 'pan' : 'select'
     const hit = (e.target as Element).closest('[data-kind]') as SVGElement | null
     let part: string | undefined
@@ -44,28 +45,30 @@ export default function ShipGrid({ deck, plan, editable, tool, selection, onSele
         }
       } else onSelect(null)
     }
-    gesture.current = { start: p, current: p, client: { x: e.clientX, y: e.clientY }, pan, part, origin: plan.parts.find(item => item.id === part), mode }
+    gesture.current = { start: p, current: p, client: { x: e.clientX, y: e.clientY }, pan, part, origin: plan.parts.find(item => item.id === part), mode, pointerId: e.pointerId, inverse, scale: { x: matrix.a, y: matrix.d }, dragging: false }
     setDraft(gesture.current)
     e.currentTarget.setPointerCapture(e.pointerId)
   }
   function move(e: React.PointerEvent<SVGSVGElement>) {
     const g = gesture.current
-    if (!g) return
+    if (!g || e.pointerId !== g.pointerId) return
+    const dragging = g.dragging || Math.hypot(e.clientX - g.client.x, e.clientY - g.client.y) >= 6
+    if (g.part && !dragging) return
     if (g.mode === 'pan') {
-      const matrix = svg.current?.getScreenCTM()
-      if (matrix) setPan({ x: g.pan.x + (e.clientX - g.client.x) / matrix.a, y: g.pan.y + (e.clientY - g.client.y) / matrix.d })
+      setPan({ x: g.pan.x + (e.clientX - g.client.x) / g.scale.x, y: g.pan.y + (e.clientY - g.client.y) / g.scale.y })
     } else {
-      gesture.current = { ...g, current: point(e) }
+      gesture.current = { ...g, current: point(e, g.inverse), dragging }
       setDraft(gesture.current)
     }
   }
   function up(e: React.PointerEvent<SVGSVGElement>) {
     const g = gesture.current
+    if (!g || e.pointerId !== g.pointerId) return
     gesture.current = null; setDraft(null)
     if (!g || !editable || g.mode === 'pan') return
-    const p = point(e)
+    const p = point(e, g.inverse)
     if (g.part && g.origin) {
-      if (p.x !== g.start.x || p.y !== g.start.y) onChange(movePart(plan, g.part, deck, { x: g.origin.x + p.x - g.start.x, y: g.origin.y + p.y - g.start.y }))
+      if (g.dragging && (p.x !== g.start.x || p.y !== g.start.y)) onChange(movePart(plan, g.part, deck, { x: g.origin.x + p.x - g.start.x, y: g.origin.y + p.y - g.start.y }))
       return
     }
     let next = { ...deck }
@@ -103,7 +106,8 @@ export default function ShipGrid({ deck, plan, editable, tool, selection, onSele
       style={{ cursor: tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair' }}
       onPointerDown={down} onPointerMove={move} onPointerUp={up}
       onPointerCancel={() => { gesture.current = null; setDraft(null) }}
-      onWheel={e => { setZoom(z => Math.min(4, Math.max(.5, z * (e.deltaY < 0 ? 1.1 : .9)))) }}>
+      onLostPointerCapture={() => { gesture.current = null; setDraft(null) }}
+      onWheel={e => { gesture.current = null; setDraft(null); setZoom(z => Math.min(4, Math.max(.5, z * (e.deltaY < 0 ? 1.1 : .9)))) }}>
       <defs><pattern id="ship-grid-lines" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#243044" strokeWidth="1" /></pattern></defs>
       <g ref={group} transform={`translate(${pan.x} ${pan.y}) scale(${zoom})`}>
         <rect width={deck.width * 32} height={deck.height * 32} fill="url(#ship-grid-lines)" stroke="#475569" />
