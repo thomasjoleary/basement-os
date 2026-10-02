@@ -8,7 +8,7 @@ import {PAINT_STRIDE} from './ship-paint'
 export function createSurfaceMeshes(plan:ShipPlan,options:SceneOptions,transparent:boolean){
   const meshes:THREE.Mesh[]=[],textures:THREE.Texture[]=[],materials:THREE.Material[]=[]
   let pixels=0,omitted=0;const elevations=deckElevations(plan.decks,options.separated)
-  if(surfaceModeActive(plan,options.mode))for(const deck of plan.decks){
+  if(options.walkthrough||surfaceModeActive(plan,options.mode))for(const deck of plan.decks){
     if(options.allDecks?options.hiddenDeckIds?.includes(deck.id):deck.id!==options.deckId)continue
     const base=options.allDecks?elevations.get(deck.id)!:0
     for(const room of deck.rooms)for(const q of roomSurfaces(plan,deck,room)){

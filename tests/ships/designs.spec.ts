@@ -55,6 +55,9 @@ test('GM acceptance cancels cleanly, reports stale review and retries exact subm
   api.setFail(false);page.once('dialog',d=>d.accept());await page.getByRole('button',{name:'Accept submission',exact:true}).click()
   await expect(page.getByRole('link',{name:'Open accepted playable version 1'})).toBeVisible()
   expect(api.design.status).toBe('accepted');expect(api.notesReads()).toBe(0)
+  await page.getByRole('button',{name:'Paint',exact:true}).click();await expect(page.getByRole('button',{name:'brush',exact:true})).toBeDisabled();await expect(page.getByRole('button',{name:'Fill surface',exact:true})).toBeDisabled()
+  await page.getByRole('button',{name:'Walkthrough',exact:true}).click();await expect(page.getByTestId('ship-walk-canvas')).toBeVisible();await page.getByRole('button',{name:'Enter walkthrough',exact:true}).click();await page.keyboard.press('Escape');expect(api.calls.filter(c=>c==='save')).toHaveLength(0)
+
 })
 test('GM feedback requests changes without changing submitted plan',async({page})=>{
   const api=await backend(page,true),original=JSON.stringify(api.design.plan)

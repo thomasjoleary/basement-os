@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
+import {sceneGeometry} from '@/lib/ship-geometry'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import {createSurfaceMeshes} from '@/lib/ship-surface-renderer'
 import {type SurfaceFace} from '@/lib/ship-paint'
@@ -38,29 +39,6 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
     const sun = new THREE.DirectionalLight('#fff0d7', 3.4); sun.position.set(-20,35,-18); scene.add(sun)
     const rim = new THREE.DirectionalLight('#80cfff', 2); rim.position.set(15,8,25); scene.add(rim)
     const geometries = new Map<string, THREE.BufferGeometry>()
-    function geometry(shape = 'box') {
-      if(geometries.has(shape)) return geometries.get(shape)!
-      let result: THREE.BufferGeometry
-      if(shape === 'chevron') {
-        const outline=new THREE.Shape();outline.moveTo(-.5,-.4);outline.lineTo(0,.2);outline.lineTo(.5,-.4);outline.lineTo(.5,-.1);outline.lineTo(0,.5);outline.lineTo(-.5,-.1);outline.closePath()
-        result=new THREE.ExtrudeGeometry(outline,{depth:1,bevelEnabled:false});result.rotateX(Math.PI/2);result.translate(0,.5,0)
-      } else if(shape === 'nose' || shape.startsWith('slope-')) {
-        const points = shape === 'nose'
-          ? [[-.28,-.5,-.5],[.28,-.5,-.5],[.5,-.5,.5],[-.5,-.5,.5],[-.28,-.08,-.5],[.28,-.08,-.5],[.5,.5,.5],[-.5,.5,.5]]
-          : [[-.5,-.5,-.5],[.5,-.5,-.5],[.5,-.5,.5],[-.5,-.5,.5],[shape==='slope-port'?.1:-.5,.5,-.5],[shape==='slope-port'?.5:-.1,.5,-.5],[shape==='slope-port'?.5:-.1,.5,.5],[shape==='slope-port'?.1:-.5,.5,.5]]
-        result = new THREE.BufferGeometry()
-        result.setAttribute('position',new THREE.Float32BufferAttribute(points.flat(),3))
-        result.setIndex([0,1,2,0,2,3,4,6,5,4,7,6,0,4,5,0,5,1,3,2,6,3,6,7,0,3,7,0,7,4,1,5,6,1,6,2])
-        result=result.toNonIndexed();result.computeVertexNormals()
-      } else if(shape === 'upright') { result = new THREE.CylinderGeometry(.5,.5,1,16) }
-      else if(shape === 'engine') { result = new THREE.CylinderGeometry(.5,.43,1,16); result.rotateX(Math.PI/2) }
-      else if(shape === 'port' || shape === 'starboard') {
-        const outline=new THREE.Shape(), sign=shape==='port'?1:-1
-        outline.moveTo(sign*.5,-.5); outline.lineTo(-sign*.5,.1); outline.lineTo(-sign*.42,.5); outline.lineTo(sign*.5,.38); outline.closePath()
-        result=new THREE.ExtrudeGeometry(outline,{depth:1,bevelEnabled:false}); result.rotateX(Math.PI/2); result.translate(0,.5,0)
-      } else result=new THREE.BoxGeometry(1,1,1)
-      geometries.set(shape,result); return result
-    }
     const grouped = new Map<string,SceneItem[]>()
     for(const item of sceneData.items) { const key=(item.shape??'box')+(item.glow?':glow':'')+(item.hull?':hull':''); if(!grouped.has(key))grouped.set(key,[]); grouped.get(key)!.push(item) }
     const material = new THREE.MeshStandardMaterial({ roughness:.56, metalness:mode==='exterior'?.48:.15 })
@@ -69,7 +47,7 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
     const meshes: THREE.InstancedMesh[] = []
     const matrix=new THREE.Matrix4(), quaternion=new THREE.Quaternion(), position=new THREE.Vector3(), scale=new THREE.Vector3()
     for(const [shape,items] of grouped) {
-      const mesh=new THREE.InstancedMesh(geometry(shape.split(':')[0]),shape.includes(':hull')?hullMaterial:shape.includes(':glow')?glowMaterial:material,items.length)
+      const mesh=new THREE.InstancedMesh(sceneGeometry(geometries,shape.split(':')[0]),shape.includes(':hull')?hullMaterial:shape.includes(':glow')?glowMaterial:material,items.length)
       items.forEach((item,i)=>{matrix.compose(position.fromArray(item.at),quaternion,scale.fromArray(item.size));mesh.setMatrixAt(i,matrix);mesh.setColorAt(i,new THREE.Color(item.color))})
       mesh.userData.items=items;mesh.userData.hull=shape.includes(':hull'); mesh.computeBoundingSphere(); scene.add(mesh); meshes.push(mesh)
     }

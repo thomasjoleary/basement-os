@@ -151,8 +151,8 @@ export default function ShipGrid({ deck, plan, editable, tool, selection, onSele
         {plan.connections.filter(c => c.from_deck === deck.id || c.to_deck === deck.id).map(c => {
           const p = c.from_deck === deck.id ? c.from : c.to
           return <g key={c.id} data-kind="connection" data-id={c.id} transform={`translate(${p.x * 32 + 16} ${p.y * 32 + 16})`}>
-            <circle r="13" fill="#5b21b6" stroke={selected(c.id) ? '#67e8f9' : '#c4b5fd'} strokeWidth="2" />
-            <text textAnchor="middle" y="5" fontSize="14" fill="white">{c.kind === 'lift' ? '↕' : '⇅'}</text><title>{c.name}</title>
+            <rect x="-13" y="-14" width="26" height="28" rx="3" fill="#172839" stroke={selected(c.id) ? '#67e8f9' : '#b8c8d0'} />
+            <path d="M-7 -11V11 M7 -11V11 M-7 -8H7 M-7 -2H7 M-7 4H7 M-7 10H7" stroke="#dfb95e" strokeWidth="2"/><title>{c.name} — ladder to connected deck</title>
           </g>
         })}
         {draft?.mode === 'room' && <rect x={Math.min(draft.start.x, draft.current.x) * 32} y={Math.min(draft.start.y, draft.current.y) * 32} width={(Math.abs(draft.start.x - draft.current.x) + 1) * 32} height={(Math.abs(draft.start.y - draft.current.y) + 1) * 32} fill="#06b6d4" fillOpacity=".2" stroke="#67e8f9" strokeDasharray="6 4" pointerEvents="none" />}

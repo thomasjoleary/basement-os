@@ -542,3 +542,61 @@ test('large surface fill is bounded and keyboard multiselect paints only selecte
  await expect(page.getByText('All changes saved',{exact:false})).toBeVisible()
  expect(api.ships.get(shipId)!.plan.surface_design!.surfaces[0].paint.runs.reduce((n,r)=>n+r[1],0)).toBe(2)
 })
+
+
+test('large Paint preserves sized strokes across views, undo, pan, cancellation and reload',async({page})=>{
+ const api=await backend(page);await page.setViewportSize({width:1366,height:900});await page.goto(`/v2/ships/${shipId}`)
+ await page.getByRole('button',{name:'Paint',exact:true}).click()
+ const canvas=page.getByTestId('surface-paint-canvas');await expect(canvas).toBeVisible();expect((await canvas.boundingBox())!.width).toBeGreaterThan(1000)
+ await page.getByLabel('Brush size').fill('5')
+ const deck=api.ships.get(shipId)!.plan.decks[0],r=deck.rooms[0]
+ async function point(x:number,y:number){const b=(await canvas.boundingBox())!,w=Math.max(...deck.rooms.map(r=>(r.x+r.width)*5)),h=Math.max(...deck.rooms.map(r=>(r.y+r.height)*5)),scale=Math.min(1160/w,580/h);return{x:b.x+(20+(x+.5)*scale)*b.width/1200,y:b.y+(20+(y+.5)*scale)*b.height/620}}
+ let at=await point(r.x*5+5,r.y*5+5);await page.mouse.move(at.x,at.y);await page.screenshot({path:'test-results/ship-large-paint.png',fullPage:true});await page.mouse.click(at.x,at.y)
+ await expect(page.getByRole('button',{name:'Undo map edit'})).toBeEnabled()
+ for(const view of ['Walkthrough','Cutaway','Paint','2D','Paint']){await page.getByRole('button',{name:view,exact:true}).click();if(view==='Walkthrough'){await expect(page.getByTestId('ship-walk-canvas')).toHaveAttribute('data-position',/./);await page.screenshot({path:'test-results/ship-walkthrough-freighter.png',fullPage:true})}}
+ await page.getByLabel('Current deck').selectOption(api.ships.get(shipId)!.plan.decks[1].id);await page.getByLabel('Current deck').selectOption(deck.id)
+ await page.getByRole('button',{name:'Undo map edit'}).click();await expect(page.getByRole('button',{name:'Undo map edit'})).toBeDisabled();await page.getByRole('button',{name:'Redo map edit'}).click()
+ await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible()
+ const saved=structuredClone(api.ships.get(shipId)!.plan),floor=saved.surface_design!.surfaces.find(s=>s.room_id===r.id&&s.face==='floor')!
+ expect(floor.paint.runs.reduce((n,r)=>n+r[1],0)).toBe(25)
+ await page.getByLabel('Brush size').fill('3');await page.getByRole('button',{name:'erase',exact:true}).click();at=await point(r.x*5+5,r.y*5+5);await page.mouse.click(at.x,at.y);await page.getByRole('button',{name:'Undo map edit'}).click();await expect(page.getByRole('button',{name:'Redo map edit'})).toBeEnabled()
+ await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();expect(api.ships.get(shipId)!.plan).toEqual(saved)
+
+ await page.getByRole('button',{name:'pan',exact:true}).click();at=await point(r.x*5+5,r.y*5+5);await drag(page,at,{x:at.x+100,y:at.y+30});await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled()
+ await page.getByRole('button',{name:'Fit surface'}).click();await page.getByRole('button',{name:'brush',exact:true}).click();await page.mouse.move(at.x+100,at.y);await page.mouse.down();await page.keyboard.press('Escape');await page.mouse.up();await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled()
+ await page.reload();await page.getByRole('button',{name:'Paint',exact:true}).click();await expect(canvas).toBeVisible();expect(api.ships.get(shipId)!.plan).toEqual(saved)
+ expect(await page.evaluate(()=>document.documentElement.scrollWidth)).toBeLessThanOrEqual(1366)
+})
+
+test('Walkthrough stops at walls, transfers only along real ladders and releases controls',async({page})=>{
+ const api=await backend(page,'player'),ship=api.ships.get(shipId)!,d=ship.plan.decks[0],other=ship.plan.decks[1]
+ d.rooms=[{...d.rooms[0],x:2,y:2,width:4,height:4}];d.marks=[];other.rooms=[{...other.rooms[0],x:2,y:2,width:4,height:4}];other.marks=[];ship.plan.parts=[]
+ ship.plan.connections=[{...ship.plan.connections[0],from_deck:d.id,to_deck:other.id,from:{x:3,y:3},to:{x:3,y:3}}]
+ await page.setViewportSize({width:1366,height:900});await page.goto(`/v2/ships/${shipId}`);await page.getByRole('button',{name:'Walkthrough',exact:true}).click();const canvas=page.getByTestId('ship-walk-canvas');await expect(canvas).toBeVisible()
+ const position=()=>canvas.getAttribute('data-position')
+ await page.getByRole('button',{name:'Enter walkthrough',exact:true}).click();const start=await position();await page.keyboard.down('w');await page.waitForTimeout(1700);await page.keyboard.up('w');const wall=(await position())!.split(',').map(Number);expect(wall[1]).toBeGreaterThanOrEqual(2.2);expect(wall[1]).toBeLessThan(2.4)
+ await page.keyboard.press('Escape');await expect(page.getByRole('button',{name:'Enter walkthrough',exact:true})).toBeVisible();const stopped=await position();await page.keyboard.down('s');await page.waitForTimeout(150);await page.keyboard.up('s');expect(await position()).toBe(stopped);expect(stopped).not.toBe(start)
+ await page.getByRole('button',{name:'Use ladder:',exact:false}).click();await expect(page.getByLabel('Current deck')).toHaveValue(other.id);await expect(canvas).toHaveAttribute('data-position','3.500,3.500')
+ await page.getByRole('button',{name:'Use ladder:',exact:false}).click();await expect(page.getByLabel('Current deck')).toHaveValue(d.id)
+ await page.getByRole('button',{name:'Enter walkthrough',exact:true}).click();const b=(await canvas.boundingBox())!;await drag(page,{x:b.x+b.width/2,y:b.y+b.height/2},{x:b.x+b.width/2+130,y:b.y+b.height/2});await page.screenshot({path:'test-results/ship-walkthrough.png',fullPage:true})
+ await page.getByRole('button',{name:'2D',exact:true}).click();await page.getByRole('button',{name:'Walkthrough',exact:true}).click();await expect(page.getByRole('button',{name:'Enter walkthrough',exact:true})).toBeVisible();expect(api.stats.saves).toBe(0);expect(api.stats.notesReads).toBe(0)
+ await page.getByRole('button',{name:'Paint',exact:true}).click();await expect(page.getByRole('button',{name:'brush',exact:true})).toBeDisabled();await expect(page.getByRole('button',{name:'Fill surface',exact:true})).toBeDisabled()
+})
+
+test('invalid ladder landing stays on source deck with a useful message',async({page})=>{
+ const api=await backend(page,'player'),ship=api.ships.get(shipId)!,d=ship.plan.decks[0],r=d.rooms[0];ship.plan.connections[0].from={x:r.x+Math.floor(r.width/2),y:r.y+Math.floor(r.height/2)};ship.plan.connections[0].to={x:0,y:0}
+ await page.goto(`/v2/ships/${shipId}`);await page.getByRole('button',{name:'Walkthrough',exact:true}).click();await expect(page.getByTestId('ship-walk-canvas')).toBeVisible();await page.getByRole('button',{name:'Use ladder:',exact:false}).click();await expect(page.getByText('This ladder has no safe connected landing.',{exact:false})).toBeVisible();await expect(page.getByLabel('Current deck')).toHaveValue(d.id);expect(api.stats.saves).toBe(0)
+})
+
+
+test('clicking a visible ladder mesh reaches its actual connected deck',async({page})=>{
+ const api=await backend(page,'player'),ship=api.ships.get(shipId)!,d=ship.plan.decks[0],other=ship.plan.decks[1]
+ d.rooms=[{...d.rooms[0],x:2,y:2,width:4,height:4}];d.marks=[];other.rooms=[{...other.rooms[0],x:2,y:2,width:4,height:4}];other.marks=[];ship.plan.parts=[]
+ ship.plan.connections=[{...ship.plan.connections[0],from_deck:d.id,to_deck:other.id,from:{x:3,y:2},to:{x:3,y:3}}]
+ await page.goto(`/v2/ships/${shipId}`);await page.getByRole('button',{name:'Walkthrough',exact:true}).click();const canvas=page.getByTestId('ship-walk-canvas');await expect(canvas).toHaveAttribute('data-position','4.000,4.000')
+ await page.screenshot({path:'test-results/ship-ladder.png',fullPage:true})
+ const b=(await canvas.boundingBox())!,tan=Math.tan(75*Math.PI/360),nx=(-.5/1.35)/(tan*b.width/b.height),ny=(-.07/1.35)/tan
+ await canvas.click({position:{x:(nx+1)*b.width/2,y:(1-ny)*b.height/2}});await expect(page.getByLabel('Current deck')).toHaveValue(other.id)
+ await page.getByRole('button',{name:'Enter walkthrough',exact:true}).click();await page.getByRole('button',{name:'Lock mouse',exact:true}).click();await expect.poll(()=>page.evaluate(()=>!!document.pointerLockElement)).toBe(true);await page.keyboard.press('Escape');await expect.poll(()=>page.evaluate(()=>!!document.pointerLockElement)).toBe(false)
+ expect(api.stats.saves).toBe(0)
+})

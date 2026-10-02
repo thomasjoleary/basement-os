@@ -100,3 +100,26 @@ check('surface renderer bounds texture memory and never creates a mesh per paint
  }finally{globalThis.document=previous}
 })
 console.log(count+' paint and surface checks passed.')
+
+const {walkWalls,walkable,walkSpawn,walkStep,ladderDestination}=model('ship-walk')
+check('walk collision sweep blocks tunneling, opens only real doors, and never leaves floors',()=>{
+ const p=instantiateTemplate('freighter'),d=p.decks[0];d.rooms=[{...d.rooms[0],x:2,y:2,width:2,height:4},{...d.rooms[1],x:4,y:2,width:2,height:4}];d.marks=[]
+ assert.ok(walkSpawn(d));assert.equal(walkable(d,{x:0,y:0}),false)
+ let at=walkStep(d,{x:3,y:3},20,0);assert.ok(at.x<4)
+ d.marks=[{id:'door',kind:'door',name:'Door',x:4,y:3,length:1,vertical:true}];at=walkStep(d,{x:3,y:3.5},2,0);assert.ok(at.x>4.9)
+ assert.ok(walkStep(d,{x:3,y:3.5},20,0).x<6);assert.equal(walkable(d,{x:4,y:2.5}),false)
+})
+check('ladder destinations are existing endpoints only and reject missing or unsafe landings',()=>{
+ const p=instantiateTemplate('freighter'),c=p.connections[0],d=p.decks[0],to=p.decks[1];assert.equal(ladderDestination(p,d.id,'absent'),null)
+ c.to={x:to.rooms[0].x+1,y:to.rooms[0].y+1};const dest=ladderDestination(p,d.id,c.id);assert.equal(dest.deck.id,to.id);assert.ok(walkable(to,dest.position))
+ c.to={x:0,y:0};assert.equal(ladderDestination(p,d.id,c.id),null);c.to_deck='absent';assert.equal(ladderDestination(p,d.id,c.id),null)
+})
+console.log(`${count} checks passed including walking`)
+
+const {deckFloorTiles,paintDeckFloors}=model('ship-floor-paint')
+check('deck paint preserves room coordinates, off-footprint colors and independent palettes',()=>{
+ const p=instantiateTemplate('freighter'),d=p.decks[0],r=d.rooms[0],other=d.rooms[1];const surfaces=[]
+ for(const [i,room] of [r,other].entries()){const cells=new Map();for(let n=0;n<40;n++)cells.set(n%10+Math.floor(n/10)*1024,`#${(i*40+n+1).toString(16).padStart(6,'0')}`);if(!i)cells.set(900*1024+900,'#ffffff');surfaces.push({id:crypto.randomUUID(),deck_id:d.id,room_id:room.id,face:'floor',paint:model('ship-paint').encodePaint(cells)})}
+ p.surface_design={surfaces,sections:[],components:[]};const global=deckFloorTiles(p,d);assert.equal(new Set(global.values()).size,80);global.set(r.y*5*1024+r.x*5,'#ff0000');const next=paintDeckFloors(p,d,global);assert.equal(validatePlan(next),null);const local=decodePaint(next.surface_design.surfaces.find(s=>s.room_id===r.id).paint);assert.equal(local.get(0),'#ff0000');assert.equal(local.get(900*1024+900),'#ffffff');assert.equal(decodePaint(p.surface_design.surfaces[0].paint).get(0),'#000001')
+})
+console.log(`${count} total surface, paint and walkthrough checks passed`)
