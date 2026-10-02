@@ -119,7 +119,7 @@ check('exterior nose and side fairings remain outside rooms and do not affect cu
     assert.equal(cutaway.items.some(i=>i.shape==='nose'||i.shape?.startsWith('slope-')),false)
     for(const nose of scene.items.filter(i=>i.shape==='nose')) {
       const deck=p.decks.find(d=>d.id===nose.deckId)
-      assert.ok(nose.at[2]+nose.size[2]/2<=Math.min(...deck.rooms.map(r=>r.y))+1e-8)
+      assert.ok(nose.at[2]+nose.size[2]/2<=Math.min(...deck.rooms.map(r=>r.y))+model('ship-openings').openingLayout(p).offsets.get(deck.id).y+1e-8)
     }
   }
 })

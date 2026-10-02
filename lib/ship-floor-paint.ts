@@ -1,3 +1,4 @@
+import {deckHoles,openingContains} from './ship-openings'
 import type {ShipPlan,Deck} from './ships'
 import {newId} from './ships'
 import {decodePaint,encodePaint,EMPTY_PAINT,PAINT_STRIDE} from './ship-paint'
@@ -5,8 +6,8 @@ import {EMPTY_SURFACES} from './ship-surfaces'
 // The deck view is an ephemeral global map. Each stored room retains its own
 // palette and fixed local coordinates, including temporarily hidden paint.
 export function deckFloorTiles(plan:ShipPlan,deck:Deck){
- const cells=new Map<number,string>()
- for(const room of deck.rooms){const surface=plan.surface_design?.surfaces.find(s=>s.room_id===room.id&&s.face==='floor');for(const [at,color] of decodePaint(surface?.paint??EMPTY_PAINT)){const x=at%PAINT_STRIDE,y=Math.floor(at/PAINT_STRIDE);if(x<room.width*5&&y<room.height*5)cells.set((room.y*5+y)*PAINT_STRIDE+room.x*5+x,color)}}return cells
+ const cells=new Map<number,string>(),holes=deckHoles(plan,deck.id,'floor')
+ for(const room of deck.rooms){const surface=plan.surface_design?.surfaces.find(s=>s.room_id===room.id&&s.face==='floor');for(const [at,color] of decodePaint(surface?.paint??EMPTY_PAINT)){const x=at%PAINT_STRIDE,y=Math.floor(at/PAINT_STRIDE);if(x<room.width*5&&y<room.height*5&&!holes.some(h=>openingContains(h,{x:room.x+(x+.5)/5,y:room.y+(y+.5)/5})))cells.set((room.y*5+y)*PAINT_STRIDE+room.x*5+x,color)}}return cells
 }
 export function paintDeckFloors(plan:ShipPlan,deck:Deck,cells:Map<number,string>):ShipPlan{
  const design=plan.surface_design??EMPTY_SURFACES,before=deckFloorTiles(plan,deck),changes=new Map<number,string|null>()

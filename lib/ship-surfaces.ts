@@ -1,3 +1,4 @@
+import {deckHoles,subtractOpenings} from './ship-openings'
 import type {ShipPlan,Deck,Room} from './ships'
 import {type PaintedSurface,type SurfaceFace,paintError,MAX_PAINT_TILES,MAX_PAINT_RUNS} from './ship-paint'
 export type HullSide='front'|'rear'|'port'|'starboard'
@@ -30,7 +31,7 @@ export function pruneSurfaces(plan:ShipPlan):ShipPlan{
   return {...plan,surface_design:{surfaces:plan.surface_design.surfaces.filter(s=>rooms.has(s.room_id)),sections:plan.surface_design.sections.filter(s=>rooms.has(s.room_id)),components:plan.surface_design.components.filter(c=>parts.has(c.part_id))}}
 }
 export type Vec3=[number,number,number]
-export type SurfaceQuad={key:string;roomId:string;deckId:string;face:SurfaceFace;vertices:[Vec3,Vec3,Vec3,Vec3];width:number;height:number;uOffset:number;hull:boolean;color:string;paint?:PaintedSurface['paint'];cap?:boolean}
+export type SurfaceQuad={key:string;roomId:string;deckId:string;face:SurfaceFace;vertices:[Vec3,Vec3,Vec3,Vec3];width:number;height:number;uOffset:number;vOffset?:number;hull:boolean;color:string;paint?:PaintedSurface['paint'];cap?:boolean}
 // All coordinates here are feet, then converted by the viewer's 5 ft/cell scale.
 // Each exposed contiguous side has capped outward skin. Room space is unchanged.
 export function roomSurfaces(plan:ShipPlan,deck:Deck,room:Room):SurfaceQuad[]{
@@ -38,9 +39,7 @@ export function roomSurfaces(plan:ShipPlan,deck:Deck,room:Room):SurfaceQuad[]{
   const style=(face:SurfaceFace)=>design.surfaces.find(s=>s.room_id===room.id&&s.face===face)
   const add=(face:SurfaceFace,v:[Vec3,Vec3,Vec3,Vec3],width:number,h:number,uOffset=0,cap=false)=>{const paint=style(face),hull=face==='roof'||face.startsWith('exterior');result.push({key:`${room.id}/${face}/${result.length}`,roomId:room.id,deckId:deck.id,face,vertices:v,width,height:h,uOffset,hull,color:paint?.color??(hull?plan.appearance?.hull_color??'#718397':face==='floor'?'#334e63':'#b9c8d2'),paint:cap?undefined:paint?.paint,cap})}
   const x=room.x*5,z=room.y*5,w=room.width*5,l=room.height*5
-  add('floor',[[x,.02,z],[x+w,.02,z],[x+w,.02,z+l],[x,.02,z+l]],w,l)
-  add('roof',[[x,height,z],[x+w,height,z],[x+w,height,z+l],[x,height,z+l]],w,l)
-  add('ceiling',[[x,height-.03,z],[x+w,height-.03,z],[x+w,height-.03,z+l],[x,height-.03,z+l]],w,l)
+  for(const face of ['floor','roof','ceiling'] as const){const y=face==='floor'?.02:face==='roof'?height:height-.03;for(const rect of subtractOpenings({x:room.x,y:room.y,width:room.width,height:room.height},deckHoles(plan,deck.id,face))){const px=rect.x*5,pz=rect.y*5,pw=rect.width*5,ph=rect.height*5;add(face,[[px,y,pz],[px+pw,y,pz],[px+pw,y,pz+ph],[px,y,pz+ph]],pw,ph,px-x);result[result.length-1].vOffset=pz-z}}
   for(const side of ['front','rear','port','starboard'] as HullSide[]){
     const vertical=side==='port'||side==='starboard',span=vertical?room.height:room.width
     const outward=side==='front'||side==='port'?-1:1,edge=side==='port'?x:side==='starboard'?x+w:side==='front'?z:z+l
@@ -69,6 +68,7 @@ export function roomSurfaces(plan:ShipPlan,deck:Deck,room:Room):SurfaceQuad[]{
 }
 
 export function surfaceModeActive(plan:ShipPlan,mode:'cutaway'|'exterior'){
+  if(mode==='cutaway'&&plan.connections.some(c=>deckHoles(plan,c.from_deck,'floor').length||deckHoles(plan,c.from_deck,'ceiling').length))return true
   const design=plan.surface_design
   return !!design&&(mode==='exterior'?design.sections.length>0||design.surfaces.some(s=>s.face==='roof'||s.face.startsWith('exterior')):design.surfaces.some(s=>s.face!=='roof'&&!s.face.startsWith('exterior')))
 }

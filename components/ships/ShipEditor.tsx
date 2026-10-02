@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 const ShipViewer3D = dynamic(() => import('./ShipViewer3D'), { ssr: false, loading: () => <div className="h-[520px] flex items-center justify-center">Loading 3D view…</div> })
+import {openingLayout,fitsFloor} from '@/lib/ship-openings'
+import ShipOpeningEditor from './ShipOpeningEditor'
 import DeckPaintView from './DeckPaintView'
 const ShipWalkthrough = dynamic(() => import('./ShipWalkthrough'), {ssr:false})
 import ShipSurfaceEditor from './ShipSurfaceEditor'
@@ -14,8 +16,8 @@ import { type Ship, type ShipPlan, type Part, type Connection, QUALITIES, CONDIT
 import { type Profile, saveShip } from '@/lib/ship-api'
 
 const inputClass = 'block min-w-0 max-w-full w-full mt-1 bg-gray-950 border border-gray-600 rounded px-2 py-2 text-sm disabled:border-transparent disabled:bg-gray-900 disabled:text-gray-200'
-function Field({ label, value, onChange, type = 'text', min, max }: { label: string; value: string | number; onChange: (v: string) => void; type?: string; min?: number; max?: number }) {
-  return <label className="block text-xs text-gray-400">{label}<input aria-label={label} type={type} value={value} min={min} max={max} maxLength={type === 'text' ? 120 : undefined} onChange={e => onChange(e.target.value)} className={inputClass} /></label>
+function Field({ label, value, onChange, type = 'text', min, max, disabled }: { label: string; value: string | number; onChange: (v: string) => void; type?: string; min?: number; max?: number; disabled?:boolean }) {
+  return <label className="block text-xs text-gray-400">{label}<input aria-label={label} disabled={disabled} type={type} value={value} min={min} max={max} maxLength={type === 'text' ? 120 : undefined} onChange={e => onChange(e.target.value)} className={inputClass} /></label>
 }
 function Notes({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
   return <label className="block text-xs text-gray-400">{label}<textarea aria-label={label} value={value} onChange={e => onChange(e.target.value)} maxLength={label === 'GM-only notes' ? 50000 : 10000} rows={3} className={inputClass} /></label>
@@ -38,6 +40,7 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles, 
   const room = selection?.kind === 'room' ? deck.rooms.find(r => r.id === selection.id) : undefined
   const mark = selection?.kind === 'mark' ? deck.marks.find(m => m.id === selection.id) : undefined
   const part = selection?.kind === 'part' ? ship.plan.parts.find(p => p.id === selection.id) : undefined
+  const linkedLadder=!!part&&ship.plan.connections.some(c=>c.aperture?.ladder_part_id===part.id)
   const connection = selection?.kind === 'connection' ? ship.plan.connections.find(c => c.id === selection.id) : undefined
   useEffect(() => {
     if (!dirty) return
@@ -45,8 +48,8 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles, 
     window.addEventListener('beforeunload', guard)
     return () => window.removeEventListener('beforeunload', guard)
   }, [dirty])
-  function change(plan: ShipPlan) { if (canEdit && !busy) {
-    const next=pruneSurfaces(plan)
+  function change(plan: ShipPlan) { if (canEdit && !busy && plan!==ship.plan) {
+    const next=pruneSurfaces({...plan,connections:plan.connections.map(c=>c.aperture?.ladder_part_id&&!plan.parts.some(p=>p.id===c.aperture!.ladder_part_id)?{...c,aperture:{...c.aperture,ladder_part_id:null}}:c)})
     setUndoPlans(history=>{const all=[...history,ship.plan].slice(-50);while(all.length&&JSON.stringify(all).length>8*1024*1024)all.shift();return all});setRedoPlans([])
     setShip(s=>({...s,plan:next}));setMessage('')
   } }
@@ -60,7 +63,7 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles, 
   }
   function patchConnection(patch: Partial<Connection>) {
     if (!connection) return
-    change({ ...ship.plan, connections: ship.plan.connections.map(c => c.id === connection.id ? { ...c, ...patch } : c) })
+    const next={...connection,...patch};change({ ...ship.plan, parts:ship.plan.parts.map(p=>p.id===next.aperture?.ladder_part_id?{...p,deck_id:next.from_deck,...next.from,room_id:null}:p),connections: ship.plan.connections.map(c => c.id === connection.id ? next : c) })
   }
   async function save() {
     if (lock.current) return
@@ -83,12 +86,13 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles, 
     const c: Connection = { id: newId(), name: 'Deck connection', kind: 'stairs', from_deck: deck.id, from: { x: 0, y: 0 }, to_deck: other.id, to: { x: 0, y: 0 } }
     change({ ...ship.plan, connections: [...ship.plan.connections, c] }); inspect({ kind: 'connection', id: c.id }); setTool('select')
   }
+  function addOpening(){const index=ship.plan.decks.findIndex(d=>d.id===deck.id),other=ship.plan.decks[index+1]??ship.plan.decks[index-1];if(!other||!deck.rooms.length||!other.rooms.length){setMessage('Add rooms on two adjacent decks before creating an opening.');return}let from={x:deck.rooms[0].x,y:deck.rooms[0].y},to={x:other.rooms[0].x,y:other.rooms[0].y};if(ship.plan.connections.some(c=>(c.from_deck===deck.id&&c.to_deck===other.id)||(c.to_deck===deck.id&&c.from_deck===other.id))){const offsets=openingLayout(ship.plan).offsets,a=offsets.get(deck.id)!,b=offsets.get(other.id)!;let found=false;for(const r of deck.rooms){for(let y=r.y;y<r.y+r.height&&!found;y++)for(let x=r.x;x<r.x+r.width&&!found;x++){const target={x:x+a.x-b.x,y:y+a.y-b.y};if(fitsFloor(other,target,1,1)){from={x,y};to=target;found=true}}if(found)break}if(!found){setMessage('These decks have no aligned room floor for another opening. Adjust the room layout or connection endpoints first.');return}}const c:Connection={id:newId(),name:'Deck opening',kind:'lift',from_deck:deck.id,to_deck:other.id,from:{x:from.x,y:from.y},to:{x:to.x,y:to.y},aperture:{width:1,height:1,ladder_part_id:null}};change({...ship.plan,connections:[...ship.plan.connections,c]});inspect({kind:'connection',id:c.id});setTool('select')}
   function deleteSelected() {
     if (!selection) return
     if (room) change(removeRoom(ship.plan, room.id))
     if (part) change({ ...ship.plan, parts: ship.plan.parts.filter(p => p.id !== part.id) })
     if (mark) change({ ...ship.plan, decks: ship.plan.decks.map(d => d.id === deck.id ? { ...d, marks: d.marks.filter(m => m.id !== mark.id) } : d) })
-    if (connection) change({ ...ship.plan, connections: ship.plan.connections.filter(c => c.id !== connection.id) })
+    if (connection) change({ ...ship.plan, parts:ship.plan.parts.filter(p=>p.id!==connection.aperture?.ladder_part_id),connections: ship.plan.connections.filter(c => c.id !== connection.id) })
     setSelection(null)
   }
   return <main data-ship-editor className="min-h-screen bg-gray-900 text-white p-4 md:p-6">
@@ -103,6 +107,7 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles, 
         <label className="text-sm flex items-center gap-2 min-w-0 max-w-full">Deck<select aria-label="Current deck" value={deck.id} onChange={e => switchDeck(e.target.value)} className="w-52 min-w-0 max-w-full bg-gray-800 border border-gray-600 rounded p-2">{ship.plan.decks.map(d => <option value={d.id} key={d.id}>{d.name}</option>)}</select></label>
         {canEdit && <button disabled={busy || ship.plan.decks.length >= 20} onClick={() => { const d = newDeck(`Deck ${ship.plan.decks.length + 1}`); change({ ...ship.plan, decks: [...ship.plan.decks, d] }); switchDeck(d.id) }} className="text-sm border border-gray-600 rounded p-2">Add deck</button>}
         {view === '2d' && (canEdit ? ['select', 'pan', 'room', 'wall', 'door', 'label', 'fixture'] : ['select', 'pan']).map(t => <button key={t} aria-pressed={tool === t} disabled={busy} onClick={() => { setTool(t as ShipTool); setSelection(null) }} className={`capitalize rounded px-3 py-2 text-sm ${tool === t ? 'bg-cyan-800 border border-cyan-500' : 'bg-gray-800 border border-gray-700'}`}>{t}</button>)}
+        {canEdit&&view==='2d'&&<button disabled={busy} onClick={addOpening} className="text-sm rounded p-2 border border-gray-600">Add opening</button>}
         {canEdit && view === '2d' && <button disabled={busy} onClick={addConnection} className="text-sm rounded p-2 border border-gray-600">Connect decks</button>}
       </div>
       <div className={`grid grid-cols-1 ${view==='paint'||view==='walkthrough'?'':'xl:grid-cols-[minmax(0,1fr)_340px]'} gap-4 items-start`}>
@@ -144,14 +149,14 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles, 
                 {room && <><h2 className="font-semibold">Room</h2><Field label="Room name" value={room.name} onChange={name => change({ ...ship.plan, decks: ship.plan.decks.map(d => d.id === deck.id ? { ...d, rooms: d.rooms.map(r => r.id === room.id ? { ...r, name } : r) } : d) })} /><p className="text-xs text-gray-400">{room.width} × {room.height} cells · ({room.x}, {room.y})</p><Notes label="Public room notes" value={room.notes} onChange={notes => change({ ...ship.plan, decks: ship.plan.decks.map(d => d.id === deck.id ? { ...d, rooms: d.rooms.map(r => r.id === room.id ? { ...r, notes } : r) } : d) })} /></>}
                 {mark && <><h2 className="font-semibold capitalize">{mark.kind}</h2><Field label="Label / name" value={mark.name} onChange={name => change({ ...ship.plan, decks: ship.plan.decks.map(d => d.id === deck.id ? { ...d, marks: d.marks.map(m => m.id === mark.id ? { ...m, name } : m) } : d) })} /><p className="text-xs text-gray-400">({mark.x}, {mark.y}) · {mark.length} cells · {mark.vertical ? 'vertical' : 'horizontal'}</p></>}
                 {part && <>
-                  <h2 className="font-semibold">Component</h2>
-                  <Field label="Component name" value={part.name} onChange={name => patchPart({ name })} /><Field label="Type" value={part.type} onChange={type => patchPart({ type })} />
-                  <Field label="Quantity" type="number" min={1} max={100000} value={part.quantity} onChange={v => patchPart({ quantity: Number(v) })} />
+                  <h2 className="font-semibold">Component</h2>{ship.plan.connections.some(c=>c.aperture?.ladder_part_id===part.id)&&<p className="text-xs text-cyan-200">Linked ladder: its position follows the opening source endpoint. Select that opening to move or detach it.</p>}
+                  <Field label="Component name" value={part.name} onChange={name => patchPart({ name })} /><Field label="Type" disabled={linkedLadder} value={part.type} onChange={type => patchPart({ type })} />
+                  <Field label="Quantity" disabled={linkedLadder} type="number" min={1} max={100000} value={part.quantity} onChange={v => patchPart({ quantity: Number(v) })} />
                   <label className="block text-xs text-gray-400">Quality<select aria-label="Quality" value={part.quality} onChange={e => patchPart({ quality: e.target.value as Part['quality'] })} className={inputClass}>{QUALITIES.map(q => <option key={q}>{q}</option>)}</select></label>
                   <label className="flex gap-2 items-center text-sm"><input type="checkbox" checked={part.black_market} onChange={e => patchPart({ black_market: e.target.checked })} />Black Market</label><p className="text-xs text-gray-400">Potentially criminal provenance, independent of quality.</p>
                   <label className="block text-xs text-gray-400">Physical condition<select aria-label="Physical condition" value={part.condition} onChange={e => patchPart({ condition: e.target.value as Part['condition'] })} className={inputClass}>{CONDITIONS.map(c => <option key={c}>{c}</option>)}</select></label>
-                  <label className="block text-xs text-gray-400">Component deck<select aria-label="Component deck" value={part.deck_id} onChange={e => { const d = ship.plan.decks.find(d => d.id === e.target.value)!; change(movePart(ship.plan, part.id, d, part)); setDeckId(d.id) }} className={inputClass}>{ship.plan.decks.map(d => <option value={d.id} key={d.id}>{d.name}</option>)}</select></label>
-                  <div className="grid grid-cols-2 gap-2">{(['x', 'y'] as const).map(axis => <Field key={axis} label={`Position ${axis}`} type="number" min={0} max={(axis === 'x' ? deck.width : deck.height) - 1} value={part[axis]} onChange={v => change(movePart(ship.plan, part.id, deck, { ...part, [axis]: Number(v) }))} />)}</div>
+                  <label className="block text-xs text-gray-400">Component deck<select disabled={linkedLadder} aria-label="Component deck" value={part.deck_id} onChange={e => { const d = ship.plan.decks.find(d => d.id === e.target.value)!; change(movePart(ship.plan, part.id, d, part)); setDeckId(d.id) }} className={inputClass}>{ship.plan.decks.map(d => <option value={d.id} key={d.id}>{d.name}</option>)}</select></label>
+                  <div className="grid grid-cols-2 gap-2">{(['x', 'y'] as const).map(axis => <Field key={axis} label={`Position ${axis}`} disabled={linkedLadder} type="number" min={0} max={(axis === 'x' ? deck.width : deck.height) - 1} value={part[axis]} onChange={v => change(movePart(ship.plan, part.id, deck, { ...part, [axis]: Number(v) }))} />)}</div>
                   <p className="text-xs text-gray-400">Room: {deck.rooms.find(r => r.id === part.room_id)?.name ?? 'Unassigned (outside rooms)'}</p>
                   <label className="block text-xs">Component color<input aria-label="Component color" type="color" value={ship.plan.surface_design?.components.find(c=>c.part_id===part.id)?.color??'#586e82'} onChange={e=>{const design=ship.plan.surface_design??EMPTY_SURFACES;change({...ship.plan,surface_design:{...design,components:[...design.components.filter(c=>c.part_id!==part.id),{id:design.components.find(c=>c.part_id===part.id)?.id??newId(),part_id:part.id,color:e.target.value}]}})}}/></label>
                   <button type="button" className="text-xs underline" onClick={()=>{const design=ship.plan.surface_design??EMPTY_SURFACES;change({...ship.plan,surface_design:{...design,components:design.components.filter(c=>c.part_id!==part.id)}})}}>Use default component color</button>
@@ -166,6 +171,7 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles, 
               </fieldset>
               {room && <ShipSurfaceEditor plan={ship.plan} deck={deck} room={room} face={surfaceFace} onFace={setSurfaceFace} disabled={!canEdit||busy} onChange={change}/>}
               {room && <div className="space-y-2"><h3 className="text-sm text-gray-400">Components in this room</h3>{ship.plan.parts.filter(p => p.room_id === room.id).map(p => <button key={p.id} className="block text-sm text-cyan-300" onClick={() => inspect({ kind: 'part', id: p.id })}>{p.name} × {p.quantity}</button>)}</div>}
+              {connection&&<ShipOpeningEditor plan={ship.plan} connection={connection} disabled={!canEdit||busy} onChange={change}/>}
               {connection && <button onClick={() => switchDeck(connection.from_deck === deck.id ? connection.to_deck : connection.from_deck)} className="text-sm text-violet-300">Go to connected deck →</button>}
             </>}
           </div>

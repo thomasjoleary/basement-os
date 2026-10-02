@@ -1,3 +1,4 @@
+import {hasLadder,openingLayout,physicalOpening,deckHoles,subtractOpenings} from './ship-openings'
 import {surfaceModeActive,roomSurfaces} from './ship-surfaces'
 import { type ShipPlan, type Deck, deckHeight, partFootprint, shipAppearance, windowAnchor } from './ships'
 
@@ -58,7 +59,8 @@ export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
   const surfaceSkin=options.walkthrough||surfaceModeActive(plan,options.mode)
   const appearance=shipAppearance(plan), skin=(fallback:string)=>plan.appearance?.hull_color??fallback
   const elevations = deckElevations(plan.decks, options.separated)
-  const add = (item: SceneItem) => { if (items.length < SCENE_LIMIT) items.push(item); else omitted++ }
+  const offsets=openingLayout(plan).offsets
+  const add = (item: SceneItem) => {if(options.allDecks){const offset=offsets.get(item.deckId)!;item={...item,at:[item.at[0]+offset.x,item.at[1],item.at[2]+offset.y]}} if (items.length < SCENE_LIMIT) items.push(item); else omitted++ }
   // Active deck first ensures large overviews retain its inspectable detail.
   const decks = plan.decks.filter(d => options.allDecks ? !options.hiddenDeckIds?.includes(d.id) : d.id === options.deckId).sort((a,b) => Number(b.id === options.deckId) - Number(a.id === options.deckId))
   for (const d of decks) {
@@ -71,9 +73,9 @@ export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
     const edge = (vertical: boolean, x: number, z: number, selection: SceneSelection) => edges.set(`${vertical}:${x}:${z}`, { vertical, x, z, selection })
     for (const r of d.rooms) {
       const selection: SceneSelection = { kind: 'room', id: r.id }
-      box(r.x+r.width/2, base-.06, r.y+r.height/2, r.width,.12,r.height, exterior ? '#475569' : '#334e63', selection)
+      for(const floor of subtractOpenings(r,deckHoles(plan,d.id,'floor')))box(floor.x+floor.width/2,base-.06,floor.y+floor.height/2,floor.width,.12,floor.height,exterior?'#475569':'#334e63',selection)
       if (options.roofs && !surfaceSkin) {
-        box(r.x+r.width/2,base+h+.04,r.y+r.height/2,r.width-.04,.12,r.height-.04,skin('#718397'),selection,undefined,true)
+        for(const roof of subtractOpenings(r,deckHoles(plan,d.id,'roof')))box(roof.x+roof.width/2,base+h+.04,roof.y+roof.height/2,Math.max(.01,roof.width-.04),.12,Math.max(.01,roof.height-.04),skin('#718397'),selection,undefined,true)
         if (exterior) box(r.x+r.width/2,base+h+.11,r.y+r.height/2,Math.max(.1,r.width-.3),.025,.045,'#a6b7c8',selection,undefined,true)
         if(exterior && appearance.marking!=='none') box(r.x+r.width/2,base+h+.135,r.y+r.height/2,appearance.marking==='stripe'?.22:r.width*.55,.02,Math.min(r.height*.65,2),appearance.accent_color,selection,appearance.marking==='chevron'?'chevron':undefined,true)
       }
@@ -113,6 +115,7 @@ export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
       }
     }
     for(const p of plan.parts.filter(p=>p.deck_id===d.id)) {
+      if(plan.connections.some(c=>c.aperture?.ladder_part_id===p.id))continue
       if(items.length>=SCENE_LIMIT){omitted++;continue}
       const size=partFootprint(p.type), s: SceneSelection={kind:'part',id:p.id}, x=p.x+size.width/2,z=p.y+size.height/2
       const tint=plan.surface_design?.components.find(c=>c.part_id===p.id)?.color??(p.condition==='Broken'?'#74545b':p.condition==='Damaged'?'#937155':'#586e82')
@@ -169,7 +172,7 @@ export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
     }
     for(const c of plan.connections) {
       const at=c.from_deck===d.id?c.from:c.to_deck===d.id?c.to:null
-      if(at){const selection:SceneSelection={kind:'connection',id:c.id};for(const dx of [.22,.78])box(at.x+dx,base+h/2,at.y+.65,.045,h,.06,'#b8c8d0',selection);for(let y=.15;y<h;y+=.22)box(at.x+.5,base+y,at.y+.65,.56,.045,.06,'#dfb95e',selection)}
+      if(at&&hasLadder(plan,c)){const selection:SceneSelection={kind:'connection',id:c.id},other=c.from_deck===d.id?c.to_deck:c.from_deck,upper=plan.decks.findIndex(v=>v.id===d.id)<plan.decks.findIndex(v=>v.id===other),ladderHeight=physicalOpening(plan,c)?upper?.35:h+.3:h;for(const dx of [.22,.78])box(at.x+dx,base+ladderHeight/2,at.y+.65,.045,ladderHeight,.06,'#b8c8d0',selection);for(let y=.15;y<ladderHeight;y+=.22)box(at.x+.5,base+y,at.y+.65,.56,.045,.06,'#dfb95e',selection)}
     }
     if(!d.rooms.length) box(d.width/2,base-.1,d.height/2,d.width,.05,d.height,'#182634')
   }

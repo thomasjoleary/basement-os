@@ -1,3 +1,4 @@
+import {openingError} from './ship-openings'
 import {type SurfaceDesign,surfaceDesignError,pruneSurfaces} from './ship-surfaces'
 // Ship plans describe spaces and equipment only; no combat or power simulation.
 export const QUALITIES = ['Junk', 'Secondhand', 'Store-bought', 'Outfitted', 'Specialized', 'Exotic'] as const
@@ -11,7 +12,8 @@ export type Part = Point & {
   quantity: number; quality: typeof QUALITIES[number]; black_market: boolean
   condition: typeof CONDITIONS[number]; notes: string
 }
-export type Connection = { id: string; name: string; kind: 'stairs' | 'lift'; from_deck: string; from: Point; to_deck: string; to: Point }
+export type Aperture = {width:number;height:number;ladder_part_id:string|null}
+export type Connection = { aperture?:Aperture; id: string; name: string; kind: 'stairs' | 'lift'; from_deck: string; from: Point; to_deck: string; to: Point }
 export type WindowSide = 'front' | 'rear' | 'port' | 'starboard'
 export type ShipWindow = { id: string; deck_id: string; side: WindowSide; position: number }
 export type ShipAppearance = { hull_color: string; accent_color: string; engine_color: string; marking: 'none' | 'stripe' | 'chevron'; windows: ShipWindow[] }
@@ -42,6 +44,7 @@ export function partFootprint(type: string) {
   return { width: 1, height: 1 }
 }
 export function movePart(plan: ShipPlan, id: string, deck: Deck, p: Point): ShipPlan {
+  if(plan.connections.some(c=>c.aperture?.ladder_part_id===id))return plan
   const size = partFootprint(plan.parts.find(part => part.id === id)?.type ?? '')
   const pos = { x: Math.max(0, Math.min(deck.width - size.width, p.x)), y: Math.max(0, Math.min(deck.height - size.height, p.y)) }
   return { ...plan, parts: plan.parts.map(part => part.id === id ? { ...part, ...pos, deck_id: deck.id, room_id: roomAt(deck, pos)?.id ?? null } : part) }
@@ -64,7 +67,7 @@ export function copyPlan(source: ShipPlan): ShipPlan {
   const mapId = (id: string) => { if (!ids.has(id)) ids.set(id, newId()); return ids.get(id)! }
   plan.decks.forEach(d => { const old = d.id; d.id = mapId(old); d.rooms.forEach(r => { r.id = mapId(r.id) }); d.marks.forEach(m => { m.id = mapId(m.id) }) })
   plan.parts.forEach(p => { p.id = mapId(p.id); p.deck_id = mapId(p.deck_id); if (p.room_id) p.room_id = mapId(p.room_id) })
-  plan.connections.forEach(c => { c.id = mapId(c.id); c.from_deck = mapId(c.from_deck); c.to_deck = mapId(c.to_deck) })
+  plan.connections.forEach(c => { c.id = mapId(c.id); c.from_deck = mapId(c.from_deck); c.to_deck = mapId(c.to_deck); if(c.aperture?.ladder_part_id)c.aperture.ladder_part_id=mapId(c.aperture.ladder_part_id) })
   if (plan.appearance) plan.appearance.windows.forEach(w => { w.id = mapId(w.id); w.deck_id = mapId(w.deck_id) })
   if(plan.surface_design){
     plan.surface_design.surfaces.forEach(s=>{s.id=mapId(s.id);s.deck_id=mapId(s.deck_id);s.room_id=mapId(s.room_id)})
@@ -104,7 +107,7 @@ export function validatePlan(plan: ShipPlan): string | null {
     const a = plan.decks.find(d => d.id === c.from_deck), b = plan.decks.find(d => d.id === c.to_deck)
     if (!unique(c.id) || !c.name.trim() || !a || !b || a.id === b.id || !inside(a, c.from) || !inside(b, c.to) || !['stairs', 'lift'].includes(c.kind)) return 'Stairs/lifts must connect valid positions on two different decks.'
   }
-  return surfaceDesignError(plan,unique)
+  return openingError(plan)??surfaceDesignError(plan,unique)
 }
 
 // Normalized side placement follows the outermost occupied room boundary as a plan changes.

@@ -595,8 +595,49 @@ test('clicking a visible ladder mesh reaches its actual connected deck',async({p
  ship.plan.connections=[{...ship.plan.connections[0],from_deck:d.id,to_deck:other.id,from:{x:3,y:2},to:{x:3,y:3}}]
  await page.goto(`/v2/ships/${shipId}`);await page.getByRole('button',{name:'Walkthrough',exact:true}).click();const canvas=page.getByTestId('ship-walk-canvas');await expect(canvas).toHaveAttribute('data-position','4.000,4.000')
  await page.screenshot({path:'test-results/ship-ladder.png',fullPage:true})
- const b=(await canvas.boundingBox())!,tan=Math.tan(75*Math.PI/360),nx=(-.5/1.35)/(tan*b.width/b.height),ny=(-.07/1.35)/tan
+ const b=(await canvas.boundingBox())!,tan=Math.tan(75*Math.PI/360),nx=(-.5/1.35)/(tan*b.width/b.height),ny=(-.95/1.35)/tan
  await canvas.click({position:{x:(nx+1)*b.width/2,y:(1-ny)*b.height/2}});await expect(page.getByLabel('Current deck')).toHaveValue(other.id)
  await page.getByRole('button',{name:'Enter walkthrough',exact:true}).click();await page.getByRole('button',{name:'Lock mouse',exact:true}).click();await expect.poll(()=>page.evaluate(()=>!!document.pointerLockElement)).toBe(true);await page.keyboard.press('Escape');await expect.poll(()=>page.evaluate(()=>!!document.pointerLockElement)).toBe(false)
  expect(api.stats.saves).toBe(0)
+})
+
+
+test('ladder transfers retain active controls and pointer lock across repeated decks; Escape still exits',async({page})=>{
+ const api=await backend(page,'player'),ship=api.ships.get(shipId)!,d=ship.plan.decks[0],other=ship.plan.decks[1]
+ for(const deck of [d,other]){deck.rooms=[{...deck.rooms[0],x:2,y:2,width:5,height:5}];deck.marks=[]}ship.plan.parts=[]
+ ship.plan.connections=[{...ship.plan.connections[0],from_deck:d.id,to_deck:other.id,from:{x:3,y:3},to:{x:3,y:3}}]
+ await page.goto(`/v2/ships/${shipId}`);await page.getByRole('button',{name:'Walkthrough',exact:true}).click();const canvas=page.getByTestId('ship-walk-canvas');await expect(canvas).toHaveAttribute('data-position',/./)
+ await canvas.evaluate(el=>el.setAttribute('data-original-canvas','yes'));await page.getByRole('button',{name:'Enter walkthrough',exact:true}).click();await page.getByRole('button',{name:'Lock mouse',exact:true}).click();await expect.poll(()=>page.evaluate(()=>!!document.pointerLockElement)).toBe(true)
+ for(let i=0;i<4;i++){await page.getByRole('button',{name:'Use ladder:',exact:false}).evaluate((el:HTMLButtonElement)=>el.click());await expect(page.getByLabel('Current deck')).toHaveValue(i%2===0?other.id:d.id);await expect(page.getByRole('button',{name:'Exit walkthrough',exact:true})).toBeVisible();await expect(canvas).toHaveAttribute('data-original-canvas','yes');expect(await canvas.evaluate(el=>document.pointerLockElement===el)).toBe(true)}
+ const before=await canvas.getAttribute('data-position');await page.keyboard.down('s');await page.waitForTimeout(250);await page.keyboard.up('s');expect(await canvas.getAttribute('data-position')).not.toBe(before)
+ await page.keyboard.press('Escape');await expect(page.getByRole('button',{name:'Enter walkthrough',exact:true})).toBeVisible();expect(await page.evaluate(()=>document.pointerLockElement)).toBe(null);expect(api.stats.saves).toBe(0)
+})
+
+test('dedicated Paint targets walls ceilings roofs and exterior sections with shared undo and persistence',async({page})=>{
+ const api=await backend(page),ship=api.ships.get(shipId)!,room=ship.plan.decks[0].rooms[0];await page.goto(`/v2/ships/${shipId}`);await page.getByRole('button',{name:'Paint',exact:true}).click();await page.getByLabel('Paint target',{exact:true}).selectOption(room.id)
+ for(const face of ['interior-front','ceiling','roof','exterior-front']){await page.getByLabel('Paint face',{exact:true}).selectOption(face);await expect(page.getByTestId('surface-paint-canvas')).toBeVisible();await page.getByRole('button',{name:'Fill surface',exact:true}).click()}
+ await page.getByRole('button',{name:'Undo map edit'}).click();await page.getByRole('button',{name:'Redo map edit'}).click();await page.screenshot({path:'test-results/ship-paint-face.png',fullPage:true})
+ for(const view of ['Walkthrough','Exterior','Paint'])await page.getByRole('button',{name:view,exact:true}).click();await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible()
+ expect(ship.plan.surface_design).toBeUndefined();const surfaces=api.ships.get(shipId)!.plan.surface_design!.surfaces;expect(surfaces.map(s=>s.face).sort()).toEqual(['ceiling','exterior-front','interior-front','roof']);expect(surfaces.every(s=>s.paint.runs.length>0)).toBe(true)
+ await page.reload();await page.getByRole('button',{name:'Paint',exact:true}).click();await page.getByLabel('Paint target',{exact:true}).selectOption(room.id);await page.getByLabel('Paint face',{exact:true}).selectOption('ceiling');await expect(page.getByTestId('surface-paint-canvas')).toBeVisible()
+})
+
+test('opening dimensions and separate ladder fixture save, hole-only has no traversal and readonly remains locked',async({page})=>{
+ const api=await backend(page),ship=api.ships.get(shipId)!,c=ship.plan.connections[0];await page.goto(`/v2/ships/${shipId}`);await page.locator(`[data-kind="connection"][data-id="${c.id}"]`).click()
+ await page.getByRole('button',{name:'Configure opening and ladder',exact:true}).click();await page.getByLabel('Opening width',{exact:true}).fill('2');await page.getByLabel('Opening height',{exact:true}).fill('2');await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible()
+ let saved=api.ships.get(shipId)!;expect(saved.plan.connections[0].aperture).toMatchObject({width:2,height:2});expect(saved.plan.parts.find(p=>p.id===saved.plan.connections[0].aperture!.ladder_part_id)?.type).toBe('Ladder')
+ await page.getByRole('button',{name:'Inventory',exact:true}).click();await page.getByRole('button',{name:/Cargo lift ladder/}).click();await expect(page.getByLabel('Type',{exact:true})).toBeDisabled();await expect(page.getByLabel('Quantity',{exact:true})).toBeDisabled();await expect(page.getByLabel('Component deck',{exact:true})).toBeDisabled();await page.locator(`[data-kind="connection"][data-id="${c.id}"]`).click()
+ await page.getByLabel('Opening has ladder',{exact:true}).uncheck();await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();saved=api.ships.get(shipId)!;expect(saved.plan.connections[0].aperture!.ladder_part_id).toBe(null)
+ await page.getByRole('button',{name:'Walkthrough',exact:true}).click();await expect(page.getByRole('button',{name:'Use ladder:',exact:false})).toHaveCount(0);await page.getByLabel('Current deck').selectOption(saved.plan.decks[1].id);await page.getByRole('button',{name:'Enter walkthrough',exact:true}).click();const canvas=page.getByTestId('ship-walk-canvas');await expect(canvas).toBeVisible();await page.screenshot({path:'test-results/ship-open-hold.png',fullPage:true})
+ await page.getByRole('button',{name:'2D',exact:true}).click();await page.getByRole('button',{name:'Add opening',exact:true}).click();await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();expect(api.ships.get(shipId)!.plan.connections).toHaveLength(2)
+})
+
+
+test('connected opening visibly reveals the next deck without opaque caps and remains readonly',async({page})=>{
+ const api=await backend(page,'player'),ship=api.ships.get(shipId)!,upper=ship.plan.decks[0],lower=ship.plan.decks[1]
+ for(const d of [upper,lower]){d.rooms=[{...d.rooms[0],x:2,y:2,width:6,height:6}];d.marks=[]}ship.plan.parts=[];ship.plan.connections=[{...ship.plan.connections[0],from:{x:3,y:3},to:{x:3,y:3},aperture:{width:2,height:2,ladder_part_id:null}}]
+ ship.plan.surface_design={surfaces:[{id:'ceiling-look',deck_id:upper.id,room_id:upper.rooms[0].id,face:'ceiling',color:'#d28a38',paint:{palette:[],runs:[]}}],sections:[],components:[]}
+ let errors=0;page.on('pageerror',()=>errors++);await page.setViewportSize({width:1366,height:900});await page.goto(`/v2/ships/${shipId}`);await page.getByLabel('Current deck').selectOption(lower.id);await page.getByRole('button',{name:'Walkthrough',exact:true}).click();const canvas=page.getByTestId('ship-walk-canvas');await expect(canvas).toHaveAttribute('data-position','5.000,5.000');await page.getByRole('button',{name:'Enter walkthrough',exact:true}).click()
+ const b=(await canvas.boundingBox())!;await drag(page,{x:b.x+b.width/2,y:b.y+b.height/2},{x:b.x+b.width/2-157,y:b.y+b.height/2-90});await page.screenshot({path:'test-results/ship-through-opening.png',fullPage:true})
+ await page.keyboard.press('Escape');await page.getByRole('button',{name:'Paint',exact:true}).click();await page.getByLabel('Paint target',{exact:true}).selectOption(lower.rooms[0].id);await page.getByLabel('Paint face',{exact:true}).selectOption('ceiling');await expect(page.getByRole('button',{name:'Fill surface',exact:true})).toBeDisabled();expect(api.stats.saves).toBe(0);expect(errors).toBe(0)
 })

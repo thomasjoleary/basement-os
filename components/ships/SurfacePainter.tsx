@@ -4,20 +4,21 @@ import {type SurfacePaint,type FootTile,EMPTY_PAINT,PAINT_STRIDE,MAX_PAINT_TILES
 import type {SurfaceQuad} from '@/lib/ship-surfaces'
 export type PaintRegion={x:number;y:number;width:number;height:number;color:string;label:string}
 type Tool='brush'|'erase'|'select'|'pan'
-export default function SurfacePainter({surfaces,paint=EMPTY_PAINT,disabled,onChange,regions,large=false,tileMap,onTiles}:{tileMap?:Map<number,string>;onTiles?:(tiles:Map<number,string>)=>void;regions?:PaintRegion[];large?:boolean;surfaces:SurfaceQuad[];paint?:SurfacePaint;disabled:boolean;onChange:(paint:SurfacePaint)=>void}){
+export default function SurfacePainter({surfaces,paint=EMPTY_PAINT,disabled,onChange,regions,large=false,tileMap,onTiles,topDown=false}:{topDown?:boolean;tileMap?:Map<number,string>;onTiles?:(tiles:Map<number,string>)=>void;regions?:PaintRegion[];large?:boolean;surfaces:SurfaceQuad[];paint?:SurfacePaint;disabled:boolean;onChange:(paint:SurfacePaint)=>void}){
+  const downward=!!regions||topDown
   const W=large?1200:640,H=large?620:320
   const [brushSize,setBrushSize]=useState(1),[hover,setHover]=useState<FootTile|null>(null)
   const canvas=useRef<HTMLCanvasElement>(null),[tool,setTool]=useState<Tool>('brush'),[color,setColor]=useState('#ef4444'),[zoom,setZoom]=useState(1),[pan,setPan]=useState({x:0,y:0}),[selection,setSelection]=useState<Set<number>>(new Set()),[preview,setPreview]=useState<FootTile[]>([]),[message,setMessage]=useState(''),[cellX,setCellX]=useState(0),[cellY,setCellY]=useState(0)
   const drag=useRef<{id:number;rect:DOMRect;scale:number;pan:{x:number;y:number};start:FootTile;last:FootTile;tiles:Map<number,FootTile>;shift:boolean;clientX:number;clientY:number}|null>(null)
-  const faces=useMemo(()=>surfaces.filter(s=>!s.cap),[surfaces]),width=Math.max(1,...faces.map(f=>f.uOffset+f.width)),height=Math.max(1,...faces.map(f=>f.height))
-  const inside=(p:FootTile)=>Number.isInteger(p.x)&&Number.isInteger(p.y)&&p.x>=0&&p.y>=0&&faces.some(f=>p.x<f.uOffset+f.width&&p.x+1>f.uOffset&&p.y<f.height)
-  const areas=regions??faces.map(f=>({x:f.uOffset,y:0,width:f.width,height:f.height,color:'#334155',label:''}))
+  const faces=useMemo(()=>surfaces.filter(s=>!s.cap),[surfaces]),width=Math.max(1,...faces.map(f=>f.uOffset+f.width)),height=Math.max(1,...faces.map(f=>f.height+(f.vOffset??0)))
+  const inside=(p:FootTile)=>Number.isInteger(p.x)&&Number.isInteger(p.y)&&p.x>=0&&p.y>=0&&faces.some(f=>p.x<f.uOffset+f.width&&p.x+1>f.uOffset&&p.y>=Math.floor(f.vOffset??0)&&p.y<f.height+(f.vOffset??0))
+  const areas=regions??faces.map(f=>({x:f.uOffset,y:f.vOffset??0,width:f.width,height:f.height,color:'#334155',label:''}))
   const fullWidth=regions?Math.max(1,...regions.map(r=>r.x+r.width)):width,fullHeight=regions?Math.max(1,...regions.map(r=>r.y+r.height)):height
   const visible=(p:FootTile)=>regions?Number.isInteger(p.x)&&Number.isInteger(p.y)&&areas.some(r=>p.x>=r.x&&p.y>=r.y&&p.x<r.x+r.width&&p.y<r.y+r.height):inside(p)
   const footprint=(p:FootTile)=>[...rectangleTiles({x:p.x-Math.floor((brushSize-1)/2),y:p.y-Math.floor((brushSize-1)/2)},{x:p.x+Math.ceil((brushSize-1)/2),y:p.y+Math.ceil((brushSize-1)/2)})].filter(visible)
   const scale=Math.min((W-40)/fullWidth,(H-40)/fullHeight)*zoom
   useEffect(()=>{const el=canvas.current;if(!el)return;const ctx=el.getContext('2d')!;ctx.clearRect(0,0,W,H);ctx.fillStyle='#080f1e';ctx.fillRect(0,0,W,H)
-    ctx.save();ctx.translate(20+pan.x,(large?20:H-20)+pan.y);ctx.scale(scale,large?scale:-scale);ctx.beginPath();for(const r of areas)ctx.rect(r.x,r.y,r.width,r.height);ctx.clip()
+    ctx.save();ctx.translate(20+pan.x,(downward?20:H-20)+pan.y);ctx.scale(scale,downward?scale:-scale);ctx.beginPath();for(const r of areas)ctx.rect(r.x,r.y,r.width,r.height);ctx.clip()
     for(const r of areas){ctx.fillStyle=r.color;ctx.fillRect(r.x,r.y,r.width,r.height)}
     for(const [at,c] of (tileMap??decodePaint(paint))){ctx.fillStyle=c;ctx.fillRect(at%PAINT_STRIDE,Math.floor(at/PAINT_STRIDE),1,1)}
     ctx.fillStyle='rgba(34,211,238,.45)';for(const at of selection)ctx.fillRect(at%PAINT_STRIDE,Math.floor(at/PAINT_STRIDE),1,1)
@@ -29,7 +30,7 @@ export default function SurfacePainter({surfaces,paint=EMPTY_PAINT,disabled,onCh
   })
   function apply(tiles:Iterable<FootTile>,erase=false){if(disabled)return;try{if(tileMap&&onTiles){const next=new Map(tileMap);for(const p of tiles){const at=p.y*PAINT_STRIDE+p.x;if(erase)next.delete(at);else next.set(at,color);if(next.size>MAX_PAINT_TILES)throw new Error('Paint exceeds 50,000 squares.')}if(next.size!==tileMap.size||[...next].some(([at,c])=>tileMap.get(at)!==c))onTiles(next)}else {const next=paintTiles(paint,tiles,erase?null:color);if(JSON.stringify(next)!==JSON.stringify(paint))onChange(next)};setMessage('')}catch(e){setMessage((e as Error).message)}}
   function cancel(){drag.current=null;setPreview([])}
-  function tile(e:React.PointerEvent,rect:DOMRect,factor:number,offset:{x:number;y:number}):FootTile{return{x:Math.floor(((e.clientX-rect.x)*W/rect.width-20-offset.x)/factor),y:Math.floor((large?((e.clientY-rect.y)*H/rect.height-20-offset.y):H-20+offset.y-(e.clientY-rect.y)*H/rect.height)/factor)}}
+  function tile(e:React.PointerEvent,rect:DOMRect,factor:number,offset:{x:number;y:number}):FootTile{return{x:Math.floor(((e.clientX-rect.x)*W/rect.width-20-offset.x)/factor),y:Math.floor((downward?((e.clientY-rect.y)*H/rect.height-20-offset.y):H-20+offset.y-(e.clientY-rect.y)*H/rect.height)/factor)}}
   function down(e:React.PointerEvent<HTMLCanvasElement>){if(drag.current){cancel();return}if((disabled&&tool!=='pan')||e.button!==0)return;const rect=e.currentTarget.getBoundingClientRect(),p=tile(e,rect,scale,pan);p.x=Math.max(-1,Math.min(Math.ceil(fullWidth),p.x));p.y=Math.max(-1,Math.min(Math.ceil(fullHeight),p.y));e.currentTarget.setPointerCapture(e.pointerId);drag.current={id:e.pointerId,rect,scale,pan:{...pan},start:p,last:p,tiles:new Map(),shift:e.shiftKey,clientX:e.clientX,clientY:e.clientY};if(tool!=='pan'&&visible(p)){for(const at of tool==='select'?[p]:footprint(p))drag.current.tiles.set(at.y*PAINT_STRIDE+at.x,at);setPreview([...drag.current.tiles.values()])}}
   function move(e:React.PointerEvent){const d=drag.current;if(!d){setHover(tile(e,e.currentTarget.getBoundingClientRect(),scale,pan));return}if(d.id!==e.pointerId)return
     if(tool==='pan'){setPan({x:d.pan.x+(e.clientX-d.clientX)*W/d.rect.width,y:d.pan.y+(e.clientY-d.clientY)*H/d.rect.height});return}

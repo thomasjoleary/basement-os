@@ -61,6 +61,7 @@ try {
   const surfaceMigration=readFileSync(new URL('../sql/20261002182938_ship_surface_design.sql',import.meta.url),'utf8')
   const aclBefore=(await db.query("SELECT oid,proacl::text FROM pg_proc WHERE proname IN ('v2_design_action','v2_ship_check_plan','v2_ship_before_write') ORDER BY oid")).rows
   await db.exec(surfaceMigration);await db.exec(surfaceMigration)
+  const openingMigration=readFileSync(new URL('../sql/20261002200613_ship_deck_openings.sql',import.meta.url),'utf8');await db.exec(openingMigration);await db.exec(openingMigration)
   assert.deepEqual((await db.query("SELECT oid,proacl::text FROM pg_proc WHERE proname IN ('v2_design_action','v2_ship_check_plan','v2_ship_before_write') ORDER BY oid")).rows,aclBefore)
   const id='20000000-0000-0000-0000-000000000001'
   const plan={schema_version:1,decks:[{id:'deck',name:'Deck',width:4,height:4,height_ft:12,rooms:[],marks:[]}],parts:[],connections:[]}
@@ -222,6 +223,43 @@ try {
     const huge=structuredClone(painted);huge.decks[0].rooms[0].notes='x'.repeat(2200000)
     await assert.rejects(()=>act('save',next.version,{...payload,plan:huge},paintedId),/Invalid design action|Invalid ship plan/)
     assert.equal((await db.query('SELECT version FROM v2_ship_designs WHERE id=$1',[paintedId])).rows[0].version,next.version)
+  })
+
+  const openingPlan=structuredClone(painted);openingPlan.decks.push({...structuredClone(painted.decks[0]),id:'lower',rooms:[{...painted.decks[0].rooms[0],id:'lower-room'}]})
+  openingPlan.connections=[{id:'opening',name:'Cargo opening',kind:'lift',from_deck:'deck',to_deck:'lower',from:{x:1,y:1},to:{x:1,y:1},aperture:{width:2,height:2,ladder_part_id:null}}]
+  const openId='20000000-0000-0000-0000-000000000077';let openingDesign
+  await as(player)
+  await check('hole-only openings persist and old-client draft omission preserves their metadata',async()=>{
+    openingDesign=await act('create',0,{...payload,plan:openingPlan},openId)
+    const old=structuredClone(openingPlan);delete old.connections[0].aperture
+    openingDesign=await act('save',openingDesign.version,{...payload,plan:old},openId);assert.deepEqual(openingDesign.plan.connections[0].aperture,openingPlan.connections[0].aperture)
+  })
+  await check('invalid apertures, floor coverage, ladder references and conflicting deck alignments fail atomically',async()=>{
+    for(const mutate of [p=>p.connections[0].aperture=null,p=>p.connections[0].aperture.width=0,p=>p.connections[0].aperture.width=1.5,p=>p.connections[0].aperture.height=101,p=>p.connections[0].aperture.extra=true,p=>delete p.connections[0].aperture.ladder_part_id,p=>p.connections[0].aperture.ladder_part_id='missing',p=>p.connections[0].from.x=3,p=>p.connections[0].to.x=.5,p=>p.decks[1].rooms=[],p=>p.decks.splice(1,0,{...structuredClone(p.decks[1]),id:'middle',rooms:[]}),p=>p.connections.push({...structuredClone(p.connections[0]),id:'conflicting',to:{x:2,y:1}})]){
+      const bad=structuredClone(openingPlan);mutate(bad);await assert.rejects(()=>act('save',openingDesign.version,{...payload,plan:bad},openId))
+    }
+    assert.equal((await db.query('SELECT version FROM v2_ship_designs WHERE id=$1',[openId])).rows[0].version,openingDesign.version)
+  })
+  await check('ladder is an independent anchored fixture; deletion through an old client removes traversal only',async()=>{
+    const withLadder=structuredClone(openingPlan);withLadder.parts.push({id:'ladder',name:'Cargo ladder',deck_id:'deck',room_id:'room',x:1,y:1,type:'Ladder',quantity:1,quality:'Store-bought',condition:'Working',black_market:false,notes:''});withLadder.connections[0].aperture.ladder_part_id='ladder'
+    openingDesign=await act('save',openingDesign.version,{...payload,plan:withLadder},openId)
+    const moved=structuredClone(withLadder);moved.parts[0].x=2;await assert.rejects(()=>act('save',openingDesign.version,{...payload,plan:moved},openId))
+    const old=structuredClone(openingPlan);delete old.connections[0].aperture
+    openingDesign=await act('save',openingDesign.version,{...payload,plan:old},openId);assert.equal(openingDesign.plan.connections[0].aperture.ladder_part_id,null)
+  })
+  await check('accepted openings stay frozen until GM acceptance of a subsequent revision',async()=>{
+    openingDesign=await act('submit',openingDesign.version,{},openId);await as(gm)
+    openingDesign=await act('accept',openingDesign.version,{submission_version:openingDesign.current_submission,owner_id:player,crew_ids:[]},openId)
+    const live=(await db.query('SELECT plan FROM v2_ships WHERE id=$1',[openingDesign.accepted_ship_id])).rows[0].plan;assert.deepEqual(live.connections[0].aperture,openingPlan.connections[0].aperture)
+    await assert.rejects(()=>db.query('UPDATE v2_ships SET plan=$1 WHERE id=$2',[JSON.stringify(painted),openingDesign.accepted_ship_id]),/versioned/)
+    await as(player);openingDesign=await act('revise',openingDesign.version,{},openId);const changed=structuredClone(openingPlan);changed.connections[0].aperture.width=1
+    openingDesign=await act('save',openingDesign.version,{...payload,plan:changed},openId);assert.deepEqual((await db.query('SELECT plan FROM v2_ships WHERE id=$1',[openingDesign.accepted_ship_id])).rows[0].plan,live)
+  })
+  await check('opening helpers reject anonymous execution; pending writes denied; legacy ship omission preserved',async()=>{
+    for(const signature of ['public.v2_ship_check_openings(jsonb)','public.v2_ship_merge_openings(jsonb,jsonb)'])assert.equal((await db.query("SELECT has_function_privilege('anon',$1,'EXECUTE') allowed",[signature])).rows[0].allowed,false)
+    await as(pending);await assert.rejects(()=>act('create',0,{...payload,plan:openingPlan},'20000000-0000-0000-0000-000000000076'),/Approved/)
+    await as(gm);const legacy='20000000-0000-0000-0000-000000000099';await db.query('UPDATE v2_ships SET plan=$1 WHERE id=$2',[JSON.stringify(openingPlan),legacy]);const old=structuredClone(openingPlan);delete old.connections[0].aperture
+    await db.query('UPDATE v2_ships SET plan=$1 WHERE id=$2',[JSON.stringify(old),legacy]);assert.deepEqual((await db.query('SELECT plan FROM v2_ships WHERE id=$1',[legacy])).rows[0].plan.connections[0].aperture,openingPlan.connections[0].aperture)
   })
   console.log(`${passed} design workflow checks passed; in-memory PostgreSQL only.`)
 } finally {await db.close()}

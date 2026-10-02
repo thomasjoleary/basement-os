@@ -123,3 +123,19 @@ check('deck paint preserves room coordinates, off-footprint colors and independe
  p.surface_design={surfaces,sections:[],components:[]};const global=deckFloorTiles(p,d);assert.equal(new Set(global.values()).size,80);global.set(r.y*5*1024+r.x*5,'#ff0000');const next=paintDeckFloors(p,d,global);assert.equal(validatePlan(next),null);const local=decodePaint(next.surface_design.surfaces.find(s=>s.room_id===r.id).paint);assert.equal(local.get(0),'#ff0000');assert.equal(local.get(900*1024+900),'#ffffff');assert.equal(decodePaint(p.surface_design.surfaces[0].paint).get(0),'#000001')
 })
 console.log(`${count} total surface, paint and walkthrough checks passed`)
+
+const openings=model('ship-openings')
+check('actual opening cutouts omit floors ceilings and roof caps, preserving stable UV coordinates',()=>{
+ const p=instantiateTemplate('freighter'),c=p.connections[0],upper=p.decks[0],lower=p.decks[1];assert.ok(openings.physicalOpening(p,c))
+ for(const [d,face] of [[upper,'floor'],[lower,'ceiling'],[lower,'roof']]){const h=openings.deckHoles(p,d.id,face)[0];assert.ok(h);const quads=d.rooms.flatMap(r=>roomSurfaces(p,d,r)).filter(q=>q.face===face);assert.ok(!quads.some(q=>{const xs=q.vertices.map(v=>v[0]/5),ys=q.vertices.map(v=>v[2]/5);return h.x+.5>Math.min(...xs)&&h.x+.5<Math.max(...xs)&&h.y+.5>Math.min(...ys)&&h.y+.5<Math.max(...ys)}))}
+ const meshes=model('ship-surface-renderer').createSurfaceMeshes(p,{deckId:lower.id,mode:'cutaway',roofs:true,allDecks:true,separated:false,walkthrough:true},false)
+ meshes.meshes.forEach(m=>m.updateMatrixWorld());const offset=openings.openingLayout(p).offsets.get(lower.id),ray=new THREE.Raycaster(new THREE.Vector3(c.to.x+offset.x+.9,.5,c.to.y+offset.y+.9),new THREE.Vector3(0,1,0));const hit=ray.intersectObjects(meshes.meshes,false)[0];assert.equal(hit.object.userData.deckId,upper.id);assert.equal(hit.object.userData.face,'ceiling');meshes.dispose()
+ const holes=openings.deckHoles(p,upper.id,'floor');assert.equal(walkable(upper,{x:c.from.x+.5,y:c.from.y+.5},walkWalls(upper),holes),false)
+})
+check('explicit holes separate ladder inventory, copy references and reject incompatible geometry',()=>{
+ const p=instantiateTemplate('freighter'),c=p.connections[0];c.aperture={width:1,height:1,ladder_part_id:null};assert.equal(validatePlan(p),null);assert.equal(ladderDestination(p,c.from_deck,c.id),null)
+ const d=p.decks[0],part={...model('ships').newPart(d,c.from),type:'Ladder'};p.parts.push(part);c.aperture.ladder_part_id=part.id;assert.equal(validatePlan(p),null);assert.ok(ladderDestination(p,c.from_deck,c.id))
+ const copy=copyPlan(p);assert.equal(copy.connections[0].aperture.ladder_part_id,copy.parts.find(p=>p.type==='Ladder').id);assert.notEqual(copy.connections[0].aperture.ladder_part_id,part.id)
+ c.aperture.width=100;assert.ok(validatePlan(p));c.aperture.width=1;part.x++;assert.ok(validatePlan(p))
+})
+console.log(`${count} total geometry checks passed`)
