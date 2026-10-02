@@ -28,6 +28,9 @@ jobs:
       - name: Test registration approval permissions locally
         run: npm run test:registration
 
+      - name: Test private ship design permissions locally
+        run: node scripts/test-ship-designs.mjs
+
       - name: Test ship editor locally
         run: npm run test:ships:ui
 
