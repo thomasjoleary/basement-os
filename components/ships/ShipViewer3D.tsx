@@ -12,8 +12,9 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
   const latest = useRef({ selection, onSelect })
   const cameraMemory = useRef<{ key: string; position: THREE.Vector3; target: THREE.Vector3; zoom: number } | null>(null)
   const [roofs, setRoofs] = useState(mode === 'exterior'), [allDecks, setAllDecks] = useState(mode === 'exterior'), [separated, setSeparated] = useState(false)
+  const [hiddenDeckIds, setHiddenDeckIds] = useState<string[]>([]), [transparentHull, setTransparentHull] = useState(false)
   const [failure, setFailure] = useState(false)
-  const sceneData = useMemo(() => buildShipScene(plan, { deckId, mode, roofs, allDecks, separated }), [plan, deckId, mode, roofs, allDecks, separated])
+  const sceneData = useMemo(() => buildShipScene(plan, { deckId, mode, roofs, allDecks, separated, hiddenDeckIds }), [plan, deckId, mode, roofs, allDecks, separated, hiddenDeckIds])
   useEffect(() => { latest.current = { selection, onSelect }; actions.current?.highlight() }, [selection, onSelect])
   useEffect(() => {
     const container = host.current!
@@ -53,15 +54,16 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
       geometries.set(shape,result); return result
     }
     const grouped = new Map<string,SceneItem[]>()
-    for(const item of sceneData.items) { const key=(item.shape??'box')+(item.color==='#4bd7ee'?':glow':''); if(!grouped.has(key))grouped.set(key,[]); grouped.get(key)!.push(item) }
+    for(const item of sceneData.items) { const key=(item.shape??'box')+(item.color==='#4bd7ee'?':glow':'')+(item.hull?':hull':''); if(!grouped.has(key))grouped.set(key,[]); grouped.get(key)!.push(item) }
     const material = new THREE.MeshStandardMaterial({ roughness:.56, metalness:mode==='exterior'?.48:.15 })
     const glowMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#21bcd9', emissiveIntensity: 1.4, roughness: .35 })
+    const hullMaterial = material.clone(); hullMaterial.transparent = transparentHull; hullMaterial.opacity = transparentHull ? .18 : 1; hullMaterial.depthWrite = !transparentHull
     const meshes: THREE.InstancedMesh[] = []
     const matrix=new THREE.Matrix4(), quaternion=new THREE.Quaternion(), position=new THREE.Vector3(), scale=new THREE.Vector3()
     for(const [shape,items] of grouped) {
-      const mesh=new THREE.InstancedMesh(geometry(shape.split(':')[0]),shape.endsWith(':glow')?glowMaterial:material,items.length)
+      const mesh=new THREE.InstancedMesh(geometry(shape.split(':')[0]),shape.includes(':hull')?hullMaterial:shape.includes(':glow')?glowMaterial:material,items.length)
       items.forEach((item,i)=>{matrix.compose(position.fromArray(item.at),quaternion,scale.fromArray(item.size));mesh.setMatrixAt(i,matrix);mesh.setColorAt(i,new THREE.Color(item.color))})
-      mesh.userData.items=items; mesh.computeBoundingSphere(); scene.add(mesh); meshes.push(mesh)
+      mesh.userData.items=items;mesh.userData.hull=shape.includes(':hull'); mesh.computeBoundingSphere(); scene.add(mesh); meshes.push(mesh)
     }
     const bounds=new THREE.Box3()
     for(const item of sceneData.items) bounds.expandByPoint(new THREE.Vector3(...item.at).addScaledVector(new THREE.Vector3(...item.size),.5)).expandByPoint(new THREE.Vector3(...item.at).addScaledVector(new THREE.Vector3(...item.size),-.5))
@@ -99,21 +101,24 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
     function cancel(){press=null}
     function up(e:PointerEvent){const start=press;press=null;if(!start||start.moved||start.id!==e.pointerId)return
       const rect=canvas.getBoundingClientRect();pointer.set((e.clientX-rect.left)/rect.width*2-1,-(e.clientY-rect.top)/rect.height*2+1);ray.setFromCamera(pointer,camera)
-      const hit=ray.intersectObjects(meshes,false)[0]
+      const hit=ray.intersectObjects(meshes.filter(m=>!(transparentHull&&m.userData.hull)),false)[0]
       const item=hit&&hit.instanceId!==undefined?(hit.object.userData.items as SceneItem[])[hit.instanceId]:undefined
       latest.current.onSelect(item?.selection??null,item?.deckId)
     }
     function lost(e:Event){e.preventDefault();setFailure(true)}
     canvas.addEventListener('pointerdown',down);canvas.addEventListener('pointermove',move);canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',cancel);canvas.addEventListener('lostpointercapture',cancel);canvas.addEventListener('webglcontextlost',lost)
-    return()=>{cameraMemory.current={key,position:camera.position.clone(),target:controls.target.clone(),zoom:camera.zoom};disposed=true;cancelAnimationFrame(frame);actions.current=null;observer.disconnect();controls.dispose();canvas.removeEventListener('webglcontextlost',lost);renderer.dispose();renderer.forceContextLoss();geometries.forEach(g=>g.dispose());material.dispose();glowMaterial.dispose();meshes.forEach(m=>m.dispose());canvas.remove();labels.forEach(l=>l.element.remove())}
-  },[sceneData,plan,deckId,mode,roofs,allDecks,separated])
+    return()=>{cameraMemory.current={key,position:camera.position.clone(),target:controls.target.clone(),zoom:camera.zoom};disposed=true;cancelAnimationFrame(frame);actions.current=null;observer.disconnect();controls.dispose();canvas.removeEventListener('webglcontextlost',lost);renderer.dispose();renderer.forceContextLoss();geometries.forEach(g=>g.dispose());material.dispose();glowMaterial.dispose();hullMaterial.dispose();meshes.forEach(m=>m.dispose());canvas.remove();labels.forEach(l=>l.element.remove())}
+  },[sceneData,plan,deckId,mode,roofs,allDecks,separated,transparentHull])
   return <section className="min-w-0 rounded-xl border border-gray-700 bg-gray-950 overflow-hidden" aria-label="3D ship viewer">
     <div className="flex flex-wrap gap-3 items-center p-3 text-sm border-b border-gray-700">
       <button onClick={()=>actions.current?.reset()}>Reset view</button><button aria-label="Zoom 3D out" onClick={()=>actions.current?.zoom(.8)}>-</button><button aria-label="Zoom 3D in" onClick={()=>actions.current?.zoom(1.25)}>+</button>
       <label><input type="checkbox" checked={roofs} onChange={e=>setRoofs(e.target.checked)} /> Roofs</label>
+      <label><input type="checkbox" checked={transparentHull} onChange={e=>setTransparentHull(e.target.checked)} /> Transparent hull</label>
       <label><input type="checkbox" checked={allDecks} onChange={e=>setAllDecks(e.target.checked)} /> All decks</label>
       <label><input type="checkbox" checked={separated} disabled={!allDecks} onChange={e=>setSeparated(e.target.checked)} /> Separate decks</label>
     </div>
+    {allDecks && <fieldset aria-label="Visible decks" className="flex flex-wrap gap-x-4 gap-y-2 px-3 py-2 text-xs border-b border-gray-800"><legend className="sr-only">Visible decks</legend>{plan.decks.map(d=><label key={d.id} className="min-w-0 max-w-full break-all"><input type="checkbox" aria-label={`Show deck ${d.name}`} checked={!hiddenDeckIds.includes(d.id)} onChange={e=>setHiddenDeckIds(ids=>e.target.checked?ids.filter(id=>id!==d.id):[...ids,d.id])} /> {d.name}</label>)}<button onClick={()=>setHiddenDeckIds([])}>Show all decks</button></fieldset>}
+    {allDecks && plan.decks.every(d=>hiddenDeckIds.includes(d.id)) && <p role="status" className="p-3 text-sm text-amber-200">No decks visible. Choose a deck above or use Show all decks.</p>}
     {failure ? <div role="status" className="h-[380px] md:h-[520px] flex flex-col gap-4 items-center justify-center p-6 text-center"><p>3D is unavailable on this device. Your ship and unsaved edits are safe.</p><button onClick={onFallback} className="rounded bg-cyan-800 px-4 py-2">Return to 2D</button></div> : <div ref={host} className="relative h-[380px] md:h-[520px] overflow-hidden touch-none" />}
     <p className="p-3 text-xs text-gray-400 border-t border-gray-800">Drag to orbit; scroll to zoom; click to inspect. 5 ft per grid cell for display. Decks stack in list order, top first. Connections show endpoints, not physical shafts.</p>
     {sceneData.omitted>0&&<p role="status" className="px-3 pb-3 text-xs text-amber-300">Large plan: 3D detail is limited. Use an individual deck or the 2D plan and inventory to inspect all items.</p>}

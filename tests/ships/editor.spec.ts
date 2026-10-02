@@ -413,3 +413,22 @@ test('3D ray selection and cancelled orbit never edit the fighter; exterior scre
   await page.screenshot({path:'test-results/ship-fighter-exterior.png'})
   expect(api.stats.saves).toBe(0);await expect(page.getByText('All changes saved',{exact:false})).toBeVisible()
 })
+
+
+test('individual deck visibility and transparent hull are reversible view-only controls', async ({page})=>{
+  const api=await backend(page);const original=JSON.stringify(api.ships.get(shipId)!.plan)
+  await page.setViewportSize({width:1366,height:900});await page.goto(`/v2/ships/${shipId}`)
+  await page.getByRole('button',{name:'Exterior',exact:true}).click()
+  await expect(page.getByTestId('ship-3d-canvas')).toBeVisible({timeout:30000})
+  await page.getByLabel('Transparent hull',{exact:true}).check()
+  await page.getByLabel('Show deck Crew deck',{exact:true}).uncheck()
+  await page.getByLabel('Show deck Cargo deck',{exact:true}).uncheck()
+  await expect(page.getByText('No decks visible.',{exact:false})).toBeVisible()
+  await page.getByRole('button',{name:'Show all decks',exact:true}).click()
+  await expect(page.getByLabel('Show deck Crew deck',{exact:true})).toBeChecked()
+  await page.getByLabel('Separate decks',{exact:true}).check()
+  await page.screenshot({path:'test-results/ship-transparent-decks.png'})
+  for(const width of [1024,1366,390]){await page.setViewportSize({width,height:900});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true)}
+  await expect(page.getByText('All changes saved',{exact:false})).toBeVisible()
+  expect(api.stats.saves).toBe(0);expect(JSON.stringify(api.ships.get(shipId)!.plan)).toBe(original)
+})

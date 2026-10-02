@@ -4,8 +4,8 @@ import { type ShipPlan, type Deck, deckHeight, partFootprint } from './ships'
 export const CELL_FEET = 5
 export const SCENE_LIMIT = 6000
 export type SceneSelection = { kind: 'room' | 'mark' | 'part' | 'connection'; id: string }
-export type SceneItem = { at: [number, number, number]; size: [number, number, number]; color: string; shape?: 'port' | 'starboard' | 'engine' | 'nose' | 'slope-port' | 'slope-starboard' | 'upright'; selection?: SceneSelection; deckId: string }
-export type SceneOptions = { deckId: string; mode: 'cutaway' | 'exterior'; roofs: boolean; allDecks: boolean; separated: boolean }
+export type SceneItem = { at: [number, number, number]; size: [number, number, number]; color: string; shape?: 'port' | 'starboard' | 'engine' | 'nose' | 'slope-port' | 'slope-starboard' | 'upright'; selection?: SceneSelection; deckId: string; hull?: boolean }
+export type SceneOptions = { deckId: string; mode: 'cutaway' | 'exterior'; roofs: boolean; allDecks: boolean; separated: boolean; hiddenDeckIds?: string[] }
 // Fit the complete interior assembly, including caps/screens, below the ceiling.
 // Exterior hull, wings and engines intentionally use their own dimensions.
 export function fitEquipmentHeight(items: SceneItem[], floor: number, height: number): SceneItem[] {
@@ -57,12 +57,12 @@ export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
   const elevations = deckElevations(plan.decks, options.separated)
   const add = (item: SceneItem) => { if (items.length < SCENE_LIMIT) items.push(item); else omitted++ }
   // Active deck first ensures large overviews retain its inspectable detail.
-  const decks = plan.decks.filter(d => options.allDecks || d.id === options.deckId).sort((a,b) => Number(b.id === options.deckId) - Number(a.id === options.deckId))
+  const decks = plan.decks.filter(d => options.allDecks ? !options.hiddenDeckIds?.includes(d.id) : d.id === options.deckId).sort((a,b) => Number(b.id === options.deckId) - Number(a.id === options.deckId))
   for (const d of decks) {
     if (items.length >= SCENE_LIMIT) { omitted++; continue }
     const base = options.allDecks ? elevations.get(d.id)! : 0, h = deckHeight(d) / CELL_FEET
     const exterior = options.mode === 'exterior'
-    const box = (x: number, y: number, z: number, w: number, height: number, depth: number, color: string, selection?: SceneSelection, shape?: SceneItem['shape']) => add({ at: [x,y,z], size: [w,height,depth], color, selection, shape, deckId: d.id })
+    const box = (x: number, y: number, z: number, w: number, height: number, depth: number, color: string, selection?: SceneSelection, shape?: SceneItem['shape'], hull = false) => add({ at: [x,y,z], size: [w,height,depth], color, selection, shape, deckId: d.id, hull })
     const occupied = new Uint8Array(d.width * d.height)
     const edges = new Map<string, { vertical: boolean; x: number; z: number; selection: SceneSelection }>()
     const edge = (vertical: boolean, x: number, z: number, selection: SceneSelection) => edges.set(`${vertical}:${x}:${z}`, { vertical, x, z, selection })
@@ -70,8 +70,8 @@ export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
       const selection: SceneSelection = { kind: 'room', id: r.id }
       box(r.x+r.width/2, base-.06, r.y+r.height/2, r.width,.12,r.height, exterior ? '#475569' : '#334e63', selection)
       if (options.roofs) {
-        box(r.x+r.width/2,base+h+.04,r.y+r.height/2,r.width-.04,.12,r.height-.04,'#718397',selection)
-        if (exterior) box(r.x+r.width/2,base+h+.11,r.y+r.height/2,Math.max(.1,r.width-.3),.025,.045,'#a6b7c8',selection)
+        box(r.x+r.width/2,base+h+.04,r.y+r.height/2,r.width-.04,.12,r.height-.04,'#718397',selection,undefined,true)
+        if (exterior) box(r.x+r.width/2,base+h+.11,r.y+r.height/2,Math.max(.1,r.width-.3),.025,.045,'#a6b7c8',selection,undefined,true)
       }
       for (let x=r.x;x<r.x+r.width;x++) for(let z=r.y;z<r.y+r.height;z++) occupied[z*d.width+x]=1
       for(let x=r.x;x<r.x+r.width;x++){edge(false,x,r.y,selection);edge(false,x,r.y+r.height,selection)}
@@ -86,24 +86,24 @@ export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
     }
     for(const m of d.marks.filter(m=>m.kind==='door')) {
       for(let i=0;i<m.length;i++) edges.delete(`${m.vertical}:${m.x+(m.vertical?0:i)}:${m.y+(m.vertical?i:0)}`)
-      box(m.x+(m.vertical?0:m.length/2),base+(exterior?h*.42:.035),m.y+(m.vertical?m.length/2:0),m.vertical?.12:m.length,exterior?h*.84:.07,m.vertical?m.length:.12,'#dbb66c',{kind:'mark',id:m.id})
+      box(m.x+(m.vertical?0:m.length/2),base+(exterior?h*.42:.035),m.y+(m.vertical?m.length/2:0),m.vertical?.12:m.length,exterior?h*.84:.07,m.vertical?m.length:.12,'#dbb66c',{kind:'mark',id:m.id},undefined,true)
     }
     for(const e of edges.values()) {
       const wh=exterior?h:h*.45
-      box(e.x+(e.vertical?0:.5),base+wh/2,e.z+(e.vertical?.5:0),e.vertical?.1:(exterior?.97:1),wh,e.vertical?(exterior?.97:1):.1,exterior?'#64788d':'#b9c8d2',e.selection)
+      box(e.x+(e.vertical?0:.5),base+wh/2,e.z+(e.vertical?.5:0),e.vertical?.1:(exterior?.97:1),wh,e.vertical?(exterior?.97:1):.1,exterior?'#64788d':'#b9c8d2',e.selection,undefined,true)
     }
     if(exterior && d.rooms.length) {
       // Fairing skin extends outward only: never carve into saved room footprints.
       for(const e of edges.values()) if(e.vertical) {
         const port=filled(e.x,e.z)
-        box(e.x+(port?-.25:.25),base+h/2,e.z+.5,.5,h,1,'#60778e',e.selection,port?'slope-port':'slope-starboard')
+        box(e.x+(port?-.25:.25),base+h/2,e.z+.5,.5,h,1,'#60778e',e.selection,port?'slope-port':'slope-starboard',true)
       }
       const bow=Math.min(...d.rooms.map(r=>r.y))
       for(let x=0;x<d.width;) {
         if(!filled(x,bow)){x++;continue}
         const start=x;while(x<d.width&&filled(x,bow))x++
         const room=d.rooms.find(r=>r.y===bow&&start>=r.x&&start<r.x+r.width)
-        box((start+x)/2,base+h/2,bow-.65,x-start,h,1.3,'#788b9e',room?{kind:'room',id:room.id}:undefined,'nose')
+        box((start+x)/2,base+h/2,bow-.65,x-start,h,1.3,'#788b9e',room?{kind:'room',id:room.id}:undefined,'nose',true)
       }
     }
     for(const p of plan.parts.filter(p=>p.deck_id===d.id)) {
@@ -117,7 +117,7 @@ export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
           const port=p.type==='Port wing', root=port?p.x+size.width:p.x
           // Add a root fairing only when the wing actually meets occupied hull.
           const adjacent=Array.from({length:size.height},(_,i)=>filled(port?Math.floor(root):Math.floor(root)-1,p.y+i)).some(Boolean)
-          if(adjacent) box(root+(port?-.4:.4),base+Math.min(h,.9)/2,z,.8,Math.min(h,.9),size.height*.82,tint,s,port?'slope-port':'slope-starboard')
+          if(adjacent) box(root+(port?-.4:.4),base+Math.min(h,.9)/2,z,.8,Math.min(h,.9),size.height*.82,tint,s,port?'slope-port':'slope-starboard',true)
         }
       } else if(p.type==='Booster') {
         box(x,base+.5,z,1.25,1.25,2.5,tint,s,'engine')

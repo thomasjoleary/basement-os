@@ -82,6 +82,15 @@ check('3D geometry preserves IDs, exterior wings/boosters, roof toggles and heig
   const tall=structuredClone(fighter);tall.decks[0].height_ft=20
   assert.ok(Math.max(...buildShipScene(tall,options).items.map(i=>i.at[1]))>Math.max(...scene.items.map(i=>i.at[1])))
 })
+check('deck hiding changes only visible geometry and hull surfaces remain distinct', () => {
+  const before=JSON.stringify(freighter),opts={deckId:freighter.decks[0].id,mode:'exterior',roofs:true,allDecks:true,separated:false,hiddenDeckIds:[freighter.decks[0].id]}
+  const scene=buildShipScene(freighter,opts)
+  assert.ok(scene.items.length>0);assert.ok(scene.items.every(i=>i.deckId===freighter.decks[1].id))
+  assert.ok(scene.items.some(i=>i.hull));assert.ok(scene.items.some(i=>!i.hull&&i.selection?.kind==='part'))
+  assert.equal(buildShipScene(freighter,{...opts,hiddenDeckIds:freighter.decks.map(d=>d.id)}).items.length,0)
+  assert.ok(buildShipScene(freighter,{...opts,allDecks:false}).items.every(i=>i.deckId===freighter.decks[0].id))
+  assert.equal(JSON.stringify(freighter),before)
+})
 check('interior silhouettes are distinct assemblies with shared inspectable identities', () => {
   const selection={kind:'part',id:'part'}
   const types=['Control','Seat','Cargo','Propulsion','Power','Life support','Furniture','Sanitation','Unknown']

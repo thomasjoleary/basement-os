@@ -68,3 +68,7 @@ skins, not new walkable space or persisted geometry; forward is decreasing grid 
 Interior component types now produce recognizable console/seat assemblies, cargo
 racks, propulsion units, power/life-support cylinders, bunks and sanitation units.
 All submeshes select their source inventory record and share the ceiling-fit rule.
+
+Individual-deck visibility and transparent hull are temporary view preferences.
+Transparent skin is click-through so interior parts remain selectable; hidden
+decks stay in the inventory and can be restored without saving.
