@@ -11,8 +11,10 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
   const actions = useRef<{ reset: () => void; zoom: (factor: number) => void; highlight: () => void } | null>(null)
   const latest = useRef({ selection, onSelect })
   const cameraMemory = useRef<{ key: string; position: THREE.Vector3; target: THREE.Vector3; zoom: number } | null>(null)
-  const [roofs, setRoofs] = useState(mode === 'exterior'), [allDecks, setAllDecks] = useState(mode === 'exterior'), [separated, setSeparated] = useState(false)
+  const [roofs, setRoofs] = useState(mode === 'exterior'), [allDecks, setAllDecks] = useState(mode === 'exterior'), [explodeRequested, setSeparated] = useState(false)
   const [hiddenDeckIds, setHiddenDeckIds] = useState<string[]>([]), [transparentHull, setTransparentHull] = useState(false)
+  const visibleDeckCount = allDecks ? plan.decks.filter(d => !hiddenDeckIds.includes(d.id)).length : 1
+  const separated = explodeRequested && visibleDeckCount > 1
   const [failure, setFailure] = useState(false)
   const sceneData = useMemo(() => buildShipScene(plan, { deckId, mode, roofs, allDecks, separated, hiddenDeckIds }), [plan, deckId, mode, roofs, allDecks, separated, hiddenDeckIds])
   useEffect(() => { latest.current = { selection, onSelect }; actions.current?.highlight() }, [selection, onSelect])
@@ -117,11 +119,11 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
       <button onClick={()=>actions.current?.reset()}>Reset view</button><button aria-label="Zoom 3D out" onClick={()=>actions.current?.zoom(.8)}>-</button><button aria-label="Zoom 3D in" onClick={()=>actions.current?.zoom(1.25)}>+</button>
       <label><input type="checkbox" checked={roofs} onChange={e=>setRoofs(e.target.checked)} /> Roofs</label>
       <label><input type="checkbox" checked={transparentHull} onChange={e=>setTransparentHull(e.target.checked)} /> Transparent hull</label>
-      <label><input type="checkbox" checked={allDecks} onChange={e=>setAllDecks(e.target.checked)} /> All decks</label>
-      <label><input type="checkbox" checked={separated} disabled={!allDecks} onChange={e=>setSeparated(e.target.checked)} /> Separate decks</label>
+      <label><input type="checkbox" checked={allDecks} onChange={e=>setAllDecks(e.target.checked)} /> Show all decks</label>
+      <label><input type="checkbox" checked={separated} disabled={visibleDeckCount <= 1} onChange={e=>setSeparated(e.target.checked)} /> Exploded view</label>
     </div>
-    {allDecks && <fieldset aria-label="Visible decks" className="flex flex-wrap gap-x-4 gap-y-2 px-3 py-2 text-xs border-b border-gray-800"><legend className="sr-only">Visible decks</legend>{plan.decks.map(d=><label key={d.id} className="min-w-0 max-w-full break-all"><input type="checkbox" aria-label={`Show deck ${d.name}`} checked={!hiddenDeckIds.includes(d.id)} onChange={e=>setHiddenDeckIds(ids=>e.target.checked?ids.filter(id=>id!==d.id):[...ids,d.id])} /> {d.name}</label>)}<button onClick={()=>setHiddenDeckIds([])}>Show all decks</button></fieldset>}
-    {allDecks && plan.decks.every(d=>hiddenDeckIds.includes(d.id)) && <p role="status" className="p-3 text-sm text-amber-200">No decks visible. Choose a deck above or use Show all decks.</p>}
+    {allDecks && <fieldset aria-label="Visible decks" className="flex flex-wrap gap-x-4 gap-y-2 px-3 py-2 text-xs border-b border-gray-800"><legend className="sr-only">Visible decks</legend>{plan.decks.map(d=><label key={d.id} className="min-w-0 max-w-full break-all"><input type="checkbox" aria-label={`Show deck ${d.name}`} checked={!hiddenDeckIds.includes(d.id)} onChange={e=>setHiddenDeckIds(ids=>e.target.checked?ids.filter(id=>id!==d.id):[...ids,d.id])} /> {d.name}</label>)}<button onClick={()=>setHiddenDeckIds([])}>Restore hidden decks</button></fieldset>}
+    {allDecks && plan.decks.every(d=>hiddenDeckIds.includes(d.id)) && <p role="status" className="p-3 text-sm text-amber-200">No decks visible. Choose a deck above or use Restore hidden decks.</p>}
     {failure ? <div role="status" className="h-[380px] md:h-[520px] flex flex-col gap-4 items-center justify-center p-6 text-center"><p>3D is unavailable on this device. Your ship and unsaved edits are safe.</p><button onClick={onFallback} className="rounded bg-cyan-800 px-4 py-2">Return to 2D</button></div> : <div ref={host} className="relative h-[380px] md:h-[520px] overflow-hidden touch-none" />}
     <p className="p-3 text-xs text-gray-400 border-t border-gray-800">Drag to orbit; scroll to zoom; click to inspect. 5 ft per grid cell for display. Decks stack in list order, top first. Connections show endpoints, not physical shafts.</p>
     {sceneData.omitted>0&&<p role="status" className="px-3 pb-3 text-xs text-amber-300">Large plan: 3D detail is limited. Use an individual deck or the 2D plan and inventory to inspect all items.</p>}
