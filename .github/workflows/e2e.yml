@@ -37,6 +37,9 @@ jobs:
       - name: Test surface storage and workflow compatibility locally
         run: node scripts/test-ship-surface-db.mjs
 
+      - name: Test bounded opening helpers and recovery locally
+        run: node scripts/test-ship-openings-hardening.mjs
+
       - name: Test ship editor locally
         run: npm run test:ships:ui
 

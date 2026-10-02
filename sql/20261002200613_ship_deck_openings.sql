@@ -6,7 +6,63 @@ CREATE OR REPLACE FUNCTION public.v2_ship_check_openings(p jsonb) RETURNS void
 LANGUAGE plpgsql SECURITY INVOKER SET search_path='' AS $$
 DECLARE c jsonb; a jsonb; part jsonb; target jsonb; pos jsonb; root jsonb; field text; endpoint text;
   ai integer; bi integer; w integer; h integer; ids text[]:='{}'; offsets jsonb:='{}'; queue text[]; current_id text; other_id text; origin jsonb; dest jsonb; wanted jsonb;
+  bounded_deck jsonb; bounded_item jsonb; collection text; coordinate text;
 BEGIN
+  -- These pure helpers are RPC-callable. Bound untrusted input before graph,
+  -- geometry or merge work; do not rely on the outer save validator.
+  IF p IS NULL OR jsonb_typeof(p) IS DISTINCT FROM 'object'
+    OR octet_length(p::text)>2000000
+    OR p->>'schema_version' IS DISTINCT FROM '1'
+    OR jsonb_typeof(p->'decks') IS DISTINCT FROM 'array'
+    OR jsonb_typeof(p->'parts') IS DISTINCT FROM 'array'
+    OR jsonb_typeof(p->'connections') IS DISTINCT FROM 'array'
+  THEN RAISE EXCEPTION 'Invalid bounded opening document'; END IF;
+  IF jsonb_array_length(p->'decks') NOT BETWEEN 1 AND 20
+    OR jsonb_array_length(p->'parts')>2000 OR jsonb_array_length(p->'connections')>200
+  THEN RAISE EXCEPTION 'Opening document exceeds collection limits'; END IF;
+  FOREACH collection IN ARRAY ARRAY['decks','parts','connections'] LOOP
+    IF EXISTS(SELECT 1 FROM jsonb_array_elements(p->collection) v
+      WHERE jsonb_typeof(v) IS DISTINCT FROM 'object' OR coalesce(length(v->>'id'),0) NOT BETWEEN 1 AND 100)
+      OR EXISTS(SELECT 1 FROM jsonb_array_elements(p->collection) v GROUP BY v->>'id' HAVING count(*)>1)
+    THEN RAISE EXCEPTION 'Invalid or duplicate opening document ID'; END IF;
+  END LOOP;
+  FOR bounded_deck IN SELECT value FROM jsonb_array_elements(p->'decks') LOOP
+    IF jsonb_typeof(bounded_deck->'rooms') IS DISTINCT FROM 'array'
+      OR jsonb_typeof(bounded_deck->'marks') IS DISTINCT FROM 'array'
+    THEN RAISE EXCEPTION 'Invalid opening deck collections'; END IF;
+    IF jsonb_array_length(bounded_deck->'rooms')>500 OR jsonb_array_length(bounded_deck->'marks')>2000
+    THEN RAISE EXCEPTION 'Opening deck exceeds collection limits'; END IF;
+    FOREACH coordinate IN ARRAY ARRAY['width','height'] LOOP
+      IF coalesce(length(bounded_deck->>coordinate),0) NOT BETWEEN 1 AND 12
+      THEN RAISE EXCEPTION 'Invalid opening deck dimensions'; END IF;
+      IF (bounded_deck->>coordinate)::numeric NOT BETWEEN 4 AND 100
+        OR (bounded_deck->>coordinate)::numeric<>trunc((bounded_deck->>coordinate)::numeric)
+      THEN RAISE EXCEPTION 'Invalid opening deck dimensions'; END IF;
+    END LOOP;
+    FOR bounded_item IN SELECT value FROM jsonb_array_elements(bounded_deck->'rooms') LOOP
+      FOREACH coordinate IN ARRAY ARRAY['x','y','width','height'] LOOP
+        IF coalesce(length(bounded_item->>coordinate),0) NOT BETWEEN 1 AND 12
+        THEN RAISE EXCEPTION 'Invalid opening room geometry'; END IF;
+        IF (bounded_item->>coordinate)::numeric NOT BETWEEN 0 AND 100
+          OR (bounded_item->>coordinate)::numeric<>trunc((bounded_item->>coordinate)::numeric)
+        THEN RAISE EXCEPTION 'Invalid opening room geometry'; END IF;
+      END LOOP;
+    END LOOP;
+  END LOOP;
+  FOR bounded_item IN SELECT value FROM jsonb_array_elements(p->'connections') LOOP
+    FOREACH endpoint IN ARRAY ARRAY['from','to'] LOOP
+      IF NOT EXISTS(SELECT 1 FROM jsonb_array_elements(p->'decks') d WHERE d->>'id'=bounded_item->>(endpoint||'_deck'))
+        OR jsonb_typeof(bounded_item->endpoint) IS DISTINCT FROM 'object'
+      THEN RAISE EXCEPTION 'Invalid opening deck endpoint'; END IF;
+      FOREACH coordinate IN ARRAY ARRAY['x','y'] LOOP
+        IF coalesce(length(bounded_item->endpoint->>coordinate),0) NOT BETWEEN 1 AND 12
+        THEN RAISE EXCEPTION 'Invalid opening endpoint coordinates'; END IF;
+        IF (bounded_item->endpoint->>coordinate)::numeric NOT BETWEEN 0 AND 99
+          OR (bounded_item->endpoint->>coordinate)::numeric<>trunc((bounded_item->endpoint->>coordinate)::numeric)
+        THEN RAISE EXCEPTION 'Invalid opening endpoint coordinates'; END IF;
+      END LOOP;
+    END LOOP;
+  END LOOP;
   -- Stable deck offsets follow the same deterministic connection order as the viewer.
   FOR root IN SELECT value FROM jsonb_array_elements(p->'decks') LOOP
     IF offsets ? (root->>'id') THEN CONTINUE; END IF;
@@ -43,8 +99,17 @@ BEGIN
         IF jsonb_typeof(pos->field) IS DISTINCT FROM 'number' OR (pos->>field)::numeric<>trunc((pos->>field)::numeric) THEN RAISE EXCEPTION 'Opening positions require whole cells';END IF;
       END LOOP;
       IF (pos->>'x')::integer+w>(target->>'width')::integer OR (pos->>'y')::integer+h>(target->>'height')::integer OR EXISTS(
-        SELECT 1 FROM generate_series((pos->>'x')::integer,(pos->>'x')::integer+w-1) x,generate_series((pos->>'y')::integer,(pos->>'y')::integer+h-1) y
-        WHERE NOT EXISTS(SELECT 1 FROM jsonb_array_elements(target->'rooms') r WHERE x>=(r->>'x')::integer AND y>=(r->>'y')::integer AND x<(r->>'x')::integer+(r->>'width')::integer AND y<(r->>'y')::integer+(r->>'height')::integer))
+        -- Union room intervals per column instead of scanning every room for
+        -- every cell (bounded to 100 columns x 500 rooms per endpoint).
+        SELECT 1 FROM generate_series((pos->>'x')::integer,(pos->>'x')::integer+w-1) x
+        WHERE NOT coalesce((SELECT range_agg(int4range(
+          greatest((pos->>'y')::integer,(r->>'y')::integer),
+          least((pos->>'y')::integer+h,(r->>'y')::integer+(r->>'height')::integer),'[)'))
+          @> int4range((pos->>'y')::integer,(pos->>'y')::integer+h,'[)')
+          FROM jsonb_array_elements(target->'rooms') r
+          WHERE x>=(r->>'x')::integer AND x<(r->>'x')::integer+(r->>'width')::integer
+            AND (r->>'y')::integer<(pos->>'y')::integer+h
+            AND (r->>'y')::integer+(r->>'height')::integer>(pos->>'y')::integer),false))
       THEN RAISE EXCEPTION 'Opening must fit room floors at both endpoints';END IF;
     END LOOP;
     origin:=offsets->(c->>'from_deck');dest:=offsets->(c->>'to_deck');
@@ -63,13 +128,23 @@ REVOKE ALL ON FUNCTION public.v2_ship_check_openings(jsonb) FROM PUBLIC,anon,aut
 GRANT EXECUTE ON FUNCTION public.v2_ship_check_openings(jsonb) TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.v2_ship_merge_openings(p jsonb,prior jsonb) RETURNS jsonb
-LANGUAGE sql SECURITY INVOKER SET search_path='' AS $$
+LANGUAGE plpgsql SECURITY INVOKER SET search_path='' AS $$
+DECLARE merged jsonb;
+BEGIN
+ PERFORM public.v2_ship_check_openings(p);
+ -- The INSERT trigger's exact empty-prior sentinel is the only non-plan input.
+ IF prior IS DISTINCT FROM '{"decks":[]}'::jsonb THEN
+   PERFORM public.v2_ship_check_openings(prior);
+ END IF;
  SELECT jsonb_set(p,'{connections}',coalesce((SELECT jsonb_agg(CASE WHEN c.value ? 'aperture' OR old.value IS NULL THEN c.value ELSE c.value||jsonb_build_object('aperture',CASE
    WHEN old.value->'aperture'->>'ladder_part_id' IS NOT NULL AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(p->'parts') part WHERE part->>'id'=old.value->'aperture'->>'ladder_part_id')
    THEN jsonb_set(old.value->'aperture','{ladder_part_id}','null'::jsonb) ELSE old.value->'aperture' END) END ORDER BY c.ordinality)
  FROM jsonb_array_elements(p->'connections') WITH ORDINALITY c(value,ordinality)
- LEFT JOIN LATERAL (SELECT value FROM jsonb_array_elements(coalesce(prior->'connections','[]'::jsonb)) old WHERE old->>'id'=c.value->>'id' AND old ? 'aperture') old ON true),'[]'::jsonb))
-$$;
+ LEFT JOIN LATERAL (SELECT value FROM jsonb_array_elements(coalesce(prior->'connections','[]'::jsonb)) old WHERE old->>'id'=c.value->>'id' AND old ? 'aperture') old ON true),'[]'::jsonb)) INTO merged;
+ -- Individually bounded documents can grow when omitted metadata is restored.
+ PERFORM public.v2_ship_check_openings(merged);
+ RETURN merged;
+END $$;
 REVOKE ALL ON FUNCTION public.v2_ship_merge_openings(jsonb,jsonb) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.v2_ship_merge_openings(jsonb,jsonb) TO authenticated;
 
