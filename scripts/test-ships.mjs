@@ -82,6 +82,21 @@ check('3D geometry preserves IDs, exterior wings/boosters, roof toggles and heig
   const tall=structuredClone(fighter);tall.decks[0].height_ft=20
   assert.ok(Math.max(...buildShipScene(tall,options).items.map(i=>i.at[1]))>Math.max(...scene.items.map(i=>i.at[1])))
 })
+check('all interior assemblies including both consoles stay below every supported ceiling', () => {
+  for(const height of [1,2,8,12.5,100]) for(const mode of ['cutaway','exterior']) for(const roofs of [true,false]) {
+    const p=structuredClone(freighter);p.decks.forEach(d=>d.height_ft=height)
+    const elevations=deckElevations(p.decks)
+    const scene=buildShipScene(p,{deckId:p.decks[0].id,mode,roofs,allDecks:true,separated:false})
+    for(const part of p.parts.filter(p=>!['Port wing','Starboard wing','Booster','Hull panel'].includes(p.type))) {
+      const items=scene.items.filter(i=>i.selection?.kind==='part'&&i.selection.id===part.id)
+      assert.ok(items.length>0)
+      for(const item of items) {
+        assert.ok(item.at[1]-item.size[1]/2>=elevations.get(part.deck_id)-1e-8)
+        assert.ok(item.at[1]+item.size[1]/2<elevations.get(part.deck_id)+height/5)
+      }
+    }
+  }
+})
 check('3D shared walls deduplicate and doors create real openings', () => {
   const plan={schema_version:1,decks:[{id:'d',name:'D',width:4,height:4,rooms:[{id:'r',name:'R',x:0,y:0,width:2,height:2,notes:''},{id:'s',name:'S',x:2,y:0,width:2,height:2,notes:''}],marks:[]}],parts:[],connections:[]}
   const o={deckId:'d',mode:'cutaway',roofs:false,allDecks:false,separated:false}

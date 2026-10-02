@@ -6,6 +6,14 @@ export const SCENE_LIMIT = 6000
 export type SceneSelection = { kind: 'room' | 'mark' | 'part' | 'connection'; id: string }
 export type SceneItem = { at: [number, number, number]; size: [number, number, number]; color: string; shape?: 'port' | 'starboard' | 'engine'; selection?: SceneSelection; deckId: string }
 export type SceneOptions = { deckId: string; mode: 'cutaway' | 'exterior'; roofs: boolean; allDecks: boolean; separated: boolean }
+// Fit the complete interior assembly, including caps/screens, below the ceiling.
+// Exterior hull, wings and engines intentionally use their own dimensions.
+export function fitEquipmentHeight(items: SceneItem[], floor: number, height: number): SceneItem[] {
+  const top = Math.max(0, ...items.map(i => i.at[1] + i.size[1] / 2 - floor))
+  const available = height - Math.min(.1, height * .1)
+  const scale = top > 0 ? Math.min(1, available / top) : 1
+  return items.map(i => ({ ...i, at: [i.at[0], floor + (i.at[1] - floor) * scale, i.at[2]], size: [i.size[0], i.size[1] * scale, i.size[2]] }))
+}
 export function deckElevations(decks: Deck[], separated = false) {
   const elevations = new Map<string, number>(); let y = 0
   for (const d of [...decks].reverse()) { elevations.set(d.id, y); y += deckHeight(d) / CELL_FEET + .12 + (separated ? 2 : 0) }
@@ -66,10 +74,12 @@ export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
         box(x,base+.4,z,size.width,.5,size.height,tint,s)
         box(x,base+.66,z,size.width*.8,.035,size.height*.7,'#94a5b5',s)
       } else {
-        if(exterior && options.roofs && p.type==='Control') box(x,base+h+.16,z,1.25,.16,1.1,'#3eaccd',s)
         const ph=Math.min(h*.65,p.type==='Power'?.9:p.type==='Furniture'?.35:.6)
-        box(x,base+ph/2,z,.7,ph,.7,tint,s)
-        box(x,base+ph+.025,z,.52,.05,.48,p.type==='Control'?'#31bfd9':p.type==='Power'?'#ddbe68':p.type==='Life support'?'#72ba9e':'#a6b5bd',s)
+        const equipment: SceneItem[] = [
+          { at:[x,base+ph/2,z], size:[.7,ph,.7], color:tint, selection:s, deckId:d.id },
+          { at:[x,base+ph+.025,z], size:[.52,.05,.48], color:p.type==='Control'?'#31bfd9':p.type==='Power'?'#ddbe68':p.type==='Life support'?'#72ba9e':'#a6b5bd', selection:s, deckId:d.id },
+        ]
+        fitEquipmentHeight(equipment,base,h).forEach(add)
       }
     }
     for(const c of plan.connections) {

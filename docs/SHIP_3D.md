@@ -37,7 +37,7 @@ from connections with different endpoint positions. Connection pads remain inspe
 
 Room boundaries create floors/walls. Shared wall edges are deduplicated and door
 marks cut openings. Cutaway walls are reduced to 45% height for visibility.
-Exterior shows full walls, roof panels, console glazing, wing forms and booster
+Exterior shows full walls, roof panels, wing forms and booster
 nozzles/emissive faces. Unknown part types use generic equipment models. Quantity
 is inventory metadata and never multiplies geometry. Existing user ships are not
 rewritten or replaced by templates.
@@ -57,3 +57,6 @@ legacy-client saves, unchanged ACLs, migration reruns and ship permission tests.
 `npm run test:registration` checks compatibility with the existing approval gate.
 `npm run test:ships:ui` covers local mocked browser interactions and the 3D fallback;
 no live campaign data or credentials are needed. Inspect screenshots in test-results.
+
+Interior assemblies include their caps/screens when fitted below the ceiling.
+Console-linked rooftop glazing was removed; cockpit windows belong to the hull.
