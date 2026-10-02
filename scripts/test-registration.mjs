@@ -53,6 +53,7 @@ try {
   await db.exec(readFileSync(new URL('../sql/v2_006_profile_update_columns.sql',import.meta.url),'utf8'))
   await db.exec(readFileSync(new URL('../sql/v2_005_ships.sql',import.meta.url),'utf8'))
   await db.exec(readFileSync(new URL('../sql/20261002152056_ship_deck_heights.sql',import.meta.url),'utf8'))
+  await db.exec(readFileSync(new URL('../sql/20261002171000_ship_appearance.sql',import.meta.url),'utf8'))
   await check('migration preflight rejects an unreviewed public bucket atomically',async()=>{
     await db.exec("INSERT INTO storage.buckets VALUES('unexpected',true)")
     await assert.rejects(()=>db.exec(migration),/Public storage buckets/);await db.exec('ROLLBACK')

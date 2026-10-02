@@ -173,6 +173,8 @@ await db.query('INSERT INTO v2_ships(id,name,plan) VALUES($1,$2,$3)',[legacyId,'
 const beforeACL=(await db.query("SELECT oid::text,proacl::text FROM pg_proc WHERE proname IN ('v2_ship_check_plan','v2_ship_before_write') ORDER BY proname")).rows
 const heightsMigration=readFileSync(new URL('../sql/20261002152056_ship_deck_heights.sql',import.meta.url),'utf8')
 await db.exec(heightsMigration);await db.exec(heightsMigration)
+const appearanceMigration=readFileSync(new URL('../sql/20261002171000_ship_appearance.sql',import.meta.url),'utf8')
+await db.exec(appearanceMigration);await db.exec(appearanceMigration)
 assert.deepEqual((await db.query("SELECT oid::text,proacl::text FROM pg_proc WHERE proname IN ('v2_ship_check_plan','v2_ship_before_write') ORDER BY proname")).rows,beforeACL)
 assert.equal((await db.query('SELECT version,plan FROM v2_ships WHERE id=$1',[legacyId])).rows[0].version,1)
 
@@ -187,6 +189,24 @@ async function save(shipId, version, plan = freighter, notes = 'GM SECRET', ship
 }
 try {
   await as(gm)
+  await test('appearance saves atomically, validates and preserves omitted old-client fields', async()=>{
+    const plan=structuredClone(freighter)
+    plan.appearance={hull_color:'#123456',accent_color:'#ABCDEF',engine_color:'#ff2200',marking:'chevron',windows:plan.decks.map((d,i)=>({id:'window'+i,deck_id:d.id,side:'front',position:.5}))}
+    let ship=await save(legacyId,1,plan)
+    assert.deepEqual(ship.plan.appearance,plan.appearance)
+    for(const mutate of [a=>a.hull_color='red',a=>a.engine_color=null,a=>a.marking='bad',a=>a.extra=true,a=>a.windows[0].side='top',a=>a.windows[0].position=2,a=>a.windows[0].position=null,a=>a.windows[0].deck_id='missing',a=>a.windows[0].id=plan.decks[0].id,a=>a.windows.push({...a.windows[0]})]){
+      const bad=structuredClone(plan);mutate(bad.appearance);await assert.rejects(()=>save(legacyId,ship.version,bad))
+    }
+    assert.equal((await db.query('SELECT version FROM v2_ships WHERE id=$1',[legacyId])).rows[0].version,ship.version)
+    const old=structuredClone(ship.plan);delete old.appearance
+    ship=await save(legacyId,ship.version,old);assert.deepEqual(ship.plan.appearance,plan.appearance)
+    const fewer=removeDeck(old,old.decks[0].id)
+    ship=await save(legacyId,ship.version,fewer)
+    assert.equal(ship.plan.appearance.windows.length,1);assert.equal(ship.plan.appearance.hull_color,'#123456')
+    ship.plan.appearance.windows=[];ship=await save(legacyId,ship.version,ship.plan);assert.equal(ship.plan.appearance.windows.length,0)
+    await db.query('DELETE FROM v2_ships WHERE id=$1',[legacyId])
+    await db.query('INSERT INTO v2_ships(id,name,plan) VALUES($1,$2,$3)',[legacyId,'Legacy',JSON.stringify(legacyPlan)])
+  })
   await test('height migration preserves ACLs/legacy rows and old clients preserve edited heights', async()=>{
     let ship=await save(legacyId,1,legacyPlan);assert.ok(ship.plan.decks.every(d=>d.height_ft===8))
     ship.plan.decks[0].height_ft=12.5;ship=await save(legacyId,ship.version,ship.plan)
