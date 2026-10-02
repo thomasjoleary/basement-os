@@ -307,12 +307,14 @@ try {
       assert.deepEqual((await merge(openingPlan,{decks:[]})).rows[0].plan,openingPlan)
       assert.deepEqual((await merge(openingPlan,openingPlan)).rows[0].plan,openingPlan)
     })
-    await check(`${label} direct helpers reject all ${invalid.length} invalid inputs in validator and both merge arguments`,async()=>{
+    await check(`${label} direct helpers reject ${invalid.length} invalid proposed inputs and unsafe prior envelopes`,async()=>{
       for(const [name,mutate] of invalid){
         const bad=mutate(structuredClone(openingPlan))
         await assert.rejects(()=>validate(bad),name+' validator')
         await assert.rejects(()=>merge(bad,openingPlan),name+' proposed')
-        await assert.rejects(()=>merge(openingPlan,bad),name+' prior')
+        // Prior geometry is not interpreted when the proposed plan explicitly repairs it.
+        if(invalid.findIndex(([label])=>label===name)<18)await assert.rejects(()=>merge(openingPlan,bad),name+' prior')
+        else assert.deepEqual((await merge(openingPlan,bad)).rows[0].plan,openingPlan)
       }
       await assert.rejects(()=>merge(plan,{decks:[],connections:[]}))
       await assert.rejects(()=>merge({decks:[]},plan))
@@ -349,6 +351,53 @@ try {
     maximum.connections[0].aperture.width=100;maximum.connections[0].aperture.height=100
     await validate(maximum)
   })
+  await check('combined geometry maxima use cached coverage for approved and pending direct calls',async()=>{
+    const combined=structuredClone(openingPlan)
+    for(const [i,d] of combined.decks.entries()){
+      d.width=100;d.height=100
+      d.rooms=Array.from({length:500},(_,j)=>({id:`r-${i}-${j}`,name:'Room',notes:'',x:0,y:0,width:100,height:100}))
+    }
+    combined.connections=Array.from({length:200},(_,i)=>({...structuredClone(openingPlan.connections[0]),id:'o'+i,from:{x:0,y:0},to:{x:0,y:0},aperture:{width:100,height:100,ladder_part_id:null}}))
+    for(const user of [player,pending]){
+      await as(user);const started=performance.now()
+      await validate(combined);await merge(combined,combined)
+      const elapsed=performance.now()-started
+      console.log(`Combined duplicate-room fixture validator + merge: ${Math.round(elapsed)} ms`)
+      assert.ok(elapsed<15000,'combined fixture exceeds generous 15-second local regression ceiling')
+    }
+    // Defeat identical-room deduplication and exercise all 20 supported decks.
+    combined.decks=Array.from({length:20},(_,i)=>({...structuredClone(combined.decks[0]),id:'d'+i,
+      rooms:Array.from({length:500},(_,j)=>({id:`unique-${i}-${j}`,name:'Room',notes:'',x:j%20,y:Math.floor(j/20),width:100-j%20,height:100-Math.floor(j/20)}))}))
+    combined.connections=combined.connections.map((c,i)=>({...c,from_deck:'d'+(i%19),to_deck:'d'+(i%19+1)}))
+    const started=performance.now();await assert.rejects(()=>validate(combined),/aggregate work limit/);await assert.rejects(()=>merge(combined,combined),/aggregate work limit/)
+    const elapsed=performance.now()-started
+    console.log(`Over-budget 20-deck distinct-room fixture rejected: ${Math.round(elapsed)} ms; ${JSON.stringify(combined).length} JSON bytes`)
+    assert.ok(elapsed<5000,'over-budget fixture exceeds generous 5-second rejection ceiling')
+    // A stored over-budget prior cannot trap a repair to a smaller valid plan.
+    assert.deepEqual((await merge(openingPlan,combined)).rows[0].plan,openingPlan)
+  })
+  await check('aggregate coverage boundary is inclusive and normal 20-deck ships remain supported',async()=>{
+    const atLimit=structuredClone(openingPlan)
+    for(const [i,d] of atLimit.decks.entries()){
+      d.width=100;d.height=100
+      d.rooms=Array.from({length:500},(_,j)=>({id:`limit-${i}-${j}`,name:'Room',notes:'',x:0,y:j===0?0:(j-1)%50,width:100,height:j===0?100:1+Math.floor((j-1)/50)}))
+    }
+    atLimit.connections=Array.from({length:200},(_,i)=>({...structuredClone(openingPlan.connections[0]),id:'limit-o'+i,from:{x:0,y:0},to:{x:0,y:0},aperture:{width:100,height:100,ladder_part_id:null}}))
+    for(const user of [player,pending]){
+      await as(user);const started=performance.now();await validate(atLimit);await merge(atLimit,atLimit)
+      const elapsed=performance.now()-started;console.log(`Exact 100,000-interval validator + merge: ${Math.round(elapsed)} ms`)
+      assert.ok(elapsed<15000,'aggregate limit case exceeds generous 15-second local regression ceiling')
+    }
+    const over=structuredClone(atLimit)
+    over.decks.push({id:'third',name:'Third',width:4,height:4,rooms:[{id:'one',name:'Room',notes:'',x:0,y:0,width:1,height:1}],marks:[]})
+    over.connections[199]={...over.connections[199],from_deck:'lower',to_deck:'third',aperture:{width:1,height:1,ladder_part_id:null}}
+    await assert.rejects(()=>validate(over),/aggregate work limit/)
+    const normal=structuredClone(atLimit);delete normal.surface_design
+    normal.decks=Array.from({length:20},(_,i)=>({...structuredClone(atLimit.decks[0]),id:'normal-'+i,rooms:[{...atLimit.decks[0].rooms[0],id:'normal-room-'+i}]}))
+    normal.connections=normal.connections.map((c,i)=>({...c,from_deck:'normal-'+(i%19),to_deck:'normal-'+(i%19+1)}))
+    await validate(normal);await merge(normal,normal)
+    await as(player);await db.query('SELECT public.v2_ship_check_plan($1)',[JSON.stringify(normal)])
+  })
   await as(null,'anon')
   await check('direct anonymous helper RPCs remain denied despite explicit default grants',async()=>{
     await assert.rejects(()=>validate(plan),/permission denied/)
@@ -366,6 +415,30 @@ try {
     const incompatible=structuredClone(old);incompatible.decks[1].rooms=[]
     await assert.rejects(()=>act('save',openingDesign.version,{...payload,plan:incompatible},openId),/Opening must fit/)
     assert.deepEqual((await db.query('SELECT plan FROM v2_ship_designs WHERE id=$1',[openId])).rows[0].plan,prior)
+  })
+  await check('predecessor numeric formats survive migration and stored plans can be repaired',async()=>{
+    await db.exec('RESET ROLE');await db.exec(surfaceMigration)
+    const legacy=structuredClone(plan)
+    legacy.decks[0].width='00000000000004';legacy.decks[0].height=' +00000000000004 '
+    legacy.decks[0].rooms=[{id:'legacy-room',name:'Room',notes:'',x:'+00000000000000',y:' 00000000000000 ',width:'00000000000004',height:'00000000000004'}]
+    await db.query('SELECT public.v2_ship_check_plan($1)',[JSON.stringify(legacy)])
+    const legacyShip='20000000-0000-0000-0000-000000000070',legacyDesign='20000000-0000-0000-0000-000000000071'
+    await as(gm);await db.query('INSERT INTO v2_ships(id,name,plan) VALUES($1,$2,$3)',[legacyShip,'Legacy numeric',JSON.stringify(legacy)])
+    await as(player);let draft=await act('create',0,{...payload,plan:legacy},legacyDesign)
+    await db.exec('RESET ROLE');await db.exec(openingMigration)
+    await as(player);await validate(legacy)
+    draft=await act('save',draft.version,{...payload,plan:legacy},legacyDesign)
+    const corrected=structuredClone(legacy);corrected.decks[0].width=4;corrected.decks[0].height=4
+    draft=await act('save',draft.version,{...payload,plan:corrected},legacyDesign)
+    assert.equal(draft.plan.decks[0].width,4)
+    await as(gm);await db.query('UPDATE v2_ships SET plan=$1 WHERE id=$2',[JSON.stringify(legacy),legacyShip])
+    await db.query('UPDATE v2_ships SET plan=$1 WHERE id=$2',[JSON.stringify(corrected),legacyShip])
+    assert.equal((await db.query('SELECT plan FROM v2_ships WHERE id=$1',[legacyShip])).rows[0].plan.decks[0].width,4)
+    // Prior semantic defects must not trap explicit repairs or contaminate output.
+    const prior=structuredClone(openingPlan);prior.decks[0].width='not-a-number';prior.connections[0].aperture.width=0
+    assert.deepEqual((await merge(openingPlan,prior)).rows[0].plan,openingPlan)
+    const omitted=structuredClone(openingPlan);delete omitted.connections[0].aperture
+    await assert.rejects(()=>merge(omitted,prior),/Opening dimensions/)
   })
   await db.exec('RESET ROLE')
   await check('reapplying hardened functions after saved openings preserves every campaign workflow row',async()=>{

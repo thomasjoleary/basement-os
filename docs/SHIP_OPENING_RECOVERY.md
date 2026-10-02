@@ -12,17 +12,35 @@ The two SECURITY INVOKER opening helpers now bound their own input, including
 when authenticated pending users invoke them directly. They read only their
 arguments; bounded calls remain allowed without granting campaign access.
 Anonymous EXECUTE remains explicitly revoked, including inherited default grants.
-The merge helper validates both arguments and its result. Only the trigger's exact
+The merge helper validates proposed/result geometry and bounds both argument
+structures. Prior geometry is not revalidated: explicit repairs remain possible,
+while invalid copied aperture metadata still fails result validation. Only the trigger's exact
 `{"decks":[]}` empty-prior sentinel bypasses prior-plan validation.
 
 Limits: 2,000,000 bytes per JSONB text document, 1–20 decks, 2,000 parts,
 200 connections, 500 rooms and 2,000 marks per deck. Graph IDs must be nonempty,
 at most 100 characters and unique within each traversed collection; referenced
 decks must exist. Deck dimensions, room geometry and endpoint coordinates are
-bounded before traversal. Legacy integral string geometry remains supported.
-Floor coverage unions room intervals per x column, avoiding a room scan for each
-cell. This limits one endpoint scan to 100 columns by 500 rooms. It is not a
-rate limiter or a guarantee against saturation by concurrent callers.
+bounded before traversal. Legacy integer formats use the same integer parser as the predecessor, including
+leading zeros, signs and whitespace; there is no new numeric-text length ceiling.
+Document bytes bound parser input. Regression tests save predecessor-created ships
+and drafts unchanged, then repair their dimensions after migration.
+
+Floor coverage is built once per used deck, deduplicating identical room rectangles.
+Before expansion, a global budget permits at most **100,000 distinct room-column
+intervals across all decks used by physical apertures**. Above-budget plans fail
+with an explicit error; prior-only over-budget geometry cannot block a repaired
+proposed plan. Legacy plans without apertures use no coverage budget. At most
+40,000 opening-column containment checks then use cached floor unions, and deck
+indexes/geometry are cached rather than repeatedly scanning full room documents.
+This supports normal 20-deck ships and 200 openings without multiplying room scans
+by opening count. Dense custom layouts may need fewer distinct room rectangles;
+this is a deliberate resource limit, not a new simulation rule.
+
+The committed tests exercise the formerly slow overlapping-room fixture, the
+exact 100,000-interval boundary, 100,001 rejection, a dense 20-deck fixture and a
+normal 20-deck plan. Local timings are regression evidence, not production latency
+promises. This is not a rate limiter or a guarantee against concurrent saturation.
 
 No table, RLS policy or stored row is changed. The three existing save/validation
 functions retain their published opening integration; this revision changes only
@@ -62,7 +80,7 @@ GM-note, draft, submission or review-event rows.
 Run `node scripts/test-ship-openings-hardening.mjs`. It uses in-memory PostgreSQL
 and dummy identities only. Coverage includes direct approved/pending helper calls,
 invalid roots/collections/IDs/geometry, input and merged-output byte ceilings,
-collection ceilings, room-floor unions/gaps, anonymous denial despite explicit
+collection ceilings, combined coverage budgets, legacy numeric repair, room-floor unions/gaps, anonymous denial despite explicit
 anon default grants, pending save denial, stale/immutable workflow records,
 failed-migration rollback, repeat application and old-client recovery.
 
@@ -74,7 +92,10 @@ production restore rehearsal. The dependent opening UI stays unpublished.
 Read-only project metadata on 2026-10-02 reports BasementOS
 `uonpiqyugwdtarwidhqf` ACTIVE_HEALTHY, PostgreSQL 17.6.1.063. The migration ledger
 ends with `ship_surface_design`; no deck-opening migration is recorded.
-The exposed project metadata contains no backup/PITR history, and the available
+A later read-only aggregate check found four stored plans/six decks, none with
+deck-dimension text above the removed 12-character limit; the opening helper was
+still absent. This is a narrow compatibility observation, not a full production
+plan/resource audit. The exposed project metadata contains no backup/PITR history, and the available
 connector tools have no backup-list operation. No authorized Management API token
 or dashboard backup session was available in this execution environment.
 Therefore backup age, retention, latest usable restore point and restore success
