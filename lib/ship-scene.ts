@@ -4,7 +4,7 @@ import { type ShipPlan, type Deck, deckHeight, partFootprint } from './ships'
 export const CELL_FEET = 5
 export const SCENE_LIMIT = 6000
 export type SceneSelection = { kind: 'room' | 'mark' | 'part' | 'connection'; id: string }
-export type SceneItem = { at: [number, number, number]; size: [number, number, number]; color: string; shape?: 'port' | 'starboard' | 'engine'; selection?: SceneSelection; deckId: string }
+export type SceneItem = { at: [number, number, number]; size: [number, number, number]; color: string; shape?: 'port' | 'starboard' | 'engine' | 'nose' | 'slope-port' | 'slope-starboard'; selection?: SceneSelection; deckId: string }
 export type SceneOptions = { deckId: string; mode: 'cutaway' | 'exterior'; roofs: boolean; allDecks: boolean; separated: boolean }
 // Fit the complete interior assembly, including caps/screens, below the ceiling.
 // Exterior hull, wings and engines intentionally use their own dimensions.
@@ -59,6 +59,20 @@ export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
       const wh=exterior?h:h*.45
       box(e.x+(e.vertical?0:.5),base+wh/2,e.z+(e.vertical?.5:0),e.vertical?.1:(exterior?.97:1),wh,e.vertical?(exterior?.97:1):.1,exterior?'#64788d':'#b9c8d2',e.selection)
     }
+    if(exterior && d.rooms.length) {
+      // Fairing skin extends outward only: never carve into saved room footprints.
+      for(const e of edges.values()) if(e.vertical) {
+        const port=filled(e.x,e.z)
+        box(e.x+(port?-.25:.25),base+h/2,e.z+.5,.5,h,1,'#60778e',e.selection,port?'slope-port':'slope-starboard')
+      }
+      const bow=Math.min(...d.rooms.map(r=>r.y))
+      for(let x=0;x<d.width;) {
+        if(!filled(x,bow)){x++;continue}
+        const start=x;while(x<d.width&&filled(x,bow))x++
+        const room=d.rooms.find(r=>r.y===bow&&start>=r.x&&start<r.x+r.width)
+        box((start+x)/2,base+h/2,bow-.65,x-start,h,1.3,'#788b9e',room?{kind:'room',id:room.id}:undefined,'nose')
+      }
+    }
     for(const p of plan.parts.filter(p=>p.deck_id===d.id)) {
       if(items.length>=SCENE_LIMIT){omitted++;continue}
       const size=partFootprint(p.type), s: SceneSelection={kind:'part',id:p.id}, x=p.x+size.width/2,z=p.y+size.height/2
@@ -66,6 +80,12 @@ export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
       if(p.type==='Port wing'||p.type==='Starboard wing') {
         box(x,base+.25,z,size.width,.2,size.height,tint,s,p.type==='Port wing'?'port':'starboard')
         box(x,base+.37,z,.09,.035,size.height*.65,'#c5a560',s)
+        if(exterior) {
+          const port=p.type==='Port wing', root=port?p.x+size.width:p.x
+          // Add a root fairing only when the wing actually meets occupied hull.
+          const adjacent=Array.from({length:size.height},(_,i)=>filled(port?Math.floor(root):Math.floor(root)-1,p.y+i)).some(Boolean)
+          if(adjacent) box(root+(port?-.4:.4),base+Math.min(h,.9)/2,z,.8,Math.min(h,.9),size.height*.82,tint,s,port?'slope-port':'slope-starboard')
+        }
       } else if(p.type==='Booster') {
         box(x,base+.5,z,1.25,1.25,2.5,tint,s,'engine')
         box(x,base+.5,z+1.28,.85,.85,.12,'#4bd7ee',s,'engine')

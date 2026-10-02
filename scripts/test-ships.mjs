@@ -82,6 +82,18 @@ check('3D geometry preserves IDs, exterior wings/boosters, roof toggles and heig
   const tall=structuredClone(fighter);tall.decks[0].height_ft=20
   assert.ok(Math.max(...buildShipScene(tall,options).items.map(i=>i.at[1]))>Math.max(...scene.items.map(i=>i.at[1])))
 })
+check('exterior nose and side fairings remain outside rooms and do not affect cutaway', () => {
+  for(const p of [fighter,freighter]) {
+    const opts={deckId:p.decks[0].id,mode:'exterior',roofs:true,allDecks:true,separated:false}
+    const scene=buildShipScene(p,opts), cutaway=buildShipScene(p,{...opts,mode:'cutaway'})
+    assert.ok(scene.items.some(i=>i.shape==='nose'));assert.ok(scene.items.some(i=>i.shape==='slope-port'))
+    assert.equal(cutaway.items.some(i=>i.shape==='nose'||i.shape?.startsWith('slope-')),false)
+    for(const nose of scene.items.filter(i=>i.shape==='nose')) {
+      const deck=p.decks.find(d=>d.id===nose.deckId)
+      assert.ok(nose.at[2]+nose.size[2]/2<=Math.min(...deck.rooms.map(r=>r.y))+1e-8)
+    }
+  }
+})
 check('all interior assemblies including both consoles stay below every supported ceiling', () => {
   for(const height of [1,2,8,12.5,100]) for(const mode of ['cutaway','exterior']) for(const roofs of [true,false]) {
     const p=structuredClone(freighter);p.decks.forEach(d=>d.height_ft=height)

@@ -60,3 +60,7 @@ no live campaign data or credentials are needed. Inspect screenshots in test-res
 
 Interior assemblies include their caps/screens when fitted below the ceiling.
 Console-linked rooftop glazing was removed; cockpit windows belong to the hull.
+
+Exterior fairings add tapered bow segments and sloped side armor outside occupied
+rooms. Wing-root fairings appear only where a wing meets the hull. These are visual
+skins, not new walkable space or persisted geometry; forward is decreasing grid y.
