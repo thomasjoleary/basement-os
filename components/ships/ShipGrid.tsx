@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { type Deck, type ShipPlan, type Point, type Room, newId, roomAt, movePart, newPart, partFootprint } from '@/lib/ships'
+import { type Deck, type ShipPlan, type Point, type Room, newId, roomAt, movePart, newPart, partFootprint, shipAppearance, windowAnchor } from '@/lib/ships'
 
 export type ShipTool = 'select' | 'pan' | 'room' | 'wall' | 'door' | 'label' | 'fixture'
 export type Selection = { kind: 'room' | 'mark' | 'part' | 'connection'; id: string } | null
@@ -122,6 +122,7 @@ export default function ShipGrid({ deck, plan, editable, tool, selection, onSele
           </>}
           <title>{m.name}</title>
         </g>)}
+        {shipAppearance(plan).windows.filter(w=>w.deck_id===deck.id).map(w=>{const at=windowAnchor(deck,w.side,w.position);return at?<g key={w.id} data-kind="room" data-id={at.roomId}><line x1={(at.x-(at.vertical?0:.35))*32} y1={(at.y-(at.vertical?.35:0))*32} x2={(at.x+(at.vertical?0:.35))*32} y2={(at.y+(at.vertical?.35:0))*32} stroke="#39adc9" strokeWidth="5" /><title>Window: {w.side}</title></g>:null})}
         {plan.parts.filter(p => p.deck_id === deck.id).map(p => {
           const size = partFootprint(p.type)
           const at = draft?.part === p.id && draft.origin ? {

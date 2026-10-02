@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-import { type ShipPlan } from '@/lib/ships'
+import { type ShipPlan, shipAppearance } from '@/lib/ships'
 import { buildShipScene, type SceneItem, type SceneSelection } from '@/lib/ship-scene'
 
 type Props = { plan: ShipPlan; deckId: string; mode: 'cutaway' | 'exterior'; selection: SceneSelection | null; onSelect: (s: SceneSelection | null, deckId?: string) => void; onFallback: () => void }
@@ -36,7 +36,10 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
     function geometry(shape = 'box') {
       if(geometries.has(shape)) return geometries.get(shape)!
       let result: THREE.BufferGeometry
-      if(shape === 'nose' || shape.startsWith('slope-')) {
+      if(shape === 'chevron') {
+        const outline=new THREE.Shape();outline.moveTo(-.5,-.4);outline.lineTo(0,.2);outline.lineTo(.5,-.4);outline.lineTo(.5,-.1);outline.lineTo(0,.5);outline.lineTo(-.5,-.1);outline.closePath()
+        result=new THREE.ExtrudeGeometry(outline,{depth:1,bevelEnabled:false});result.rotateX(Math.PI/2);result.translate(0,.5,0)
+      } else if(shape === 'nose' || shape.startsWith('slope-')) {
         const points = shape === 'nose'
           ? [[-.28,-.5,-.5],[.28,-.5,-.5],[.5,-.5,.5],[-.5,-.5,.5],[-.28,-.08,-.5],[.28,-.08,-.5],[.5,.5,.5],[-.5,.5,.5]]
           : [[-.5,-.5,-.5],[.5,-.5,-.5],[.5,-.5,.5],[-.5,-.5,.5],[shape==='slope-port'?.1:-.5,.5,-.5],[shape==='slope-port'?.5:-.1,.5,-.5],[shape==='slope-port'?.5:-.1,.5,.5],[shape==='slope-port'?.1:-.5,.5,.5]]
@@ -54,9 +57,9 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
       geometries.set(shape,result); return result
     }
     const grouped = new Map<string,SceneItem[]>()
-    for(const item of sceneData.items) { const key=(item.shape??'box')+(item.color==='#4bd7ee'?':glow':'')+(item.hull?':hull':''); if(!grouped.has(key))grouped.set(key,[]); grouped.get(key)!.push(item) }
+    for(const item of sceneData.items) { const key=(item.shape??'box')+(item.glow?':glow':'')+(item.hull?':hull':''); if(!grouped.has(key))grouped.set(key,[]); grouped.get(key)!.push(item) }
     const material = new THREE.MeshStandardMaterial({ roughness:.56, metalness:mode==='exterior'?.48:.15 })
-    const glowMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#21bcd9', emissiveIntensity: 1.4, roughness: .35 })
+    const glowMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: shipAppearance(plan).engine_color, emissiveIntensity: 1.4, roughness: .35 })
     const hullMaterial = material.clone(); hullMaterial.transparent = transparentHull; hullMaterial.opacity = transparentHull ? .18 : 1; hullMaterial.depthWrite = !transparentHull
     const meshes: THREE.InstancedMesh[] = []
     const matrix=new THREE.Matrix4(), quaternion=new THREE.Quaternion(), position=new THREE.Vector3(), scale=new THREE.Vector3()

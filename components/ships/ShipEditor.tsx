@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 const ShipViewer3D = dynamic(() => import('./ShipViewer3D'), { ssr: false, loading: () => <div className="h-[520px] flex items-center justify-center">Loading 3D view…</div> })
+import ShipAppearanceEditor from './ShipAppearanceEditor'
 import ShipGrid, { type Selection, type ShipTool } from './ShipGrid'
 import { type Ship, type ShipPlan, type Part, type Connection, QUALITIES, CONDITIONS, newDeck, newId, removeDeck, removeRoom, movePart, validatePlan, deckHeight } from '@/lib/ships'
 import { type Profile, saveShip } from '@/lib/ship-api'
@@ -98,6 +99,7 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles }
             {tab === 'ship' && <fieldset disabled={!isGM || busy} className="min-w-0 space-y-4">
               <Field label="Ship name" value={ship.name} onChange={name => setShip({ ...ship, name })} />
               <Notes label="Public description" value={ship.description} onChange={description => setShip({ ...ship, description })} />
+              <ShipAppearanceEditor plan={ship.plan} deckId={deck.id} disabled={!isGM || busy} onChange={change} />
               {isGM ? <>
                 <label className="block text-xs text-gray-400">Owner<select aria-label="Owner" value={ship.owner_id ?? ''} onChange={e => setShip({ ...ship, owner_id: e.target.value || null })} className={inputClass}><option value="">Unassigned</option>{profiles.map(p => <option key={p.id} value={p.id}>{p.username}</option>)}</select></label>
                 <div className="text-xs text-gray-400">Crew access<p className="mb-2">Owner and selected crew can read the complete plan and public notes.</p>{profiles.map(p => <label className="flex gap-2 items-center py-1 text-sm text-gray-200" key={p.id}><input type="checkbox" checked={ship.crew_ids.includes(p.id)} onChange={e => setShip({ ...ship, crew_ids: e.target.checked ? [...ship.crew_ids, p.id] : ship.crew_ids.filter(id => id !== p.id) })} />{p.username}</label>)}</div>

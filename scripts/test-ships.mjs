@@ -62,6 +62,18 @@ check('deleting rooms/decks cleans dependent links, keeps final deck', () => {
 })
 
 const { buildShipScene, equipmentModel, deckElevations, SCENE_LIMIT } = model('ship-scene')
+check('appearance defaults, independent copies, deck cleanup and hull anchors',()=>{
+  const {shipAppearance,copyPlan,windowAnchor}=model('ships')
+  const plan=structuredClone(freighter)
+  assert.equal(plan.appearance,undefined);assert.equal(shipAppearance(plan).marking,'none');assert.equal(plan.appearance,undefined)
+  plan.appearance={...shipAppearance(plan),hull_color:'#123456',engine_color:'#ff2200',marking:'stripe',windows:[{id:'window',deck_id:plan.decks[0].id,side:'port',position:.5}]}
+  assert.equal(validatePlan(plan),null)
+  const copy=copyPlan(plan);assert.notEqual(copy.appearance.windows[0].id,'window');assert.equal(copy.appearance.windows[0].deck_id,copy.decks[0].id)
+  assert.equal(removeDeck(plan,plan.decks[0].id).appearance.windows.length,0)
+  assert.ok(windowAnchor(plan.decks[0],'port',.5));assert.equal(windowAnchor({...plan.decks[0],rooms:[]},'front',0),null)
+  for(const change of [a=>a.hull_color='red',a=>a.windows[0].position=-1,a=>a.windows[0].deck_id='missing',a=>a.windows[0].id=plan.decks[0].id]){const bad=structuredClone(plan);change(bad.appearance);assert.ok(validatePlan(bad))}
+})
+
 check('deck heights default without changing originals and reject invalid values', () => {
   const legacy = structuredClone(freighter); legacy.decks.forEach(d => delete d.height_ft)
   const normalized = normalizeShip({ plan: legacy })

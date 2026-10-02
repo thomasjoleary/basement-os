@@ -72,3 +72,19 @@ All submeshes select their source inventory record and share the ceiling-fit rul
 Individual-deck visibility and transparent hull are temporary view preferences.
 Transparent skin is click-through so interior parts remain selectable; hidden
 decks stay in the inventory and can be restored without saving.
+
+Optional appearance is stored in schema-v1 plan.appearance: hull_color,
+accent_color and engine_color are six-digit hex colors; marking is none, stripe
+or chevron; windows contains up to 100 unique {id, deck_id, side, position}
+records. Position is 0–1 along the outer room boundary; side is front, rear,
+port or starboard. Windows are visual hull panes, not passageways. Empty decks
+render no windows until rooms exist. Existing ships keep their old appearance
+until explicitly customized; starter copies do not overwrite campaign ships.
+
+Apply sql/20261002171000_ship_appearance.sql after the height migration before
+publishing the appearance editor. The migration replaces two existing functions,
+retains ACLs, and changes no rows or policies. Old clients omitting appearance
+retain saved customization; removing a deck prunes its windows. Explicit empty
+windows clears them. No new RPC or database column is required. Restore the prior
+function definitions only after ensuring no saved documents contain appearance;
+removing saved customization is not an automatic rollback operation.
