@@ -470,3 +470,75 @@ test('appearance draft previews, saves and reloads colors markings and windows',
   await expect(page.getByLabel('Window 1 side',{exact:true})).toHaveValue('port')
   for(const width of [1024,390]){await page.setViewportSize({width,height:900});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)}
 })
+
+
+test('surface brush cancellation undo redo selection fill shape and save reload',async({page})=>{
+  const api=await backend(page),plan=api.ships.get(shipId)!.plan,room=plan.decks[0].rooms[0]
+  await page.setViewportSize({width:1366,height:900});await page.goto(`/v2/ships/${shipId}`)
+  await page.locator(`[data-kind="room"][data-id="${room.id}"]`).first().click()
+  const canvas=page.getByTestId('surface-paint-canvas');await expect(canvas).toBeVisible()
+  await expect(page.getByText('All changes saved',{exact:false})).toBeVisible()
+  async function square(x:number,y:number){await canvas.scrollIntoViewIfNeeded();const b=(await canvas.boundingBox())!,scale=Math.min(600/(room.width*5),280/(room.height*5));return{x:b.x+(20+(x+.5)*scale)*b.width/640,y:b.y+(300-(y+.5)*scale)*b.height/320}}
+  let from=await square(1,1),to=await square(4,1)
+  await page.mouse.move(from.x,from.y);await page.mouse.down();await page.mouse.move(to.x,to.y);await canvas.dispatchEvent('pointercancel',{pointerId:1});await page.mouse.up()
+  await expect(page.getByText('All changes saved',{exact:false})).toBeVisible()
+  from=await square(1,1);to=await square(4,1);await drag(page,from,to)
+  await expect(page.getByRole('button',{name:'Undo map edit',exact:true})).toBeEnabled()
+  await page.getByRole('button',{name:'Undo map edit',exact:true}).click();await page.getByRole('button',{name:'Redo map edit',exact:true}).click()
+  await page.getByRole('button',{name:'select',exact:true}).last().click()
+  await drag(page,await square(1,2),await square(3,3))
+  await page.getByRole('button',{name:'Fill selection',exact:true}).click()
+  await page.getByLabel('Surface',{exact:true}).selectOption('exterior-front')
+  await page.getByLabel('Outward extension (feet)',{exact:true}).fill('9')
+  await page.getByLabel('Roof bevel (feet)',{exact:true}).fill('1')
+  await page.getByLabel('Section color',{exact:true}).fill('#aa44dd')
+  await page.getByRole('button',{name:'Exterior',exact:true}).click()
+  await expect(page.getByTestId('ship-3d-canvas')).toBeVisible({timeout:30000})
+  await page.screenshot({path:'test-results/ship-surface-shaped.png'})
+  await page.getByRole('button',{name:'Save ship',exact:true}).click()
+  await expect(page.getByText('All changes saved',{exact:false})).toBeVisible()
+  const saved=api.ships.get(shipId)!.plan.surface_design!
+  expect(saved.surfaces.find(s=>s.face==='floor')!.paint.runs.length).toBeGreaterThan(0)
+  expect(saved.sections[0]).toMatchObject({extension_ft:9,bevel_ft:1})
+  await page.reload();await page.locator(`[data-kind="room"][data-id="${room.id}"]`).first().click()
+  await page.getByLabel('Surface',{exact:true}).selectOption('exterior-front')
+  await expect(page.getByLabel('Outward extension (feet)',{exact:true})).toHaveValue('9')
+  await expect(page.getByLabel('Section color',{exact:true})).toHaveValue('#aa44dd')
+})
+
+
+test('painted crew views are read-only; orbit never changes surface selection or stored plan',async({page})=>{
+ const api=await backend(page,'player'),plan=api.ships.get(shipId)!.plan,d=plan.decks[0],r=d.rooms[0]
+ plan.surface_design={surfaces:[{id:'floor-paint',deck_id:d.id,room_id:r.id,face:'floor',paint:{palette:['#ff0000','#ffffff'],runs:[[1025,4,0],[2049,4,1]]}},{id:'roof-paint',deck_id:d.id,room_id:r.id,face:'roof',paint:{palette:['#ff0000'],runs:[[1025,4,0],[2049,4,0]]}}],sections:[],components:[]}
+ const original=JSON.stringify(plan);let errors=0;page.on('pageerror',()=>errors++)
+ await page.setViewportSize({width:1366,height:900});await page.goto(`/v2/ships/${shipId}`)
+ await page.locator(`[data-kind="room"][data-id="${r.id}"]`).first().click()
+ await expect(page.getByLabel('Paint color',{exact:true})).toBeDisabled()
+ await expect(page.getByRole('button',{name:'Paint square',exact:true})).toBeDisabled()
+ const flat=page.getByTestId('surface-paint-canvas');await flat.scrollIntoViewIfNeeded();await flat.click({force:true})
+ await page.getByRole('button',{name:'Cutaway',exact:true}).click();await expect(page.getByTestId('ship-3d-canvas')).toBeVisible({timeout:30000})
+ await page.screenshot({path:'test-results/ship-painted-interior.png'})
+ await page.getByRole('button',{name:'Exterior',exact:true}).click()
+ const canvas=page.getByTestId('ship-3d-canvas'),b=(await canvas.boundingBox())!
+ await canvas.click({position:{x:b.width*.5,y:b.height*.5}})
+ await expect(page.getByLabel('Surface',{exact:true})).toBeVisible()
+ const face=await page.getByLabel('Surface',{exact:true}).inputValue()
+ await drag(page,{x:b.x+b.width*.5,y:b.y+b.height*.5},{x:b.x+b.width*.7,y:b.y+b.height*.6})
+ await expect(page.getByLabel('Surface',{exact:true})).toHaveValue(face)
+ await page.screenshot({path:'test-results/ship-painted-exterior.png'})
+ for(const width of [1024,390]){await page.setViewportSize({width,height:900});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)}
+ expect(api.stats.saves).toBe(0);expect(JSON.stringify(api.ships.get(shipId)!.plan)).toBe(original);expect(errors).toBe(0)
+})
+
+test('large surface fill is bounded and keyboard multiselect paints only selected foot squares',async({page})=>{
+ const api=await backend(page),plan=api.ships.get(shipId)!.plan,d=plan.decks[0]
+ d.width=100;d.height=100;d.rooms=[{id:'large-room',name:'Large room',x:0,y:0,width:100,height:100,notes:''}];plan.parts=[];plan.connections=[]
+ await page.goto(`/v2/ships/${shipId}`);await page.locator('[data-kind="room"][data-id="large-room"]').first().click()
+ await page.getByRole('button',{name:'Fill surface',exact:true}).click();await expect(page.getByText('Select a smaller area before filling this surface.',{exact:true})).toBeVisible()
+ await expect(page.getByText('All changes saved',{exact:false})).toBeVisible()
+ for(const [x,y] of [[1,1],[4,4]]){await page.getByLabel('Square x',{exact:true}).fill(String(x));await page.getByLabel('Square y',{exact:true}).fill(String(y));await page.getByRole('button',{name:'Add square to selection',exact:true}).click()}
+ await expect(page.getByText('2 selected',{exact:true})).toBeVisible()
+ await page.getByRole('button',{name:'Fill selection',exact:true}).click();await page.getByRole('button',{name:'Save ship',exact:true}).click()
+ await expect(page.getByText('All changes saved',{exact:false})).toBeVisible()
+ expect(api.ships.get(shipId)!.plan.surface_design!.surfaces[0].paint.runs.reduce((n,r)=>n+r[1],0)).toBe(2)
+})

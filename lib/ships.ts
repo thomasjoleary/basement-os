@@ -1,3 +1,4 @@
+import {type SurfaceDesign,surfaceDesignError,pruneSurfaces} from './ship-surfaces'
 // Ship plans describe spaces and equipment only; no combat or power simulation.
 export const QUALITIES = ['Junk', 'Secondhand', 'Store-bought', 'Outfitted', 'Specialized', 'Exotic'] as const
 export const CONDITIONS = ['Working', 'Worn', 'Damaged', 'Broken'] as const
@@ -16,7 +17,7 @@ export type ShipWindow = { id: string; deck_id: string; side: WindowSide; positi
 export type ShipAppearance = { hull_color: string; accent_color: string; engine_color: string; marking: 'none' | 'stripe' | 'chevron'; windows: ShipWindow[] }
 export const DEFAULT_APPEARANCE: ShipAppearance = { hull_color: '#718397', accent_color: '#d5b66e', engine_color: '#4bd7ee', marking: 'none', windows: [] }
 export function shipAppearance(plan: ShipPlan): ShipAppearance { return plan.appearance ?? DEFAULT_APPEARANCE }
-export type ShipPlan = { schema_version: 1; appearance?: ShipAppearance; decks: Deck[]; parts: Part[]; connections: Connection[] }
+export type ShipPlan = { schema_version: 1; surface_design?: SurfaceDesign; appearance?: ShipAppearance; decks: Deck[]; parts: Part[]; connections: Connection[] }
 export type Ship = { id: string; name: string; description: string; owner_id: string | null; crew_ids: string[]; plan: ShipPlan; version: number }
 export const newId = () => crypto.randomUUID()
 export const DEFAULT_DECK_HEIGHT = 8
@@ -47,10 +48,10 @@ export function movePart(plan: ShipPlan, id: string, deck: Deck, p: Point): Ship
 }
 export function removeDeck(plan: ShipPlan, id: string): ShipPlan {
   if (plan.decks.length <= 1) return plan
-  return { ...plan, ...(plan.appearance ? { appearance: { ...plan.appearance, windows: plan.appearance.windows.filter(w => w.deck_id !== id) } } : {}), decks: plan.decks.filter(d => d.id !== id), parts: plan.parts.filter(p => p.deck_id !== id), connections: plan.connections.filter(c => c.from_deck !== id && c.to_deck !== id) }
+  return pruneSurfaces({ ...plan, ...(plan.appearance ? { appearance: { ...plan.appearance, windows: plan.appearance.windows.filter(w => w.deck_id !== id) } } : {}), decks: plan.decks.filter(d => d.id !== id), parts: plan.parts.filter(p => p.deck_id !== id), connections: plan.connections.filter(c => c.from_deck !== id && c.to_deck !== id) })
 }
 export function removeRoom(plan: ShipPlan, id: string): ShipPlan {
-  return { ...plan, decks: plan.decks.map(d => ({ ...d, rooms: d.rooms.filter(r => r.id !== id) })), parts: plan.parts.map(p => p.room_id === id ? { ...p, room_id: null } : p) }
+  return pruneSurfaces({ ...plan, decks: plan.decks.map(d => ({ ...d, rooms: d.rooms.filter(r => r.id !== id) })), parts: plan.parts.map(p => p.room_id === id ? { ...p, room_id: null } : p) })
 }
 export function newPart(deck: Deck, p: Point): Part {
   return { id: newId(), deck_id: deck.id, room_id: roomAt(deck, p)?.id ?? null, ...p, name: 'New fixture', type: 'Fixture', quantity: 1, quality: 'Store-bought', black_market: false, condition: 'Working', notes: '' }
@@ -65,9 +66,15 @@ export function copyPlan(source: ShipPlan): ShipPlan {
   plan.parts.forEach(p => { p.id = mapId(p.id); p.deck_id = mapId(p.deck_id); if (p.room_id) p.room_id = mapId(p.room_id) })
   plan.connections.forEach(c => { c.id = mapId(c.id); c.from_deck = mapId(c.from_deck); c.to_deck = mapId(c.to_deck) })
   if (plan.appearance) plan.appearance.windows.forEach(w => { w.id = mapId(w.id); w.deck_id = mapId(w.deck_id) })
+  if(plan.surface_design){
+    plan.surface_design.surfaces.forEach(s=>{s.id=mapId(s.id);s.deck_id=mapId(s.deck_id);s.room_id=mapId(s.room_id)})
+    plan.surface_design.sections.forEach(s=>{s.id=mapId(s.id);s.deck_id=mapId(s.deck_id);s.room_id=mapId(s.room_id)})
+    plan.surface_design.components.forEach(c=>{c.id=mapId(c.id);c.part_id=mapId(c.part_id)})
+  }
   return plan
 }
 export function validatePlan(plan: ShipPlan): string | null {
+  if(new TextEncoder().encode(JSON.stringify(plan)).length>2000000)return 'Ship plan exceeds the 2 MB document limit.'
   if (plan.schema_version !== 1 || !plan.decks.length || plan.decks.length > 20) return 'A ship needs 1–20 decks.'
   const ids = new Set<string>()
   const unique = (id: string) => { if (!id || ids.has(id)) return false; ids.add(id); return true }
@@ -97,7 +104,7 @@ export function validatePlan(plan: ShipPlan): string | null {
     const a = plan.decks.find(d => d.id === c.from_deck), b = plan.decks.find(d => d.id === c.to_deck)
     if (!unique(c.id) || !c.name.trim() || !a || !b || a.id === b.id || !inside(a, c.from) || !inside(b, c.to) || !['stairs', 'lift'].includes(c.kind)) return 'Stairs/lifts must connect valid positions on two different decks.'
   }
-  return null
+  return surfaceDesignError(plan,unique)
 }
 
 // Normalized side placement follows the outermost occupied room boundary as a plan changes.

@@ -31,6 +31,9 @@ jobs:
       - name: Test private ship design permissions locally
         run: node scripts/test-ship-designs.mjs
 
+      - name: Test surface geometry and sparse painting locally
+        run: node scripts/test-ship-surfaces.mjs
+
       - name: Test surface storage and workflow compatibility locally
         run: node scripts/test-ship-surface-db.mjs
 

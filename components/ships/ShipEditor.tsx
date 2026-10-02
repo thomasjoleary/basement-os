@@ -3,6 +3,9 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import dynamic from 'next/dynamic'
 const ShipViewer3D = dynamic(() => import('./ShipViewer3D'), { ssr: false, loading: () => <div className="h-[520px] flex items-center justify-center">Loading 3D view…</div> })
+import ShipSurfaceEditor from './ShipSurfaceEditor'
+import {type SurfaceFace} from '@/lib/ship-paint'
+import {EMPTY_SURFACES,pruneSurfaces} from '@/lib/ship-surfaces'
 import ShipAppearanceEditor from './ShipAppearanceEditor'
 import ShipGrid, { type Selection, type ShipTool } from './ShipGrid'
 import { type Ship, type ShipPlan, type Part, type Connection, QUALITIES, CONDITIONS, newDeck, newId, removeDeck, removeRoom, movePart, validatePlan, deckHeight } from '@/lib/ships'
@@ -22,6 +25,8 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles, 
   const [deckId, setDeckId] = useState(initialShip.plan.decks[0].id)
   const [tool, setTool] = useState<ShipTool>('select'), [selection, setSelection] = useState<Selection>(null)
   const [view, setView] = useState<'2d' | 'cutaway' | 'exterior'>('2d')
+  const [surfaceFace,setSurfaceFace]=useState<SurfaceFace>('floor')
+  const [undoPlans,setUndoPlans]=useState<ShipPlan[]>([]),[redoPlans,setRedoPlans]=useState<ShipPlan[]>([])
   const [tab, setTab] = useState<'inspect' | 'inventory' | 'ship'>('inspect')
   const [message, setMessage] = useState(''), [busy, setBusy] = useState(false)
   const lock = useRef(false)
@@ -38,7 +43,13 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles, 
     window.addEventListener('beforeunload', guard)
     return () => window.removeEventListener('beforeunload', guard)
   }, [dirty])
-  function change(plan: ShipPlan) { if (canEdit && !busy) { setShip(s => ({ ...s, plan })); setMessage('') } }
+  function change(plan: ShipPlan) { if (canEdit && !busy) {
+    const next=pruneSurfaces(plan)
+    setUndoPlans(history=>{const all=[...history,ship.plan].slice(-50);while(all.length&&JSON.stringify(all).length>8*1024*1024)all.shift();return all});setRedoPlans([])
+    setShip(s=>({...s,plan:next}));setMessage('')
+  } }
+  function undoMap(){if(!canEdit||busy||!undoPlans.length)return;setRedoPlans([ship.plan,...redoPlans]);setShip({...ship,plan:undoPlans.at(-1)!});setUndoPlans(undoPlans.slice(0,-1))}
+  function redoMap(){if(!canEdit||busy||!redoPlans.length)return;setUndoPlans([...undoPlans,ship.plan]);setShip({...ship,plan:redoPlans[0]});setRedoPlans(redoPlans.slice(1))}
   function switchDeck(id: string) { setDeckId(id); setSelection(null); setTool('select') }
   function inspect(s: Selection) { setSelection(s); setTab('inspect') }
   function patchPart(patch: Partial<Part>) {
@@ -62,7 +73,7 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles, 
   }
   function cancel() {
     if (dirty && !window.confirm('Discard all unsaved changes to this ship?')) return
-    setShip(saved.ship); setNotes(saved.notes); setDeckId(saved.ship.plan.decks[0].id); setSelection(null); setTool('select'); setMessage('Changes discarded.')
+    setShip(saved.ship); setNotes(saved.notes); setDeckId(saved.ship.plan.decks[0].id); setSelection(null); setTool('select'); setMessage('Changes discarded.');setUndoPlans([]);setRedoPlans([])
   }
   function addConnection() {
     const other = ship.plan.decks.find(d => d.id !== deck.id)
@@ -86,7 +97,7 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles, 
       </div>
       {message && <p role="status" className="rounded border border-cyan-800 bg-gray-800 p-3 mb-4 text-sm">{message}</p>}
       <div className="flex flex-wrap gap-2 items-center mb-4">
-        <div role="group" aria-label="Ship view" className="flex gap-1">{(['2d', 'cutaway', 'exterior'] as const).map(v => <button key={v} aria-pressed={view===v} onClick={()=>setView(v)} className={`rounded px-3 py-2 text-sm ${view===v?'bg-cyan-800':'bg-gray-800 border border-gray-700'}`}>{v==='2d'?'2D':v==='cutaway'?'Cutaway':'Exterior'}</button>)}</div>
+        <>{canEdit&&<><button disabled={busy||!undoPlans.length} onClick={undoMap} className="border border-gray-600 rounded p-2 disabled:opacity-40">Undo map edit</button><button disabled={busy||!redoPlans.length} onClick={redoMap} className="border border-gray-600 rounded p-2 disabled:opacity-40">Redo map edit</button></>}</><div role="group" aria-label="Ship view" className="flex gap-1">{(['2d', 'cutaway', 'exterior'] as const).map(v => <button key={v} aria-pressed={view===v} onClick={()=>setView(v)} className={`rounded px-3 py-2 text-sm ${view===v?'bg-cyan-800':'bg-gray-800 border border-gray-700'}`}>{v==='2d'?'2D':v==='cutaway'?'Cutaway':'Exterior'}</button>)}</div>
         <label className="text-sm flex items-center gap-2 min-w-0 max-w-full">Deck<select aria-label="Current deck" value={deck.id} onChange={e => switchDeck(e.target.value)} className="w-52 min-w-0 max-w-full bg-gray-800 border border-gray-600 rounded p-2">{ship.plan.decks.map(d => <option value={d.id} key={d.id}>{d.name}</option>)}</select></label>
         {canEdit && <button disabled={busy || ship.plan.decks.length >= 20} onClick={() => { const d = newDeck(`Deck ${ship.plan.decks.length + 1}`); change({ ...ship.plan, decks: [...ship.plan.decks, d] }); switchDeck(d.id) }} className="text-sm border border-gray-600 rounded p-2">Add deck</button>}
         {view === '2d' && (canEdit ? ['select', 'pan', 'room', 'wall', 'door', 'label', 'fixture'] : ['select', 'pan']).map(t => <button key={t} aria-pressed={tool === t} disabled={busy} onClick={() => { setTool(t as ShipTool); setSelection(null) }} className={`capitalize rounded px-3 py-2 text-sm ${tool === t ? 'bg-cyan-800 border border-cyan-500' : 'bg-gray-800 border border-gray-700'}`}>{t}</button>)}
@@ -140,6 +151,8 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles, 
                   <label className="block text-xs text-gray-400">Component deck<select aria-label="Component deck" value={part.deck_id} onChange={e => { const d = ship.plan.decks.find(d => d.id === e.target.value)!; change(movePart(ship.plan, part.id, d, part)); setDeckId(d.id) }} className={inputClass}>{ship.plan.decks.map(d => <option value={d.id} key={d.id}>{d.name}</option>)}</select></label>
                   <div className="grid grid-cols-2 gap-2">{(['x', 'y'] as const).map(axis => <Field key={axis} label={`Position ${axis}`} type="number" min={0} max={(axis === 'x' ? deck.width : deck.height) - 1} value={part[axis]} onChange={v => change(movePart(ship.plan, part.id, deck, { ...part, [axis]: Number(v) }))} />)}</div>
                   <p className="text-xs text-gray-400">Room: {deck.rooms.find(r => r.id === part.room_id)?.name ?? 'Unassigned (outside rooms)'}</p>
+                  <label className="block text-xs">Component color<input aria-label="Component color" type="color" value={ship.plan.surface_design?.components.find(c=>c.part_id===part.id)?.color??'#586e82'} onChange={e=>{const design=ship.plan.surface_design??EMPTY_SURFACES;change({...ship.plan,surface_design:{...design,components:[...design.components.filter(c=>c.part_id!==part.id),{id:design.components.find(c=>c.part_id===part.id)?.id??newId(),part_id:part.id,color:e.target.value}]}})}}/></label>
+                  <button type="button" className="text-xs underline" onClick={()=>{const design=ship.plan.surface_design??EMPTY_SURFACES;change({...ship.plan,surface_design:{...design,components:design.components.filter(c=>c.part_id!==part.id)}})}}>Use default component color</button>
                   <Notes label="Public component notes" value={part.notes} onChange={notes => patchPart({ notes })} />
                 </>}
                 {connection && <>
@@ -149,6 +162,7 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles, 
                 </>}
                 {selection && canEdit && <button onClick={deleteSelected} className="text-sm text-red-300">Delete selected {selection.kind === 'part' ? 'component' : selection.kind}</button>}
               </fieldset>
+              {room && <ShipSurfaceEditor plan={ship.plan} deck={deck} room={room} face={surfaceFace} onFace={setSurfaceFace} disabled={!canEdit||busy} onChange={change}/>}
               {room && <div className="space-y-2"><h3 className="text-sm text-gray-400">Components in this room</h3>{ship.plan.parts.filter(p => p.room_id === room.id).map(p => <button key={p.id} className="block text-sm text-cyan-300" onClick={() => inspect({ kind: 'part', id: p.id })}>{p.name} × {p.quantity}</button>)}</div>}
               {connection && <button onClick={() => switchDeck(connection.from_deck === deck.id ? connection.to_deck : connection.from_deck)} className="text-sm text-violet-300">Go to connected deck →</button>}
             </>}

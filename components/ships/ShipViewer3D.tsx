@@ -2,14 +2,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import {createSurfaceMeshes} from '@/lib/ship-surface-renderer'
+import {type SurfaceFace} from '@/lib/ship-paint'
 import { type ShipPlan, shipAppearance } from '@/lib/ships'
 import { buildShipScene, type SceneItem, type SceneSelection } from '@/lib/ship-scene'
 
-type Props = { plan: ShipPlan; deckId: string; mode: 'cutaway' | 'exterior'; selection: SceneSelection | null; onSelect: (s: SceneSelection | null, deckId?: string) => void; onFallback: () => void }
-export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, onFallback }: Props) {
+type Props = { plan: ShipPlan; deckId: string; mode: 'cutaway' | 'exterior'; selection: SceneSelection | null; onSelect: (s: SceneSelection | null, deckId?: string) => void; onFallback: () => void; onSurface?: (face: SurfaceFace) => void }
+export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, onFallback, onSurface }: Props) {
   const host = useRef<HTMLDivElement>(null)
   const actions = useRef<{ reset: () => void; zoom: (factor: number) => void; highlight: () => void } | null>(null)
-  const latest = useRef({ selection, onSelect })
+  const latest = useRef({ selection, onSelect, onSurface })
   const cameraMemory = useRef<{ key: string; position: THREE.Vector3; target: THREE.Vector3; zoom: number } | null>(null)
   const [roofs, setRoofs] = useState(mode === 'exterior'), [allDecks, setAllDecks] = useState(mode === 'exterior'), [explodeRequested, setSeparated] = useState(false)
   const [hiddenDeckIds, setHiddenDeckIds] = useState<string[]>([]), [transparentHull, setTransparentHull] = useState(false)
@@ -17,7 +19,7 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
   const separated = explodeRequested && visibleDeckCount > 1
   const [failure, setFailure] = useState(false)
   const sceneData = useMemo(() => buildShipScene(plan, { deckId, mode, roofs, allDecks, separated, hiddenDeckIds }), [plan, deckId, mode, roofs, allDecks, separated, hiddenDeckIds])
-  useEffect(() => { latest.current = { selection, onSelect }; actions.current?.highlight() }, [selection, onSelect])
+  useEffect(() => { latest.current = { selection, onSelect, onSurface }; actions.current?.highlight() }, [selection, onSelect, onSurface])
   useEffect(() => {
     const container = host.current!
     let renderer: THREE.WebGLRenderer
@@ -30,6 +32,7 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
     renderer.setClearColor('#080f1e'); renderer.outputColorSpace = THREE.SRGBColorSpace
     renderer.toneMapping = THREE.ACESFilmicToneMapping
+    renderer.localClippingEnabled=true
     const scene = new THREE.Scene()
     scene.add(new THREE.HemisphereLight('#d7efff', '#27354a', 2.8))
     const sun = new THREE.DirectionalLight('#fff0d7', 3.4); sun.position.set(-20,35,-18); scene.add(sun)
@@ -70,7 +73,11 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
       items.forEach((item,i)=>{matrix.compose(position.fromArray(item.at),quaternion,scale.fromArray(item.size));mesh.setMatrixAt(i,matrix);mesh.setColorAt(i,new THREE.Color(item.color))})
       mesh.userData.items=items;mesh.userData.hull=shape.includes(':hull'); mesh.computeBoundingSphere(); scene.add(mesh); meshes.push(mesh)
     }
+    const surfaces=createSurfaceMeshes(plan,{deckId,mode,roofs,allDecks,separated,hiddenDeckIds},transparentHull)
+    surfaces.meshes.forEach(mesh=>scene.add(mesh))
+    const surfaceNotice=document.createElement('span');surfaceNotice.className='absolute bottom-2 left-2 text-xs text-amber-200 bg-gray-950 p-1';surfaceNotice.textContent='Surface detail limit reached. Select a single deck to inspect paint.';surfaceNotice.hidden=!surfaces.omitted;container.appendChild(surfaceNotice)
     const bounds=new THREE.Box3()
+    surfaces.meshes.forEach(mesh=>bounds.expandByObject(mesh))
     for(const item of sceneData.items) bounds.expandByPoint(new THREE.Vector3(...item.at).addScaledVector(new THREE.Vector3(...item.size),.5)).expandByPoint(new THREE.Vector3(...item.at).addScaledVector(new THREE.Vector3(...item.size),-.5))
     if(bounds.isEmpty())bounds.set(new THREE.Vector3(0,0,0),new THREE.Vector3(20,2,20))
     const center=bounds.getCenter(new THREE.Vector3()), span=Math.max(4,bounds.getSize(new THREE.Vector3()).length())
@@ -96,7 +103,7 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
     if(cameraMemory.current?.key===key){camera.position.copy(cameraMemory.current.position);controls.target.copy(cameraMemory.current.target);camera.zoom=cameraMemory.current.zoom;controls.update()}
     function resize(){const w=container.clientWidth,h=container.clientHeight;renderer.setSize(w,h);if(camera instanceof THREE.PerspectiveCamera)camera.aspect=w/h;else{camera.left=-span*w/h/2;camera.right=span*w/h/2;camera.top=span/2;camera.bottom=-span/2}camera.updateProjectionMatrix();requestRender()}
     const observer=new ResizeObserver(resize);observer.observe(container);resize()
-    function highlight(){for(const mesh of meshes){(mesh.userData.items as SceneItem[]).forEach((item,i)=>mesh.setColorAt(i,new THREE.Color(item.selection?.id===latest.current.selection?.id?'#36d8ee':item.color)));if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true}requestRender()}
+    function highlight(){for(const mesh of surfaces.meshes)(mesh.material as THREE.MeshStandardMaterial).emissive.set(mesh.userData.selection.id===latest.current.selection?.id?'#103040':'#000000');for(const mesh of meshes){(mesh.userData.items as SceneItem[]).forEach((item,i)=>mesh.setColorAt(i,new THREE.Color(item.selection?.id===latest.current.selection?.id?'#36d8ee':item.color)));if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true}requestRender()}
     actions.current={reset,zoom:(factor)=>{camera.zoom=Math.max(.2,Math.min(12,camera.zoom*factor));camera.updateProjectionMatrix();requestRender()},highlight};highlight()
     controls.addEventListener('change',requestRender)
     const ray=new THREE.Raycaster(),pointer=new THREE.Vector2()
@@ -106,14 +113,15 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
     function cancel(){press=null}
     function up(e:PointerEvent){const start=press;press=null;if(!start||start.moved||start.id!==e.pointerId)return
       const rect=canvas.getBoundingClientRect();pointer.set((e.clientX-rect.left)/rect.width*2-1,-(e.clientY-rect.top)/rect.height*2+1);ray.setFromCamera(pointer,camera)
-      const hit=ray.intersectObjects(meshes.filter(m=>!(transparentHull&&m.userData.hull)),false)[0]
-      const item=hit&&hit.instanceId!==undefined?(hit.object.userData.items as SceneItem[])[hit.instanceId]:undefined
+      const hit=ray.intersectObjects([...meshes,...surfaces.meshes].filter(m=>!(transparentHull&&m.userData.hull)),false).find(h=>h.object.userData.clipY===undefined||h.point.y<=h.object.userData.clipY)
+      const item=hit&&hit.instanceId!==undefined?(hit.object.userData.items as SceneItem[])[hit.instanceId]:hit?.object.userData
+      if(hit?.object.userData.face)latest.current.onSurface?.(hit.object.userData.face)
       latest.current.onSelect(item?.selection??null,item?.deckId)
     }
     function lost(e:Event){e.preventDefault();setFailure(true)}
     canvas.addEventListener('pointerdown',down);canvas.addEventListener('pointermove',move);canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',cancel);canvas.addEventListener('lostpointercapture',cancel);canvas.addEventListener('webglcontextlost',lost)
-    return()=>{cameraMemory.current={key,position:camera.position.clone(),target:controls.target.clone(),zoom:camera.zoom};disposed=true;cancelAnimationFrame(frame);actions.current=null;observer.disconnect();controls.dispose();canvas.removeEventListener('webglcontextlost',lost);renderer.dispose();renderer.forceContextLoss();geometries.forEach(g=>g.dispose());material.dispose();glowMaterial.dispose();hullMaterial.dispose();meshes.forEach(m=>m.dispose());canvas.remove();labels.forEach(l=>l.element.remove())}
-  },[sceneData,plan,deckId,mode,roofs,allDecks,separated,transparentHull])
+    return()=>{cameraMemory.current={key,position:camera.position.clone(),target:controls.target.clone(),zoom:camera.zoom};disposed=true;cancelAnimationFrame(frame);actions.current=null;observer.disconnect();controls.dispose();canvas.removeEventListener('webglcontextlost',lost);surfaces.dispose();surfaceNotice.remove();renderer.dispose();renderer.forceContextLoss();geometries.forEach(g=>g.dispose());material.dispose();glowMaterial.dispose();hullMaterial.dispose();meshes.forEach(m=>m.dispose());canvas.remove();labels.forEach(l=>l.element.remove())}
+  },[sceneData,plan,deckId,mode,roofs,allDecks,separated,transparentHull,hiddenDeckIds])
   return <section className="min-w-0 rounded-xl border border-gray-700 bg-gray-950 overflow-hidden" aria-label="3D ship viewer">
     <div className="flex flex-wrap gap-3 items-center p-3 text-sm border-b border-gray-700">
       <button onClick={()=>actions.current?.reset()}>Reset view</button><button aria-label="Zoom 3D out" onClick={()=>actions.current?.zoom(.8)}>-</button><button aria-label="Zoom 3D in" onClick={()=>actions.current?.zoom(1.25)}>+</button>

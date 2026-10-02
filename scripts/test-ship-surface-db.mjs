@@ -205,5 +205,23 @@ try {
     assert.deepEqual((await db.query('SELECT plan FROM v2_ships WHERE id=$1',[legacy])).rows[0].plan.surface_design,painted.surface_design)
     assert.equal((await db.query("SELECT has_function_privilege('anon','public.v2_ship_check_surfaces(jsonb)','EXECUTE') AS allowed")).rows[0].allowed,false)
   })
+
+  await check('accepted painted snapshot stays immutable while a new painted draft is edited',async()=>{
+    const paintedId='20000000-0000-0000-0000-000000000088'
+    await as(player);let next=await act('create',0,{...payload,plan:painted},paintedId)
+    next=await act('submit',next.version,{},paintedId);await as(gm)
+    next=await act('accept',next.version,{submission_version:next.current_submission,owner_id:player,crew_ids:[]},paintedId)
+    const live=(await db.query('SELECT plan FROM v2_ships WHERE id=$1',[next.accepted_ship_id])).rows[0].plan
+    assert.deepEqual(live.surface_design,painted.surface_design)
+    await assert.rejects(()=>db.query("UPDATE v2_ships SET plan=plan-'surface_design' WHERE id=$1",[next.accepted_ship_id]),/versioned/)
+    await assert.rejects(()=>db.query("UPDATE v2_ship_submissions SET plan=plan-'surface_design' WHERE design_id=$1",[paintedId]),/permission denied/)
+    await as(player);next=await act('revise',next.version,{},paintedId)
+    const changed=structuredClone(painted);changed.surface_design.surfaces[0].paint.palette[0]='#00ff00'
+    next=await act('save',next.version,{...payload,plan:changed},paintedId)
+    assert.deepEqual((await db.query('SELECT plan FROM v2_ships WHERE id=$1',[next.accepted_ship_id])).rows[0].plan,live)
+    const huge=structuredClone(painted);huge.decks[0].rooms[0].notes='x'.repeat(2200000)
+    await assert.rejects(()=>act('save',next.version,{...payload,plan:huge},paintedId),/Invalid design action|Invalid ship plan/)
+    assert.equal((await db.query('SELECT version FROM v2_ship_designs WHERE id=$1',[paintedId])).rows[0].version,next.version)
+  })
   console.log(`${passed} design workflow checks passed; in-memory PostgreSQL only.`)
 } finally {await db.close()}
