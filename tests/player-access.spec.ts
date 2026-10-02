@@ -167,6 +167,8 @@ test.describe('Player character sheet access', () => {
 
   test.describe('Live ship schema smoke', () => {
     test('preview reads migrated ship storage without errors or campaign writes', async ({ page }) => {
+      test.setTimeout(60000)
+      let assignedShip: string | undefined
       let browserErrors = 0, failedShipRequests = 0, writeAttempts = 0, privateNoteReads = 0
       page.on('pageerror', () => { browserErrors++ })
       page.on('console', message => { if (message.type() === 'error') browserErrors++ })
@@ -189,11 +191,27 @@ test.describe('Player character sheet access', () => {
         expect(response.request().method()).toBe('GET')
         expect(response.status()).toBe(200)
         expect(new URL(response.url()).origin).toBe(new URL(SUPABASE_URL).origin)
-        expect(Array.isArray(await response.json())).toBe(true)
+        const rows = await response.json()
+        expect(Array.isArray(rows)).toBe(true)
+        assignedShip = typeof rows[0]?.id === 'string' ? rows[0].id : undefined
         await expect(page.getByRole('heading', { name: 'Ships', exact: true })).toBeVisible()
         await expect(page.getByText('Loading ships…', { exact: true })).toHaveCount(0)
         await expect(page.locator('main').getByRole('alert')).toHaveCount(0)
         await expect(page.getByRole('button', { name: 'New ship', exact: true })).toHaveCount(0)
+      }
+      if (assignedShip) {
+        await page.goto(`${BASE_URL}/v2/ships/${assignedShip}`)
+        for (const view of ['Cutaway', 'Exterior']) {
+          await page.getByRole('button', { name: view, exact: true }).click()
+          await expect(page.getByTestId('ship-3d-canvas')).toBeVisible({ timeout: 20000 })
+          await page.getByRole('button', { name: 'Reset view', exact: true }).click()
+        }
+        await page.getByRole('button', { name: '2D', exact: true }).click()
+        await expect(page.getByTestId('ship-grid')).toBeVisible()
+        await expect(page.getByRole('button', { name: 'Save ship', exact: true })).toHaveCount(0)
+        console.log('::notice title=Live 3D ship smoke::Assigned-player Cutaway, Exterior and return to 2D loaded successfully; read-only existing ship, no edits or screenshots.')
+      } else {
+        console.log('::notice title=Live 3D smoke limit::CI player has no assigned ships; live 3D inspection was not possible without changing campaign access/data. Local 3D browser tests cover rendering, heights and interactions.')
       }
       expect({ browserErrors, failedShipRequests, writeAttempts, privateNoteReads }).toEqual({ browserErrors: 0, failedShipRequests: 0, writeAttempts: 0, privateNoteReads: 0 })
       console.log('::notice title=Live ship schema smoke::Ship list and reload passed against migrated schema; HTTP 200; zero browser errors, failed ship requests, private-note reads or campaign writes. No template copies created.')

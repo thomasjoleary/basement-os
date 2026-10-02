@@ -1,0 +1,112 @@
+'use client'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import * as THREE from 'three'
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { type ShipPlan } from '@/lib/ships'
+import { buildShipScene, type SceneItem, type SceneSelection } from '@/lib/ship-scene'
+
+type Props = { plan: ShipPlan; deckId: string; mode: 'cutaway' | 'exterior'; selection: SceneSelection | null; onSelect: (s: SceneSelection | null, deckId?: string) => void; onFallback: () => void }
+export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, onFallback }: Props) {
+  const host = useRef<HTMLDivElement>(null)
+  const actions = useRef<{ reset: () => void; zoom: (factor: number) => void; highlight: () => void } | null>(null)
+  const latest = useRef({ selection, onSelect })
+  const cameraMemory = useRef<{ key: string; position: THREE.Vector3; target: THREE.Vector3; zoom: number } | null>(null)
+  const [roofs, setRoofs] = useState(mode === 'exterior'), [allDecks, setAllDecks] = useState(mode === 'exterior'), [separated, setSeparated] = useState(false)
+  const [failure, setFailure] = useState(false)
+  const sceneData = useMemo(() => buildShipScene(plan, { deckId, mode, roofs, allDecks, separated }), [plan, deckId, mode, roofs, allDecks, separated])
+  useEffect(() => { latest.current = { selection, onSelect }; actions.current?.highlight() }, [selection, onSelect])
+  useEffect(() => {
+    const container = host.current!
+    let renderer: THREE.WebGLRenderer
+    try { renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'low-power' }) }
+    catch { queueMicrotask(() => setFailure(true)); return }
+    const canvas = renderer.domElement
+    canvas.setAttribute('aria-label', `${mode === 'cutaway' ? 'Cutaway' : 'Exterior'} ship view`)
+    canvas.setAttribute('role', 'img'); canvas.dataset.testid = 'ship-3d-canvas'
+    container.appendChild(canvas)
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5))
+    renderer.setClearColor('#080f1e'); renderer.outputColorSpace = THREE.SRGBColorSpace
+    renderer.toneMapping = THREE.ACESFilmicToneMapping
+    const scene = new THREE.Scene()
+    scene.add(new THREE.HemisphereLight('#d7efff', '#27354a', 2.8))
+    const sun = new THREE.DirectionalLight('#fff0d7', 3.4); sun.position.set(-20,35,-18); scene.add(sun)
+    const rim = new THREE.DirectionalLight('#80cfff', 2); rim.position.set(15,8,25); scene.add(rim)
+    const geometries = new Map<string, THREE.BufferGeometry>()
+    function geometry(shape = 'box') {
+      if(geometries.has(shape)) return geometries.get(shape)!
+      let result: THREE.BufferGeometry
+      if(shape === 'engine') { result = new THREE.CylinderGeometry(.5,.43,1,16); result.rotateX(Math.PI/2) }
+      else if(shape === 'port' || shape === 'starboard') {
+        const outline=new THREE.Shape(), sign=shape==='port'?1:-1
+        outline.moveTo(sign*.5,-.5); outline.lineTo(-sign*.5,.1); outline.lineTo(-sign*.42,.5); outline.lineTo(sign*.5,.38); outline.closePath()
+        result=new THREE.ExtrudeGeometry(outline,{depth:1,bevelEnabled:false}); result.rotateX(Math.PI/2); result.translate(0,.5,0)
+      } else result=new THREE.BoxGeometry(1,1,1)
+      geometries.set(shape,result); return result
+    }
+    const grouped = new Map<string,SceneItem[]>()
+    for(const item of sceneData.items) { const key=(item.shape??'box')+(item.color==='#4bd7ee'?':glow':''); if(!grouped.has(key))grouped.set(key,[]); grouped.get(key)!.push(item) }
+    const material = new THREE.MeshStandardMaterial({ roughness:.56, metalness:mode==='exterior'?.48:.15 })
+    const glowMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: '#21bcd9', emissiveIntensity: 1.4, roughness: .35 })
+    const meshes: THREE.InstancedMesh[] = []
+    const matrix=new THREE.Matrix4(), quaternion=new THREE.Quaternion(), position=new THREE.Vector3(), scale=new THREE.Vector3()
+    for(const [shape,items] of grouped) {
+      const mesh=new THREE.InstancedMesh(geometry(shape.split(':')[0]),shape.endsWith(':glow')?glowMaterial:material,items.length)
+      items.forEach((item,i)=>{matrix.compose(position.fromArray(item.at),quaternion,scale.fromArray(item.size));mesh.setMatrixAt(i,matrix);mesh.setColorAt(i,new THREE.Color(item.color))})
+      mesh.userData.items=items; mesh.computeBoundingSphere(); scene.add(mesh); meshes.push(mesh)
+    }
+    const bounds=new THREE.Box3()
+    for(const item of sceneData.items) bounds.expandByPoint(new THREE.Vector3(...item.at).addScaledVector(new THREE.Vector3(...item.size),.5)).expandByPoint(new THREE.Vector3(...item.at).addScaledVector(new THREE.Vector3(...item.size),-.5))
+    if(bounds.isEmpty())bounds.set(new THREE.Vector3(0,0,0),new THREE.Vector3(20,2,20))
+    const center=bounds.getCenter(new THREE.Vector3()), span=Math.max(4,bounds.getSize(new THREE.Vector3()).length())
+    const camera=mode==='cutaway'?new THREE.OrthographicCamera(-span,span,span,-span,.1,2000):new THREE.PerspectiveCamera(38,1,.1,2000)
+    const controls=new OrbitControls(camera,canvas)
+    controls.enableDamping=false; controls.minDistance=2; controls.maxDistance=1500; controls.minZoom=.2; controls.maxZoom=12; controls.maxPolarAngle=Math.PI*.49
+    controls.target.copy(center)
+    let disposed=false, frame=0
+    const labels: { element: HTMLSpanElement; point: THREE.Vector3 }[]=[]
+    if(mode==='cutaway' && !roofs && !allDecks) for(const room of (plan.decks.find(d=>d.id===deckId)?.rooms??[]).slice(0,24)) {
+      const element=document.createElement('span');element.textContent=room.name;element.className='pointer-events-none absolute text-[10px] text-slate-200 bg-slate-950/80 rounded px-1 max-w-28 truncate'
+      container.appendChild(element);labels.push({element,point:new THREE.Vector3(room.x+room.width/2,.08,room.y+room.height/2)})
+    }
+    function render() {
+      frame=0;if(disposed)return
+      renderer.render(scene,camera)
+      for(const label of labels){const p=label.point.clone().project(camera);label.element.style.left=`${(p.x+1)*container.clientWidth/2}px`;label.element.style.top=`${(1-p.y)*container.clientHeight/2}px`;label.element.style.transform='translate(-50%,-50%)';label.element.hidden=p.z>1||p.z< -1}
+    }
+    function requestRender(){if(!frame&&!disposed)frame=requestAnimationFrame(render)}
+    function reset(){controls.target.copy(center);camera.position.copy(center).add(new THREE.Vector3(.7,.85,1).normalize().multiplyScalar(span*1.2));camera.zoom=1;camera.updateProjectionMatrix();controls.update();requestRender()}
+    const key=`${mode}:${allDecks?'all':deckId}:${allDecks}:${separated}`
+    reset()
+    if(cameraMemory.current?.key===key){camera.position.copy(cameraMemory.current.position);controls.target.copy(cameraMemory.current.target);camera.zoom=cameraMemory.current.zoom;controls.update()}
+    function resize(){const w=container.clientWidth,h=container.clientHeight;renderer.setSize(w,h);if(camera instanceof THREE.PerspectiveCamera)camera.aspect=w/h;else{camera.left=-span*w/h/2;camera.right=span*w/h/2;camera.top=span/2;camera.bottom=-span/2}camera.updateProjectionMatrix();requestRender()}
+    const observer=new ResizeObserver(resize);observer.observe(container);resize()
+    function highlight(){for(const mesh of meshes){(mesh.userData.items as SceneItem[]).forEach((item,i)=>mesh.setColorAt(i,new THREE.Color(item.selection?.id===latest.current.selection?.id?'#36d8ee':item.color)));if(mesh.instanceColor)mesh.instanceColor.needsUpdate=true}requestRender()}
+    actions.current={reset,zoom:(factor)=>{camera.zoom=Math.max(.2,Math.min(12,camera.zoom*factor));camera.updateProjectionMatrix();requestRender()},highlight};highlight()
+    controls.addEventListener('change',requestRender)
+    const ray=new THREE.Raycaster(),pointer=new THREE.Vector2()
+    let press: { x:number; y:number; id:number; moved:boolean } | null=null
+    function down(e:PointerEvent){if(e.button!==0||press){press=null;return}press={x:e.clientX,y:e.clientY,id:e.pointerId,moved:false}}
+    function move(e:PointerEvent){if(press&&Math.hypot(e.clientX-press.x,e.clientY-press.y)>=6)press.moved=true}
+    function cancel(){press=null}
+    function up(e:PointerEvent){const start=press;press=null;if(!start||start.moved||start.id!==e.pointerId)return
+      const rect=canvas.getBoundingClientRect();pointer.set((e.clientX-rect.left)/rect.width*2-1,-(e.clientY-rect.top)/rect.height*2+1);ray.setFromCamera(pointer,camera)
+      const hit=ray.intersectObjects(meshes,false)[0]
+      const item=hit&&hit.instanceId!==undefined?(hit.object.userData.items as SceneItem[])[hit.instanceId]:undefined
+      latest.current.onSelect(item?.selection??null,item?.deckId)
+    }
+    function lost(e:Event){e.preventDefault();setFailure(true)}
+    canvas.addEventListener('pointerdown',down);canvas.addEventListener('pointermove',move);canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',cancel);canvas.addEventListener('lostpointercapture',cancel);canvas.addEventListener('webglcontextlost',lost)
+    return()=>{cameraMemory.current={key,position:camera.position.clone(),target:controls.target.clone(),zoom:camera.zoom};disposed=true;cancelAnimationFrame(frame);actions.current=null;observer.disconnect();controls.dispose();canvas.removeEventListener('webglcontextlost',lost);renderer.dispose();renderer.forceContextLoss();geometries.forEach(g=>g.dispose());material.dispose();glowMaterial.dispose();meshes.forEach(m=>m.dispose());canvas.remove();labels.forEach(l=>l.element.remove())}
+  },[sceneData,plan,deckId,mode,roofs,allDecks,separated])
+  return <section className="min-w-0 rounded-xl border border-gray-700 bg-gray-950 overflow-hidden" aria-label="3D ship viewer">
+    <div className="flex flex-wrap gap-3 items-center p-3 text-sm border-b border-gray-700">
+      <button onClick={()=>actions.current?.reset()}>Reset view</button><button aria-label="Zoom 3D out" onClick={()=>actions.current?.zoom(.8)}>-</button><button aria-label="Zoom 3D in" onClick={()=>actions.current?.zoom(1.25)}>+</button>
+      <label><input type="checkbox" checked={roofs} onChange={e=>setRoofs(e.target.checked)} /> Roofs</label>
+      <label><input type="checkbox" checked={allDecks} onChange={e=>setAllDecks(e.target.checked)} /> All decks</label>
+      <label><input type="checkbox" checked={separated} disabled={!allDecks} onChange={e=>setSeparated(e.target.checked)} /> Separate decks</label>
+    </div>
+    {failure ? <div role="status" className="h-[380px] md:h-[520px] flex flex-col gap-4 items-center justify-center p-6 text-center"><p>3D is unavailable on this device. Your ship and unsaved edits are safe.</p><button onClick={onFallback} className="rounded bg-cyan-800 px-4 py-2">Return to 2D</button></div> : <div ref={host} className="relative h-[380px] md:h-[520px] overflow-hidden touch-none" />}
+    <p className="p-3 text-xs text-gray-400 border-t border-gray-800">Drag to orbit; scroll to zoom; click to inspect. 5 ft per grid cell for display. Decks stack in list order, top first. Connections show endpoints, not physical shafts.</p>
+    {sceneData.omitted>0&&<p role="status" className="px-3 pb-3 text-xs text-amber-300">Large plan: 3D detail is limited. Use an individual deck or the 2D plan and inventory to inspect all items.</p>}
+  </section>
+}

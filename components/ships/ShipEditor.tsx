@@ -1,8 +1,10 @@
 'use client'
 import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
+import dynamic from 'next/dynamic'
+const ShipViewer3D = dynamic(() => import('./ShipViewer3D'), { ssr: false, loading: () => <div className="h-[520px] flex items-center justify-center">Loading 3D view…</div> })
 import ShipGrid, { type Selection, type ShipTool } from './ShipGrid'
-import { type Ship, type ShipPlan, type Part, type Connection, QUALITIES, CONDITIONS, newDeck, newId, removeDeck, removeRoom, movePart, validatePlan } from '@/lib/ships'
+import { type Ship, type ShipPlan, type Part, type Connection, QUALITIES, CONDITIONS, newDeck, newId, removeDeck, removeRoom, movePart, validatePlan, deckHeight } from '@/lib/ships'
 import { type Profile, saveShip } from '@/lib/ship-api'
 
 const inputClass = 'block min-w-0 max-w-full w-full mt-1 bg-gray-950 border border-gray-600 rounded px-2 py-2 text-sm disabled:border-transparent disabled:bg-gray-900 disabled:text-gray-200'
@@ -18,6 +20,7 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles }
   const [saved, setSaved] = useState({ ship: initialShip, notes: initialNotes })
   const [deckId, setDeckId] = useState(initialShip.plan.decks[0].id)
   const [tool, setTool] = useState<ShipTool>('select'), [selection, setSelection] = useState<Selection>(null)
+  const [view, setView] = useState<'2d' | 'cutaway' | 'exterior'>('2d')
   const [tab, setTab] = useState<'inspect' | 'inventory' | 'ship'>('inspect')
   const [message, setMessage] = useState(''), [busy, setBusy] = useState(false)
   const lock = useRef(false)
@@ -81,13 +84,14 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles }
       </div>
       {message && <p role="status" className="rounded border border-cyan-800 bg-gray-800 p-3 mb-4 text-sm">{message}</p>}
       <div className="flex flex-wrap gap-2 items-center mb-4">
+        <div role="group" aria-label="Ship view" className="flex gap-1">{(['2d', 'cutaway', 'exterior'] as const).map(v => <button key={v} aria-pressed={view===v} onClick={()=>setView(v)} className={`rounded px-3 py-2 text-sm ${view===v?'bg-cyan-800':'bg-gray-800 border border-gray-700'}`}>{v==='2d'?'2D':v==='cutaway'?'Cutaway':'Exterior'}</button>)}</div>
         <label className="text-sm flex items-center gap-2 min-w-0 max-w-full">Deck<select aria-label="Current deck" value={deck.id} onChange={e => switchDeck(e.target.value)} className="w-52 min-w-0 max-w-full bg-gray-800 border border-gray-600 rounded p-2">{ship.plan.decks.map(d => <option value={d.id} key={d.id}>{d.name}</option>)}</select></label>
         {isGM && <button disabled={busy || ship.plan.decks.length >= 20} onClick={() => { const d = newDeck(`Deck ${ship.plan.decks.length + 1}`); change({ ...ship.plan, decks: [...ship.plan.decks, d] }); switchDeck(d.id) }} className="text-sm border border-gray-600 rounded p-2">Add deck</button>}
-        {(isGM ? ['select', 'pan', 'room', 'wall', 'door', 'label', 'fixture'] : ['select', 'pan']).map(t => <button key={t} aria-pressed={tool === t} disabled={busy} onClick={() => { setTool(t as ShipTool); setSelection(null) }} className={`capitalize rounded px-3 py-2 text-sm ${tool === t ? 'bg-cyan-800 border border-cyan-500' : 'bg-gray-800 border border-gray-700'}`}>{t}</button>)}
-        {isGM && <button disabled={busy} onClick={addConnection} className="text-sm rounded p-2 border border-gray-600">Connect decks</button>}
+        {view === '2d' && (isGM ? ['select', 'pan', 'room', 'wall', 'door', 'label', 'fixture'] : ['select', 'pan']).map(t => <button key={t} aria-pressed={tool === t} disabled={busy} onClick={() => { setTool(t as ShipTool); setSelection(null) }} className={`capitalize rounded px-3 py-2 text-sm ${tool === t ? 'bg-cyan-800 border border-cyan-500' : 'bg-gray-800 border border-gray-700'}`}>{t}</button>)}
+        {isGM && view === '2d' && <button disabled={busy} onClick={addConnection} className="text-sm rounded p-2 border border-gray-600">Connect decks</button>}
       </div>
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px] gap-4 items-start">
-        <ShipGrid key={`${deck.id}:${tool}`} deck={deck} plan={ship.plan} editable={isGM && !busy} tool={tool} selection={selection} onSelect={inspect} onChange={change} onDeck={switchDeck} onMessage={setMessage} />
+        {view === '2d' ? <ShipGrid key={`${deck.id}:${tool}`} deck={deck} plan={ship.plan} editable={isGM && !busy} tool={tool} selection={selection} onSelect={inspect} onChange={change} onDeck={switchDeck} onMessage={setMessage} /> : <ShipViewer3D key={view} plan={ship.plan} deckId={deck.id} mode={view} selection={selection} onSelect={(s, targetDeck)=>{if(targetDeck)setDeckId(targetDeck);inspect(s)}} onFallback={()=>setView('2d')} />}
         <aside className="min-w-0 h-[min(640px,75dvh)] flex flex-col [overflow-wrap:anywhere] [overflow-anchor:none] border border-gray-700 bg-gray-800 rounded-xl overflow-hidden">
           <div className="flex shrink-0 border-b border-gray-700">{(['inspect', 'inventory', 'ship'] as const).map(t => <button key={t} onClick={() => setTab(t)} className={`flex-1 text-sm py-3 ${tab === t ? 'text-cyan-300 bg-gray-900' : 'text-gray-400'}`}>{t[0].toUpperCase() + t.slice(1)}</button>)}</div>
           <div className="p-4 space-y-4 min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">
@@ -109,6 +113,7 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles }
               {!selection && <>
                 <fieldset disabled={!isGM || busy} className="min-w-0 space-y-3">
                   <h2 className="font-semibold">Deck setup</h2><Field label="Deck name" value={deck.name} onChange={name => change({ ...ship.plan, decks: ship.plan.decks.map(d => d.id === deck.id ? { ...d, name } : d) })} />
+                  <Field label="Deck height (feet)" type="number" min={1} max={100} value={deckHeight(deck)} onChange={v => { const height = Number(v); if (Number.isFinite(height) && height >= 1 && height <= 100) change({ ...ship.plan, decks: ship.plan.decks.map(d => d.id === deck.id ? { ...d, height_ft: height } : d) }) }} />
                   <div className="grid grid-cols-2 gap-2">{(['width', 'height'] as const).map(axis => <Field key={axis} label={`Deck ${axis}`} type="number" min={4} max={100} value={deck[axis]} onChange={v => { const size = Number(v); if (size >= 4 && size <= 100) { const plan = { ...ship.plan, decks: ship.plan.decks.map(d => d.id === deck.id ? { ...d, [axis]: size } : d) }; const invalid = validatePlan(plan); if (invalid) setMessage('Move or remove items before shrinking the deck.'); else change(plan) } }} />)}</div>
                   {isGM && <button disabled={ship.plan.decks.length === 1} className="text-sm text-red-300 disabled:opacity-30" onClick={() => { if (!confirm('Delete this deck and all its rooms, fixtures and connections?')) return; const plan = removeDeck(ship.plan, deck.id); change(plan); switchDeck(plan.decks[0].id) }}>Delete deck</button>}
                 </fieldset>

@@ -3,7 +3,7 @@ import { use, useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { type Ship } from '@/lib/ships'
+import { type Ship, normalizeShip } from '@/lib/ships'
 import { type Profile, shipAccess, shipError } from '@/lib/ship-api'
 import ShipEditor from '@/components/ships/ShipEditor'
 
@@ -27,7 +27,7 @@ export default function ShipPage({ params }: { params: Promise<{ id: string }> }
           if (p.error) throw new Error(shipError(p.error))
           notes = n.data?.notes ?? ''; profiles = p.data ?? []
         }
-        if (active) setState({ ship: data as Ship, notes, isGM: access.isGM, profiles })
+        if (active) setState({ ship: normalizeShip(data as Ship), notes, isGM: access.isGM, profiles })
       } catch (e) { if (active) setError((e as Error).message) }
     }
     load(); return () => { active = false }

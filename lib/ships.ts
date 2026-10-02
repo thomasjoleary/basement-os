@@ -4,7 +4,7 @@ export const CONDITIONS = ['Working', 'Worn', 'Damaged', 'Broken'] as const
 export type Point = { x: number; y: number }
 export type Room = Point & { id: string; name: string; width: number; height: number; notes: string }
 export type Mark = Point & { id: string; kind: 'wall' | 'door' | 'label'; name: string; vertical: boolean; length: number }
-export type Deck = { id: string; name: string; width: number; height: number; rooms: Room[]; marks: Mark[] }
+export type Deck = { id: string; name: string; width: number; height: number; height_ft?: number; rooms: Room[]; marks: Mark[] }
 export type Part = Point & {
   id: string; deck_id: string; room_id: string | null; name: string; type: string
   quantity: number; quality: typeof QUALITIES[number]; black_market: boolean
@@ -14,8 +14,13 @@ export type Connection = { id: string; name: string; kind: 'stairs' | 'lift'; fr
 export type ShipPlan = { schema_version: 1; decks: Deck[]; parts: Part[]; connections: Connection[] }
 export type Ship = { id: string; name: string; description: string; owner_id: string | null; crew_ids: string[]; plan: ShipPlan; version: number }
 export const newId = () => crypto.randomUUID()
+export const DEFAULT_DECK_HEIGHT = 8
+export function deckHeight(deck: Deck): number { return deck.height_ft ?? DEFAULT_DECK_HEIGHT }
+export function normalizeShip(ship: Ship): Ship {
+  return { ...ship, plan: { ...ship.plan, decks: ship.plan.decks.map(d => ({ ...d, height_ft: deckHeight(d) })) } }
+}
 export function newDeck(name = 'Main deck'): Deck {
-  return { id: newId(), name, width: 24, height: 18, rooms: [], marks: [] }
+  return { id: newId(), name, width: 24, height: 18, height_ft: 8, rooms: [], marks: [] }
 }
 export function emptyPlan(): ShipPlan {
   return { schema_version: 1, decks: [newDeck()], parts: [], connections: [] }
@@ -62,6 +67,7 @@ export function validatePlan(plan: ShipPlan): string | null {
   const unique = (id: string) => { if (!id || ids.has(id)) return false; ids.add(id); return true }
   const inside = (d: Deck, p: Point) => Number.isInteger(p.x) && Number.isInteger(p.y) && p.x >= 0 && p.y >= 0 && p.x < d.width && p.y < d.height
   for (const d of plan.decks) {
+    if (d.height_ft !== undefined && (!Number.isFinite(d.height_ft) || d.height_ft < 1 || d.height_ft > 100)) return 'Deck height must be between 1 and 100 feet.'
     if (!unique(d.id) || !d.name.trim() || !Number.isInteger(d.width) || !Number.isInteger(d.height) || d.width < 4 || d.height < 4 || d.width > 100 || d.height > 100) return 'Decks need unique IDs, names, and dimensions from 4 to 100.'
     for (const r of d.rooms) {
       if (!unique(r.id) || !r.name.trim() || !inside(d, r) || !Number.isInteger(r.width) || !Number.isInteger(r.height) || r.width < 1 || r.height < 1 || r.x + r.width > d.width || r.y + r.height > d.height) return 'Rooms must fit inside their deck.'

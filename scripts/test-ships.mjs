@@ -18,7 +18,7 @@ function model(name) {
   return exports
 }
 const { instantiateTemplate } = model('ship-templates')
-const { validatePlan, movePart, removeRoom, removeDeck, QUALITIES, partFootprint } = model('ships')
+const { normalizeShip, deckHeight, validatePlan, movePart, removeRoom, removeDeck, QUALITIES, partFootprint } = model('ships')
 let passed = 0
 function check(name, fn) { fn(); passed++; console.log(`PASS ${name}`) }
 const fighter = instantiateTemplate('fighter'), freighter = instantiateTemplate('freighter')
@@ -61,6 +61,47 @@ check('deleting rooms/decks cleans dependent links, keeps final deck', () => {
   assert.equal(validatePlan(noDeck), null); assert.equal(removeDeck(noDeck, noDeck.decks[0].id).decks.length, 1)
 })
 
+const { buildShipScene, deckElevations, SCENE_LIMIT } = model('ship-scene')
+check('deck heights default without changing originals and reject invalid values', () => {
+  const legacy = structuredClone(freighter); legacy.decks.forEach(d => delete d.height_ft)
+  const normalized = normalizeShip({ plan: legacy })
+  assert.equal(normalized.plan.decks[0].height_ft, 8); assert.equal(legacy.decks[0].height_ft, undefined)
+  assert.equal(deckHeight(legacy.decks[0]), 8)
+  for (const value of [null, 0, 101, '8', Infinity, NaN]) { const p = structuredClone(freighter); p.decks[0].height_ft = value; assert.ok(validatePlan(p)) }
+  const elevations = deckElevations(freighter.decks)
+  assert.equal(elevations.get(freighter.decks[1].id), 0)
+  assert.ok(Math.abs(elevations.get(freighter.decks[0].id)-1.72)<1e-9)
+})
+check('3D geometry preserves IDs, exterior wings/boosters, roof toggles and heights', () => {
+  const options={deckId:fighter.decks[0].id,mode:'exterior',roofs:true,allDecks:true,separated:false}
+  const before=JSON.stringify(fighter), scene=buildShipScene(fighter,options)
+  assert.equal(scene.omitted,0); assert.equal(JSON.stringify(fighter),before)
+  assert.equal(scene.items.filter(i=>i.shape==='port').length,1);assert.equal(scene.items.filter(i=>i.shape==='starboard').length,1)
+  for(const part of fighter.parts)assert.ok(scene.items.some(i=>i.selection?.id===part.id))
+  assert.ok(scene.items.length>buildShipScene(fighter,{...options,roofs:false}).items.length)
+  const tall=structuredClone(fighter);tall.decks[0].height_ft=20
+  assert.ok(Math.max(...buildShipScene(tall,options).items.map(i=>i.at[1]))>Math.max(...scene.items.map(i=>i.at[1])))
+})
+check('3D shared walls deduplicate and doors create real openings', () => {
+  const plan={schema_version:1,decks:[{id:'d',name:'D',width:4,height:4,rooms:[{id:'r',name:'R',x:0,y:0,width:2,height:2,notes:''},{id:'s',name:'S',x:2,y:0,width:2,height:2,notes:''}],marks:[]}],parts:[],connections:[]}
+  const o={deckId:'d',mode:'cutaway',roofs:false,allDecks:false,separated:false}
+  const initial=buildShipScene(plan,o)
+  assert.equal(initial.items.filter(i=>i.at[0]===2&&i.size[0]===.1).length,2)
+  plan.decks[0].marks.push({id:'door',kind:'door',name:'Door',x:2,y:0,length:1,vertical:true})
+  const opened=buildShipScene(plan,o)
+  assert.equal(opened.items.filter(i=>i.at[0]===2&&i.size[0]===.1).length,1)
+  assert.ok(opened.items.some(i=>i.selection?.id==='door'))
+})
+check('large scene work is bounded and inventory quantity never duplicates geometry', () => {
+  const plan=structuredClone(fighter);plan.parts[0].quantity=100000
+  const o={deckId:plan.decks[0].id,mode:'exterior',roofs:true,allDecks:true,separated:false}
+  assert.equal(buildShipScene(plan,o).items.length,buildShipScene(fighter,o).items.length)
+  plan.decks[0].rooms=Array.from({length:500},(_,i)=>({...plan.decks[0].rooms[0],id:`r${i}`}))
+  plan.parts=Array.from({length:2000},(_,i)=>({...fighter.parts[0],id:`p${i}`}))
+  plan.decks=Array.from({length:20},(_,i)=>({...plan.decks[0],id:`d${i}`}));o.deckId='d0'
+  const scene=buildShipScene(plan,o);assert.ok(scene.items.length<=SCENE_LIMIT);assert.ok(scene.omitted>0)
+})
+
 const db = new PGlite()
 const gm = '10000000-0000-0000-0000-000000000001', owner = '10000000-0000-0000-0000-000000000002', crew = '10000000-0000-0000-0000-000000000003', stranger = '10000000-0000-0000-0000-000000000004'
 const id = '20000000-0000-0000-0000-000000000001', second = '20000000-0000-0000-0000-000000000002'
@@ -82,6 +123,15 @@ await db.exec(profileMigration); await db.exec(profileMigration)
 const migration = readFileSync(new URL('../sql/v2_005_ships.sql', import.meta.url), 'utf8')
 await db.exec(migration); await db.exec(migration)
 console.log('PASS migration applies and is rerunnable'); passed++
+const legacyPlan=structuredClone(freighter);legacyPlan.decks.forEach(d=>delete d.height_ft)
+const legacyId='20000000-0000-0000-0000-000000000009'
+await db.query('INSERT INTO v2_ships(id,name,plan) VALUES($1,$2,$3)',[legacyId,'Legacy',JSON.stringify(legacyPlan)])
+const beforeACL=(await db.query("SELECT oid::text,proacl::text FROM pg_proc WHERE proname IN ('v2_ship_check_plan','v2_ship_before_write') ORDER BY proname")).rows
+const heightsMigration=readFileSync(new URL('../sql/20261002152056_ship_deck_heights.sql',import.meta.url),'utf8')
+await db.exec(heightsMigration);await db.exec(heightsMigration)
+assert.deepEqual((await db.query("SELECT oid::text,proacl::text FROM pg_proc WHERE proname IN ('v2_ship_check_plan','v2_ship_before_write') ORDER BY proname")).rows,beforeACL)
+assert.equal((await db.query('SELECT version,plan FROM v2_ships WHERE id=$1',[legacyId])).rows[0].version,1)
+
 async function as(user, role = 'authenticated') {
   await db.exec('RESET ROLE')
   await db.query("SELECT set_config('request.jwt.claim.sub', $1, false)", [user ?? ''])
@@ -92,6 +142,17 @@ async function save(shipId, version, plan = freighter, notes = 'GM SECRET', ship
   return (await db.query('SELECT * FROM v2_save_ship($1,$2,$3,$4,$5,$6,$7,$8)', [shipId, version, 'Test ship', 'Public description', shipOwner, shipCrew, JSON.stringify(plan), notes])).rows[0]
 }
 try {
+  await as(gm)
+  await test('height migration preserves ACLs/legacy rows and old clients preserve edited heights', async()=>{
+    let ship=await save(legacyId,1,legacyPlan);assert.ok(ship.plan.decks.every(d=>d.height_ft===8))
+    ship.plan.decks[0].height_ft=12.5;ship=await save(legacyId,ship.version,ship.plan)
+    const oldClient=structuredClone(ship.plan);oldClient.decks.forEach(d=>delete d.height_ft)
+    ship=await save(legacyId,ship.version,oldClient);assert.equal(ship.plan.decks[0].height_ft,12.5)
+    for(const value of [0,101,null,'8',{},true]){const bad=structuredClone(ship.plan);bad.decks[0].height_ft=value;await assert.rejects(()=>save(legacyId,ship.version,bad))}
+    assert.equal((await db.query('SELECT version FROM v2_ships WHERE id=$1',[legacyId])).rows[0].version,ship.version)
+    await assert.rejects(()=>save(legacyId,ship.version-1,ship.plan),/changed in another session/)
+    await db.query('DELETE FROM v2_ships WHERE id=$1',[legacyId])
+  })
   await test('explicit anon default grants are revoked on both ship entry functions', async () => {
     for (const signature of ['public.v2_ship_is_gm()', 'public.v2_save_ship(uuid,integer,text,text,uuid,uuid[],jsonb,text)']) {
       const { rows } = await db.query("SELECT has_function_privilege('anon', $1, 'EXECUTE') AS anon_execute, has_function_privilege('authenticated', $1, 'EXECUTE') AS authenticated_execute", [signature])

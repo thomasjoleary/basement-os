@@ -1,7 +1,7 @@
 import { type ShipPlan, type Deck, type Room, type Part, copyPlan } from './ships'
 
 function deck(id: string, name: string, width: number, height: number, rooms: Room[]): Deck {
-  return { id, name, width, height, rooms, marks: [] }
+  return { id, name, width, height, height_ft: 8, rooms, marks: [] }
 }
 function room(id: string, name: string, x: number, y: number, width: number, height: number): Room {
   return { id, name, x, y, width, height, notes: '' }
