@@ -61,7 +61,7 @@ check('deleting rooms/decks cleans dependent links, keeps final deck', () => {
   assert.equal(validatePlan(noDeck), null); assert.equal(removeDeck(noDeck, noDeck.decks[0].id).decks.length, 1)
 })
 
-const { buildShipScene, deckElevations, SCENE_LIMIT } = model('ship-scene')
+const { buildShipScene, equipmentModel, deckElevations, SCENE_LIMIT } = model('ship-scene')
 check('deck heights default without changing originals and reject invalid values', () => {
   const legacy = structuredClone(freighter); legacy.decks.forEach(d => delete d.height_ft)
   const normalized = normalizeShip({ plan: legacy })
@@ -81,6 +81,14 @@ check('3D geometry preserves IDs, exterior wings/boosters, roof toggles and heig
   assert.ok(scene.items.length>buildShipScene(fighter,{...options,roofs:false}).items.length)
   const tall=structuredClone(fighter);tall.decks[0].height_ft=20
   assert.ok(Math.max(...buildShipScene(tall,options).items.map(i=>i.at[1]))>Math.max(...scene.items.map(i=>i.at[1])))
+})
+check('interior silhouettes are distinct assemblies with shared inspectable identities', () => {
+  const selection={kind:'part',id:'part'}
+  const types=['Control','Seat','Cargo','Propulsion','Power','Life support','Furniture','Sanitation','Unknown']
+  for(const type of types){const items=equipmentModel(type,'#586e82',selection,'deck',0,0,0);assert.ok(items.length>1);assert.ok(items.every(i=>i.selection===selection&&i.size.every(v=>v>0)))}
+  assert.ok(equipmentModel('Control','#fff',selection,'d',0,0,0).length>=8)
+  assert.ok(equipmentModel('Cargo','#fff',selection,'d',0,0,0).length>=12)
+  assert.ok(equipmentModel('Propulsion','#fff',selection,'d',0,0,0).some(i=>i.shape==='engine'))
 })
 check('exterior nose and side fairings remain outside rooms and do not affect cutaway', () => {
   for(const p of [fighter,freighter]) {

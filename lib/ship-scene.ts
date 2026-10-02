@@ -4,7 +4,7 @@ import { type ShipPlan, type Deck, deckHeight, partFootprint } from './ships'
 export const CELL_FEET = 5
 export const SCENE_LIMIT = 6000
 export type SceneSelection = { kind: 'room' | 'mark' | 'part' | 'connection'; id: string }
-export type SceneItem = { at: [number, number, number]; size: [number, number, number]; color: string; shape?: 'port' | 'starboard' | 'engine' | 'nose' | 'slope-port' | 'slope-starboard'; selection?: SceneSelection; deckId: string }
+export type SceneItem = { at: [number, number, number]; size: [number, number, number]; color: string; shape?: 'port' | 'starboard' | 'engine' | 'nose' | 'slope-port' | 'slope-starboard' | 'upright'; selection?: SceneSelection; deckId: string }
 export type SceneOptions = { deckId: string; mode: 'cutaway' | 'exterior'; roofs: boolean; allDecks: boolean; separated: boolean }
 // Fit the complete interior assembly, including caps/screens, below the ceiling.
 // Exterior hull, wings and engines intentionally use their own dimensions.
@@ -13,6 +13,39 @@ export function fitEquipmentHeight(items: SceneItem[], floor: number, height: nu
   const available = height - Math.min(.1, height * .1)
   const scale = top > 0 ? Math.min(1, available / top) : 1
   return items.map(i => ({ ...i, at: [i.at[0], floor + (i.at[1] - floor) * scale, i.at[2]], size: [i.size[0], i.size[1] * scale, i.size[2]] }))
+}
+export function equipmentModel(type: string, tint: string, selection: SceneSelection, deckId: string, x: number, floor: number, z: number): SceneItem[] {
+  const items: SceneItem[]=[]
+  const piece=(dx:number,y:number,dz:number,w:number,h:number,depth:number,color=tint,shape?:SceneItem['shape'])=>items.push({at:[x+dx,floor+y,z+dz],size:[w,h,depth],color,shape,selection,deckId})
+  const seat=()=>{
+    piece(0,.17,.24,.08,.34,.08,'#9aabb5');piece(0,.035,.24,.38,.07,.32)
+    piece(0,.35,.24,.38,.12,.34,'#526b82');piece(0,.52,.4,.38,.4,.08,'#526b82')
+  }
+  if(type==='Control') {
+    piece(-.25,.2,-.2,.07,.4,.08);piece(.25,.2,-.2,.07,.4,.08)
+    piece(0,.42,-.2,.68,.12,.35);piece(0,.65,-.32,.6,.35,.08)
+    piece(0,.65,-.269,.5,.25,.025,'#37c7df');piece(0,.49,-.14,.4,.025,.12,'#a8b6bb');seat()
+  } else if(type==='Seat') seat()
+  else if(type==='Cargo') {
+    for(const dx of [-.36,.36])for(const dz of [-.32,.32])piece(dx,.65,dz,.06,1.3,.06,'#a2aeb5')
+    for(const y of [.08,.5,.92]) {
+      piece(0,y,0,.78,.07,.72)
+      for(const dx of [-.19,.19]) {piece(dx,y+.18,0,.31,.29,.51,'#a99064');piece(dx,y+.18,.262,.04,.29,.02,'#cfbd92')}
+    }
+  } else if(type==='Propulsion') {
+    piece(0,.09,0,.72,.18,.85);piece(0,.42,0,.58,.58,.78,tint,'engine')
+    piece(0,.42,.4,.42,.42,.08,'#394957','engine');piece(0,.42,-.25,.68,.68,.1,'#9eabb4','engine')
+  } else if(type==='Power'||type==='Life support') {
+    piece(0,.07,0,.7,.14,.7);piece(0,.55,0,.55,.95,.55,tint,'upright')
+    piece(0,.9,0,.61,.07,.61,type==='Power'?'#ddb864':'#73c7ac','upright')
+  } else if(type==='Furniture') {
+    piece(0,.12,0,.63,.24,.86);piece(0,.29,0,.65,.14,.88,'#8b9cab');piece(0,.39,-.27,.47,.07,.24,'#d6dde0')
+  } else if(type==='Sanitation') {
+    piece(0,.18,.1,.35,.36,.4,'#c7d4d9','upright');piece(0,.39,.1,.46,.07,.46,'#e0e8eb','upright');piece(0,.4,-.23,.42,.65,.17,'#bbcdd5')
+  } else {
+    piece(0,.3,0,.7,.6,.7);piece(0,.625,0,.52,.05,.48,'#a6b5bd')
+  }
+  return items
 }
 export function deckElevations(decks: Deck[], separated = false) {
   const elevations = new Map<string, number>(); let y = 0
@@ -94,12 +127,7 @@ export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
         box(x,base+.4,z,size.width,.5,size.height,tint,s)
         box(x,base+.66,z,size.width*.8,.035,size.height*.7,'#94a5b5',s)
       } else {
-        const ph=Math.min(h*.65,p.type==='Power'?.9:p.type==='Furniture'?.35:.6)
-        const equipment: SceneItem[] = [
-          { at:[x,base+ph/2,z], size:[.7,ph,.7], color:tint, selection:s, deckId:d.id },
-          { at:[x,base+ph+.025,z], size:[.52,.05,.48], color:p.type==='Control'?'#31bfd9':p.type==='Power'?'#ddbe68':p.type==='Life support'?'#72ba9e':'#a6b5bd', selection:s, deckId:d.id },
-        ]
-        fitEquipmentHeight(equipment,base,h).forEach(add)
+        fitEquipmentHeight(equipmentModel(p.type,tint,s,d.id,x,base,z),base,h).forEach(add)
       }
     }
     for(const c of plan.connections) {

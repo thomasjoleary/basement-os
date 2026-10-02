@@ -64,3 +64,7 @@ Console-linked rooftop glazing was removed; cockpit windows belong to the hull.
 Exterior fairings add tapered bow segments and sloped side armor outside occupied
 rooms. Wing-root fairings appear only where a wing meets the hull. These are visual
 skins, not new walkable space or persisted geometry; forward is decreasing grid y.
+
+Interior component types now produce recognizable console/seat assemblies, cargo
+racks, propulsion units, power/life-support cylinders, bunks and sanitation units.
+All submeshes select their source inventory record and share the ceiling-fit rule.
