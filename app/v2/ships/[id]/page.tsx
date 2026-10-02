@@ -9,7 +9,7 @@ import ShipEditor from '@/components/ships/ShipEditor'
 
 export default function ShipPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params), router = useRouter()
-  const [state, setState] = useState<{ ship: Ship; notes: string; isGM: boolean; profiles: Profile[] } | null>(null)
+  const [state, setState] = useState<{ ship: Ship; notes: string; isGM: boolean; profiles: Profile[]; designId?: string } | null>(null)
   const [error, setError] = useState('')
   useEffect(() => {
     let active = true
@@ -20,19 +20,23 @@ export default function ShipPage({ params }: { params: Promise<{ id: string }> }
         const { data, error } = await supabase.from('v2_ships').select('*').eq('id', id).maybeSingle()
         if (error) throw new Error(shipError(error))
         if (!data) throw new Error('Ship unavailable. It may not exist or may not be assigned to you.')
-        let notes = '', profiles: Profile[] = []
+        let notes = '', profiles: Profile[] = [], designId: string | undefined
         if (access.isGM) {
           const [n, p] = await Promise.all([supabase.from('v2_ship_gm_notes').select('notes').eq('ship_id', id).maybeSingle(), supabase.from('profiles').select('id,username').order('username')])
           if (n.error) throw new Error(shipError(n.error))
           if (p.error) throw new Error(shipError(p.error))
           notes = n.data?.notes ?? ''; profiles = p.data ?? []
+          const linked = await supabase.from('v2_ship_designs').select('id').eq('accepted_ship_id', id).maybeSingle()
+          if (linked.error && !['42P01','PGRST205'].includes(linked.error.code)) throw new Error(linked.error.message)
+          designId = linked.data?.id
+
         }
-        if (active) setState({ ship: normalizeShip(data as Ship), notes, isGM: access.isGM, profiles })
+        if (active) setState({ ship: normalizeShip(data as Ship), notes, isGM: access.isGM, profiles, designId })
       } catch (e) { if (active) setError((e as Error).message) }
     }
     load(); return () => { active = false }
   }, [id, router])
   if (error) return <main className="min-h-screen bg-gray-900 text-white p-8"><Link href="/v2/ships">← Back to ships</Link><p role="alert" className="mt-6 text-red-300">{error}</p></main>
   if (!state) return <main className="min-h-screen bg-gray-900 text-white p-8">Loading ship…</main>
-  return <ShipEditor key={id} initialShip={state.ship} initialNotes={state.notes} isGM={state.isGM} profiles={state.profiles} />
+  return <>{state.designId && <p className="bg-gray-900 text-cyan-300 p-5">Accepted version — read-only. <Link className="underline" href={`/v2/designs/${state.designId}`}>Open design review</Link></p>}<ShipEditor key={id} canEdit={state.isGM && !state.designId} initialShip={state.ship} initialNotes={state.notes} isGM={state.isGM} profiles={state.profiles} /></>
 }

@@ -41,6 +41,7 @@ export default function ShipsPage() {
       <div className="flex items-center justify-between gap-4 mt-6 mb-8"><div><p className="text-xs tracking-widest uppercase text-cyan-400">Basement OS v2</p><h1 className="text-3xl font-bold mt-2">Ships</h1><p className="text-gray-400 mt-2">{isGM ? 'Build deck plans and keep equipment in its place.' : 'Deck plans and equipment for ships assigned to you.'}</p></div>
         {isGM && !creating && <button onClick={() => { setCreating(true); setName(''); setTemplate('blank') }} className="rounded bg-cyan-700 px-4 py-2">New ship</button>}
       </div>
+      <Link href="/v2/designs" className="inline-block rounded border border-cyan-700 px-4 py-2 mb-5">My designs / GM review</Link>
       {error && <p role="alert" className="p-4 mb-4 rounded border border-red-800 bg-red-950 text-red-200">{error}</p>}
       {loading ? <p>Loading ships…</p> : <>
         {creating && <form onSubmit={create} className="rounded-xl border border-cyan-800 bg-gray-800 p-5 mb-6 space-y-4">

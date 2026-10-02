@@ -165,6 +165,25 @@ test.describe('Player character sheet access', () => {
     })
   }
 
+
+  test('preview reads private design list without campaign writes',async({page})=>{
+    let writes=0,errors=0
+    page.on('pageerror',()=>errors++)
+    await page.route(`${new URL(SUPABASE_URL).origin}/rest/v1/**`,async route=>{
+      const req=route.request(),status=req.method()==='POST'&&new URL(req.url()).pathname==='/rest/v1/rpc/campaign_access_status'
+      if(!['GET','HEAD'].includes(req.method())&&!status){writes++;await route.abort();return}await route.continue()
+    })
+    for(const reload of [false,true]){
+      const read=page.waitForResponse(r=>new URL(r.url()).pathname==='/rest/v1/v2_ship_designs')
+      if(reload)await page.reload();else await page.goto(`${BASE_URL}/v2/designs`)
+      const result=await read;expect(result.status()).toBe(200);expect(Array.isArray(await result.json())).toBe(true)
+      await expect(page.getByRole('heading',{name:'Ship designs',exact:true})).toBeVisible()
+      await expect(page.locator('main [role="alert"]')).toHaveCount(0)
+    }
+    expect({writes,errors}).toEqual({writes:0,errors:0})
+    console.log('::notice title=Live private-design smoke::Approved existing player read private design list and reloaded successfully; HTTP 200, no page errors or campaign writes. No drafts, submissions, accounts or assignments created.')
+  })
+
   test.describe('Live ship schema smoke', () => {
     test('preview reads migrated ship storage without errors or campaign writes', async ({ page }) => {
       test.setTimeout(60000)
