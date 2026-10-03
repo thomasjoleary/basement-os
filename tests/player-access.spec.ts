@@ -231,6 +231,73 @@ test.describe('Player character sheet access', () => {
     console.log('::notice title=Deployed opening UI fixture::New Walkthrough and ceiling Paint rendered on the deployed preview using a synthetic intercepted ship response; readonly controls held; no campaign records, assignments or writes. Persistence is verified separately.')
   })
 
+  test('approved underside rollout enables real capability probe and synthetic paint save reload', async ({ page }) => {
+    test.setTimeout(90000)
+    // Pin activation verification to the exact UI approved before the migration.
+    const target = 'https://basement-h9ck7dr4c-thomas-olearys-projects.vercel.app'
+    const fixtureId = '20000000-0000-0000-0000-000000000091'
+    const plan = instantiateTemplate('freighter'), deck = plan.decks[0]
+    plan.decks = [deck]; deck.rooms = [{ ...deck.rooms[0], x: 4, y: 4, width: 6, height: 6 }]
+    deck.marks = []; plan.parts = []; plan.connections = []
+    let ship = { id: fixtureId, name: 'Synthetic underside activation', description: '', owner_id: playerUserId, crew_ids: [], version: 1, plan }
+    let saves = 0, blockedWrites = 0, errors = 0, probes = 0
+    page.on('pageerror', () => errors++)
+    page.on('response', response => {
+      if (new URL(response.url()).pathname === '/rest/v1/rpc/v2_ship_check_surfaces' && response.ok()) probes++
+    })
+    await page.route(`${new URL(SUPABASE_URL).origin}/rest/v1/**`, async route => {
+      const request = route.request(), url = new URL(request.url()), path = url.pathname
+      const fulfill = (data: unknown) => route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) })
+      // GM visibility is synthetic only; the real identity/role is never changed.
+      if (path === '/rest/v1/rpc/campaign_access_status') return fulfill({ status: 'approved', is_gm: true })
+      if (path === '/rest/v1/profiles') return fulfill(url.searchParams.get('select') === 'role' ? { role: 'gm' } : [])
+      if (path === '/rest/v1/v2_ship_gm_notes') return fulfill({ notes: '' })
+      if (path === '/rest/v1/v2_ships') return fulfill(ship)
+      if (path === '/rest/v1/rpc/v2_save_ship') {
+        const data = request.postDataJSON(); expect(data.ship_id).toBe(fixtureId)
+        ship = { ...ship, plan: data.ship_plan, version: ship.version + 1 }; saves++
+        return fulfill(ship)
+      }
+      // The sole live RPC is argument-only validation, with no table access/writes.
+      if (path === '/rest/v1/rpc/v2_ship_check_surfaces') return route.continue()
+      if (!['GET', 'HEAD'].includes(request.method())) { blockedWrites++; return route.abort() }
+      return fulfill([])
+    })
+    await injectSession(page, target)
+    await page.setViewportSize({ width: 1366, height: 900 })
+    await page.goto(`${target}/v2/ships/${fixtureId}`)
+    await page.getByRole('button', { name: 'Exterior', exact: true }).click()
+    await expect.poll(() => probes).toBeGreaterThan(0)
+    const canvas = page.getByTestId('ship-3d-canvas')
+    const underside = async () => {
+      await page.getByRole('button', { name: 'View underside', exact: true }).click()
+      await expect.poll(async () => Number(await canvas.getAttribute('data-camera-y'))).toBeLessThan(0)
+      await page.getByRole('button', { name: 'Paint exterior', exact: true }).click()
+      await page.getByLabel('Exterior brush size').fill('3')
+      await page.getByLabel('Exterior paint color').fill('#ff0000')
+      await canvas.scrollIntoViewIfNeeded(); const b = (await canvas.boundingBox())!
+      for (const y of [.5,.4,.6,.3,.7]) for (const x of [.5,.4,.6,.3,.7]) {
+        const at = { x: b.x+b.width*x, y: b.y+b.height*y }; await page.mouse.move(at.x,at.y)
+        if (await canvas.getAttribute('data-paint-face') === 'underside' && Number(await canvas.getAttribute('data-brush-tiles')) > 0) return at
+      }
+      throw new Error('No actual underside ray hit')
+    }
+    const at = await underside(); await page.mouse.click(at.x,at.y)
+    await page.getByRole('button', { name: 'Undo map edit' }).click()
+    await expect(page.getByRole('button', { name: 'Save ship', exact: true })).toBeDisabled()
+    await page.getByRole('button', { name: 'Redo map edit' }).click()
+    await page.getByRole('button', { name: 'Save ship', exact: true }).click()
+    await expect(page.getByText('Ship saved.', { exact: true })).toBeVisible()
+    const surfaces = ship.plan.surface_design!.surfaces
+    expect(surfaces.map(s => s.face)).toEqual(['underside'])
+    expect(surfaces[0].paint.palette).toContain('#ff0000'); expect(surfaces[0].paint.runs.length).toBeGreaterThan(0)
+    await page.reload(); await page.getByRole('button', { name: 'Exterior', exact: true }).click()
+    await underside()
+    await expect(page.getByRole('button', { name: 'Save ship', exact: true })).toBeDisabled()
+    expect({ saves, blockedWrites, errors }).toEqual({ saves: 1, blockedWrites: 0, errors: 0 })
+    console.log('::notice title=Underside activation::Exact 4e3a57d preview: live authenticated capability probe passed; real underside hit, red paint, undo/redo, intercepted save/reload passed. Zero campaign writes; synthetic GM UI only; existing account unchanged.')
+  })
+
   test.describe('Live ship schema smoke', () => {
     test('preview reads migrated ship storage without errors or campaign writes', async ({ page }) => {
       test.setTimeout(60000)
