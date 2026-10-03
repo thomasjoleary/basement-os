@@ -1,6 +1,6 @@
 # Paint and Walkthrough
 
-Both views share the current in-memory editor plan. Switching views never saves, discards, or grants edit access. Accepted/submitted designs and crew views remain read-only. No database migration or access changes are required.
+Both views share the current in-memory editor plan. Switching views never saves, discards, or grants edit access. Accepted/submitted designs and crew views remain read-only. The base Paint and Walkthrough views require no access changes; physical opening controls require the migration documented below.
 
 Paint presents all room floors or a selected room face (floor, ceiling, roof, interior wall or exterior section) on the selected deck at one-foot resolution. Brush and eraser use a square footprint, 1–20 feet per side; the hover preview shows exactly the clipped squares affected. Select supports rectangles and Shift-add; Fill uses the selection or visible floor area. Pan is an explicit separate tool. Completed strokes enter the shared map undo history; canceled strokes do not. Existing room-local paint, colors and off-footprint retained squares survive deck-wide editing. Floor painting and individual surface editing use the same stored surfaces.
 

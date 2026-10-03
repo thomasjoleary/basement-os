@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
+import { instantiateTemplate } from '../lib/ship-templates'
 
 const BASE_URL = (process.env.TEST_BASE_URL || 'http://localhost:3000').replace(/\/$/, '')
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
@@ -182,6 +183,48 @@ test.describe('Player character sheet access', () => {
     }
     expect({writes,errors}).toEqual({writes:0,errors:0})
     console.log('::notice title=Live private-design smoke::Approved existing player read private design list and reloaded successfully; HTTP 200, no page errors or campaign writes. No drafts, submissions, accounts or assignments created.')
+  })
+
+  test('deployed opening UI renders a synthetic read-only fixture without campaign writes', async ({ page }) => {
+    test.setTimeout(60000)
+    const fixtureId = '20000000-0000-0000-0000-000000000090'
+    const plan = instantiateTemplate('freighter')
+    for (const deck of plan.decks) {
+      deck.rooms = [{ ...deck.rooms[0], x: 2, y: 2, width: 6, height: 6 }]
+      deck.marks = []
+    }
+    plan.parts = []
+    plan.connections = [{ ...plan.connections[0], from: { x: 3, y: 3 }, to: { x: 3, y: 3 }, aperture: { width: 2, height: 2, ladder_part_id: null } }]
+    let writes = 0, pageErrors = 0, fixtureReads = 0
+    page.on('pageerror', () => pageErrors++)
+    await page.route(`${new URL(SUPABASE_URL).origin}/rest/v1/**`, async route => {
+      const request = route.request(), url = new URL(request.url())
+      const statusRead = request.method() === 'POST' && url.pathname === '/rest/v1/rpc/campaign_access_status'
+      if (!['GET', 'HEAD'].includes(request.method()) && !statusRead) { writes++; await route.abort(); return }
+      if (url.pathname === '/rest/v1/v2_ships' && url.searchParams.get('id') === `eq.${fixtureId}`) {
+        fixtureReads++
+        await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ id: fixtureId, name: 'Synthetic opening preview', description: '', owner_id: playerUserId, crew_ids: [], version: 1, plan }) })
+        return
+      }
+      await route.continue()
+    })
+    // This response exists only inside Playwright; nothing is inserted or assigned.
+    await page.goto(`${BASE_URL}/v2/ships/${fixtureId}`)
+    await page.getByLabel('Current deck').selectOption(plan.decks[1].id)
+    await page.getByRole('button', { name: 'Walkthrough', exact: true }).click()
+    await expect(page.getByTestId('ship-walk-canvas')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Use ladder:', exact: false })).toHaveCount(0)
+    await page.getByRole('button', { name: 'Paint', exact: true }).click()
+    await page.getByLabel('Paint target', { exact: true }).selectOption(plan.decks[1].rooms[0].id)
+    await page.getByLabel('Paint face', { exact: true }).selectOption('ceiling')
+    await expect(page.getByTestId('surface-paint-canvas')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Fill surface', exact: true })).toBeDisabled()
+    await page.getByRole('button', { name: '2D', exact: true }).click()
+    await expect(page.getByTestId('ship-grid')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Save ship', exact: true })).toHaveCount(0)
+    expect(fixtureReads).toBeGreaterThan(0)
+    expect({ writes, pageErrors }).toEqual({ writes: 0, pageErrors: 0 })
+    console.log('::notice title=Deployed opening UI fixture::New Walkthrough and ceiling Paint rendered on the deployed preview using a synthetic intercepted ship response; readonly controls held; no campaign records, assignments or writes. Persistence is verified separately.')
   })
 
   test.describe('Live ship schema smoke', () => {

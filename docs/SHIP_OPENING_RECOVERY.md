@@ -6,6 +6,23 @@ No live migration, recovery, export, backup setting, account or grant change was
 performed during this hardening task. The independent connector must review the
 exact committed bytes and obtain informed approval before applying them.
 
+## Authorized rollout record — 2026-10-03
+
+Following explicit approval, the exact reviewed SQL from commit
+`9488cba984c1ffba0027f206debd4293560e2929` was applied to BasementOS as migration
+`20261003165826_ship_deck_openings`. SHA-256:
+`65f4c7ed8171db9e2c372caf438b8370562b3c7dd3bc4b541b2c15fcfaf1c73c`.
+The preparation-only statements above describe the earlier hardening phase.
+
+Live post-apply checks matched all five function body hashes to source, preserved
+function permissions/security modes and confirmed all four existing plans still
+validate. Before/after fingerprints matched for all four ships, four private-note
+rows and empty draft/submission/review-history tables. Bounded transaction-scoped
+checks verified existing-profile ship/private-note read boundaries, missing-profile
+workflow denial, anonymous helper denial, legacy numeric validation, old-client
+aperture preservation and invalid aperture rejection; no campaign records were
+written. Backup/PITR and production load/restore uncertainty remain unchanged.
+
 ## Scope and compatibility
 
 The two SECURITY INVOKER opening helpers now bound their own input, including

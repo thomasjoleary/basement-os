@@ -202,18 +202,20 @@ test('assigned player inspects components and changes decks without edit control
   expect(api.stats.notesReads).toBe(0); expect(api.stats.saves).toBe(0)
 })
 
-test('unassigned and anonymous users cannot open a ship editor', async ({ page, context }) => {
+test('unassigned and anonymous users cannot open a ship editor', async ({ page, browser }) => {
   await backend(page, 'outsider')
   await page.goto(`/v2/ships/${shipId}`)
   await expect(page.locator('main').getByRole('alert')).toContainText('Ship unavailable')
   await expect(page.getByTestId('ship-grid')).toHaveCount(0)
-  const anonymous = await context.newPage()
-  await backend(anonymous, 'anon')
-  await anonymous.goto(`/v2/ships/${shipId}`)
-  // New page shares storage: explicitly remove the previous test session.
-  await anonymous.evaluate(() => localStorage.clear())
-  await anonymous.reload()
-  await expect(anonymous.getByRole('link', { name: 'Sign in or request access' })).toBeVisible()
+  // Isolate storage and auth broadcasts from the signed-in outsider tab.
+  const anonymousContext = await browser.newContext({ baseURL: new URL(page.url()).origin })
+  try {
+    const anonymous = await anonymousContext.newPage()
+    await backend(anonymous, 'anon')
+    await anonymous.goto(`/v2/ships/${shipId}`)
+    await expect(anonymous.getByRole('link', { name: 'Sign in or request access' })).toBeVisible()
+    await expect(anonymous.getByTestId('ship-grid')).toHaveCount(0)
+  } finally { await anonymousContext.close() }
 })
 
 test('mobile deck and inventory controls remain usable', async ({ page }) => {
@@ -602,13 +604,13 @@ test('clicking a visible ladder mesh reaches its actual connected deck',async({p
 })
 
 
-test('ladder transfers retain active controls and pointer lock across repeated decks; Escape still exits',async({page})=>{
+test('explicit ladder retains active controls and pointer lock across eight deck transfers; Escape still exits',async({page})=>{
  const api=await backend(page,'player'),ship=api.ships.get(shipId)!,d=ship.plan.decks[0],other=ship.plan.decks[1]
- for(const deck of [d,other]){deck.rooms=[{...deck.rooms[0],x:2,y:2,width:5,height:5}];deck.marks=[]}ship.plan.parts=[]
- ship.plan.connections=[{...ship.plan.connections[0],from_deck:d.id,to_deck:other.id,from:{x:3,y:3},to:{x:3,y:3}}]
+ for(const deck of [d,other]){deck.rooms=[{...deck.rooms[0],x:2,y:2,width:5,height:5}];deck.marks=[]}ship.plan.parts=[{id:'continuous-ladder',name:'Ladder',type:'Ladder',deck_id:d.id,room_id:d.rooms[0].id,x:3,y:3,quantity:1,quality:'Store-bought',black_market:false,condition:'Working',notes:''}]
+ ship.plan.connections=[{...ship.plan.connections[0],from_deck:d.id,to_deck:other.id,from:{x:3,y:3},to:{x:3,y:3},aperture:{width:1,height:1,ladder_part_id:'continuous-ladder'}}]
  await page.goto(`/v2/ships/${shipId}`);await page.getByRole('button',{name:'Walkthrough',exact:true}).click();const canvas=page.getByTestId('ship-walk-canvas');await expect(canvas).toHaveAttribute('data-position',/./)
  await canvas.evaluate(el=>el.setAttribute('data-original-canvas','yes'));await page.getByRole('button',{name:'Enter walkthrough',exact:true}).click();await page.getByRole('button',{name:'Lock mouse',exact:true}).click();await expect.poll(()=>page.evaluate(()=>!!document.pointerLockElement)).toBe(true)
- for(let i=0;i<4;i++){await page.getByRole('button',{name:'Use ladder:',exact:false}).evaluate((el:HTMLButtonElement)=>el.click());await expect(page.getByLabel('Current deck')).toHaveValue(i%2===0?other.id:d.id);await expect(page.getByRole('button',{name:'Exit walkthrough',exact:true})).toBeVisible();await expect(canvas).toHaveAttribute('data-original-canvas','yes');expect(await canvas.evaluate(el=>document.pointerLockElement===el)).toBe(true)}
+ for(let i=0;i<8;i++){await page.getByRole('button',{name:'Use ladder:',exact:false}).evaluate((el:HTMLButtonElement)=>el.click());await expect(page.getByLabel('Current deck')).toHaveValue(i%2===0?other.id:d.id);await expect(page.getByRole('button',{name:'Exit walkthrough',exact:true})).toBeVisible();await expect(canvas).toHaveAttribute('data-original-canvas','yes');expect(await canvas.evaluate(el=>document.pointerLockElement===el)).toBe(true)}
  const before=await canvas.getAttribute('data-position');await page.keyboard.down('s');await page.waitForTimeout(250);await page.keyboard.up('s');expect(await canvas.getAttribute('data-position')).not.toBe(before)
  await page.keyboard.press('Escape');await expect(page.getByRole('button',{name:'Enter walkthrough',exact:true})).toBeVisible();expect(await page.evaluate(()=>document.pointerLockElement)).toBe(null);expect(api.stats.saves).toBe(0)
 })
