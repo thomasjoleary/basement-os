@@ -1,12 +1,13 @@
 'use client'
 
+import {moveShipItem,type MoveTarget} from '@/lib/ship-move'
 import {apertureSize,hasLadder} from '@/lib/ship-openings'
 import { useEffect, useRef, useState } from 'react'
 import { type Deck, type ShipPlan, type Point, type Room, newId, roomAt, movePart, newPart, partFootprint, shipAppearance, windowAnchor } from '@/lib/ships'
 
-export type ShipTool = 'select' | 'pan' | 'room' | 'wall' | 'door' | 'label' | 'fixture'
+export type ShipTool = 'select' | 'move' | 'pan' | 'room' | 'wall' | 'door' | 'label' | 'fixture'
 export type Selection = { kind: 'room' | 'mark' | 'part' | 'connection'; id: string } | null
-type Gesture = { start: Point; current: Point; client: Point; pan: Point; part?: string; origin?: Point; mode: ShipTool; pointerId: number; inverse: DOMMatrix; scale: Point; dragging: boolean }
+type Gesture = { target?: MoveTarget; start: Point; current: Point; client: Point; pan: Point; part?: string; origin?: Point; mode: ShipTool; pointerId: number; inverse: DOMMatrix; scale: Point; dragging: boolean }
 
 export default function ShipGrid({ deck, plan, editable, tool, selection, onSelect, onChange, onDeck, onMessage }: {
   deck: Deck; plan: ShipPlan; editable: boolean; tool: ShipTool; selection: Selection
@@ -34,11 +35,11 @@ export default function ShipGrid({ deck, plan, editable, tool, selection, onSele
     const p = point(e, inverse)
     const mode = e.button === 1 ? 'pan' : editable ? tool : tool === 'pan' ? 'pan' : 'select'
     const hit = (e.target as Element).closest('[data-kind]') as SVGElement | null
-    let part: string | undefined
-    if (mode === 'select') {
+    let part: string | undefined, target: MoveTarget | undefined
+    if (mode === 'select' || mode === 'move') {
       if (hit) {
         const kind = hit.dataset.kind as NonNullable<Selection>['kind'], id = hit.dataset.id!
-        onSelect({ kind, id })
+        onSelect({ kind, id }); if(mode==='move') target={kind,id}
         if (kind === 'part' && editable && !plan.connections.some(c=>c.aperture?.ladder_part_id===id)) part = id
         if (kind === 'connection' && !editable) {
           const c = plan.connections.find(c => c.id === id)!
@@ -46,7 +47,7 @@ export default function ShipGrid({ deck, plan, editable, tool, selection, onSele
         }
       } else onSelect(null)
     }
-    gesture.current = { start: p, current: p, client: { x: e.clientX, y: e.clientY }, pan, part, origin: plan.parts.find(item => item.id === part), mode, pointerId: e.pointerId, inverse, scale: { x: matrix.a, y: matrix.d }, dragging: false }
+    gesture.current = { start: p, current: p, client: { x: e.clientX, y: e.clientY }, pan, part, target, origin: plan.parts.find(item => item.id === part), mode, pointerId: e.pointerId, inverse, scale: { x: matrix.a, y: matrix.d }, dragging: false }
     setDraft(gesture.current)
     e.currentTarget.setPointerCapture(e.pointerId)
   }
@@ -54,7 +55,7 @@ export default function ShipGrid({ deck, plan, editable, tool, selection, onSele
     const g = gesture.current
     if (!g || e.pointerId !== g.pointerId) return
     const dragging = g.dragging || Math.hypot(e.clientX - g.client.x, e.clientY - g.client.y) >= 6
-    if (g.part && !dragging) return
+    if ((g.part || g.target) && !dragging) return
     if (g.mode === 'pan') {
       setPan({ x: g.pan.x + (e.clientX - g.client.x) / g.scale.x, y: g.pan.y + (e.clientY - g.client.y) / g.scale.y })
     } else {
@@ -68,6 +69,8 @@ export default function ShipGrid({ deck, plan, editable, tool, selection, onSele
     gesture.current = null; setDraft(null)
     if (!g || !editable || g.mode === 'pan') return
     const p = point(e, g.inverse)
+    if(g.target){if(g.dragging){const result=moveShipItem(plan,deck.id,g.target,{x:p.x-g.start.x,y:p.y-g.start.y});if(result.error)onMessage(result.error);else if(result.plan!==plan)onChange(result.plan)}return}
+    if(g.mode==='move')return
     if (g.part && g.origin) {
       if (g.dragging && (p.x !== g.start.x || p.y !== g.start.y)) onChange(movePart(plan, g.part, deck, { x: g.origin.x + p.x - g.start.x, y: g.origin.y + p.y - g.start.y }))
       return
@@ -92,6 +95,13 @@ export default function ShipGrid({ deck, plan, editable, tool, selection, onSele
     }
     if (g.mode !== 'select') onChange({ ...plan, decks: plan.decks.map(d => d.id === deck.id ? next : d) })
   }
+  const outline=(()=>{const target=draft?.target;if(!target||!draft?.dragging)return null;let box:{x:number;y:number;width:number;height:number}|undefined
+    if(target.kind==='room')box=deck.rooms.find(r=>r.id===target.id)
+    if(target.kind==='part'){const p=plan.parts.find(p=>p.id===target.id);if(p)box={...p,...partFootprint(p.type)}}
+    if(target.kind==='connection'){const c=plan.connections.find(c=>c.id===target.id);if(c)box={...(c.from_deck===deck.id?c.from:c.to),...apertureSize(c)}}
+    if(target.kind==='mark'){const m=deck.marks.find(m=>m.id===target.id);if(m)box={...m,width:m.vertical?1:m.length,height:m.vertical?m.length:1}}
+    return box?{...box,x:box.x+draft.current.x-draft.start.x,y:box.y+draft.current.y-draft.start.y}:null
+  })()
   const selected = (id: string) => selection?.id === id
   return <div className="min-w-0 relative rounded-xl border border-gray-700 bg-gray-950 overflow-hidden">
     <div className="flex items-center justify-between p-3 border-b border-gray-800 gap-2">
@@ -104,7 +114,7 @@ export default function ShipGrid({ deck, plan, editable, tool, selection, onSele
     </div>
     <svg ref={svg} data-testid="ship-grid" aria-label={`${deck.name} ship plan`} role="img"
       viewBox={`-16 -16 ${deck.width * 32 + 32} ${deck.height * 32 + 32}`} className="w-full h-[380px] md:h-[520px] touch-none select-none"
-      style={{ cursor: tool === 'pan' ? 'grab' : tool === 'select' ? 'default' : 'crosshair' }}
+      style={{ cursor: tool === 'pan' ? 'grab' : tool === 'move' ? 'move' : tool === 'select' ? 'default' : 'crosshair' }}
       onPointerDown={down} onPointerMove={move} onPointerUp={up}
       onPointerCancel={() => { gesture.current = null; setDraft(null) }}
       onLostPointerCapture={() => { gesture.current = null; setDraft(null) }}
@@ -156,9 +166,10 @@ export default function ShipGrid({ deck, plan, editable, tool, selection, onSele
             {hasLadder(plan,c)&&<path d="M-7 -11V11 M7 -11V11 M-7 -8H7 M-7 -2H7 M-7 4H7 M-7 10H7" stroke="#dfb95e" strokeWidth="2"/>}<title>{c.name} — opening to connected deck</title>
           </g>
         })}
+        {outline && <rect x={outline.x*32} y={outline.y*32} width={outline.width*32} height={outline.height*32} fill="#06b6d4" fillOpacity=".3" stroke="#67e8f9" strokeDasharray="5 3" pointerEvents="none"/>}
         {draft?.mode === 'room' && <rect x={Math.min(draft.start.x, draft.current.x) * 32} y={Math.min(draft.start.y, draft.current.y) * 32} width={(Math.abs(draft.start.x - draft.current.x) + 1) * 32} height={(Math.abs(draft.start.y - draft.current.y) + 1) * 32} fill="#06b6d4" fillOpacity=".2" stroke="#67e8f9" strokeDasharray="6 4" pointerEvents="none" />}
       </g>
     </svg>
-    <p className="p-3 text-xs text-gray-400 border-t border-gray-800">{editable ? 'Draw rooms by dragging. Walls and doors follow grid edges. Select and drag fixtures to move them. Esc cancels a gesture.' : 'Select a room or component to inspect. Select a lift or stairs to change decks.'}</p>
+    <p className="p-3 text-xs text-gray-400 border-t border-gray-800">{editable ? 'Move drags rooms, openings and fixtures on the grid. Openings move both ends and their ladder; rooms carry contained items. Esc cancels. Select inspects; fixtures also support dragging.' : 'Select a room or component to inspect. Select a lift or stairs to change decks.'}</p>
   </div>
 }

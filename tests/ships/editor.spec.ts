@@ -562,7 +562,7 @@ test('large Paint preserves sized strokes across views, undo, pan, cancellation 
  const saved=structuredClone(api.ships.get(shipId)!.plan),floor=saved.surface_design!.surfaces.find(s=>s.room_id===r.id&&s.face==='floor')!
  expect(floor.paint.runs.reduce((n,r)=>n+r[1],0)).toBe(25)
  await page.getByLabel('Brush size').fill('3');await page.getByRole('button',{name:'erase',exact:true}).click();at=await point(r.x*5+5,r.y*5+5);await page.mouse.click(at.x,at.y);await page.getByRole('button',{name:'Undo map edit'}).click();await expect(page.getByRole('button',{name:'Redo map edit'})).toBeEnabled()
- await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();expect(api.ships.get(shipId)!.plan).toEqual(saved)
+ await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled();expect(api.ships.get(shipId)!.plan).toEqual(saved)
 
  await page.getByRole('button',{name:'pan',exact:true}).click();at=await point(r.x*5+5,r.y*5+5);await drag(page,at,{x:at.x+100,y:at.y+30});await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled()
  await page.getByRole('button',{name:'Fit surface'}).click();await page.getByRole('button',{name:'brush',exact:true}).click();await page.mouse.move(at.x+100,at.y);await page.mouse.down();await page.keyboard.press('Escape');await page.mouse.up();await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled()
@@ -642,4 +642,53 @@ test('connected opening visibly reveals the next deck without opaque caps and re
  let errors=0;page.on('pageerror',()=>errors++);await page.setViewportSize({width:1366,height:900});await page.goto(`/v2/ships/${shipId}`);await page.getByLabel('Current deck').selectOption(lower.id);await page.getByRole('button',{name:'Walkthrough',exact:true}).click();const canvas=page.getByTestId('ship-walk-canvas');await expect(canvas).toHaveAttribute('data-position','5.000,5.000');await page.getByRole('button',{name:'Enter walkthrough',exact:true}).click()
  const b=(await canvas.boundingBox())!;await drag(page,{x:b.x+b.width/2,y:b.y+b.height/2},{x:b.x+b.width/2-157,y:b.y+b.height/2-90});await page.screenshot({path:'test-results/ship-through-opening.png',fullPage:true})
  await page.keyboard.press('Escape');await page.getByRole('button',{name:'Paint',exact:true}).click();await page.getByLabel('Paint target',{exact:true}).selectOption(lower.rooms[0].id);await page.getByLabel('Paint face',{exact:true}).selectOption('ceiling');await expect(page.getByRole('button',{name:'Fill surface',exact:true})).toBeDisabled();expect(api.stats.saves).toBe(0);expect(errors).toBe(0)
+})
+
+
+test('Move snaps rooms openings and fixtures, carries attachments, rejects invalid drops and cancels safely',async({page})=>{
+ const api=await backend(page),ship=api.ships.get(shipId)!,a=ship.plan.decks[0],b=ship.plan.decks[1]
+ for(const d of [a,b]){d.rooms=[{...d.rooms[0],x:4,y:4,width:8,height:8}];d.marks=[]}
+ ship.plan.parts=[{...ship.plan.parts[0],id:'move-ladder',type:'Ladder',deck_id:a.id,room_id:a.rooms[0].id,x:6,y:6,quantity:1},{...ship.plan.parts[0],id:'move-bed',type:'Bed',deck_id:a.id,room_id:a.rooms[0].id,x:5,y:5}]
+ ship.plan.connections=[{...ship.plan.connections[0],from:{x:6,y:6},to:{x:6,y:6},aperture:{width:1,height:1,ladder_part_id:'move-ladder'}}]
+ await page.goto(`/v2/ships/${shipId}`);await page.getByRole('button',{name:'Move',exact:true}).click()
+ await drag(page,await cell(page,4,4),await cell(page,5,4));await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible()
+ let saved=api.ships.get(shipId)!;expect(saved.plan.decks[0].rooms[0].x).toBe(5);expect(saved.plan.parts.find(p=>p.id==='move-bed')!.x).toBe(6);expect(saved.plan.connections[0].from.x).toBe(7);expect(saved.plan.connections[0].to.x).toBe(7)
+ await drag(page,await cell(page,7,6),await cell(page,8,6));await page.getByRole('button',{name:'Undo map edit'}).click();await page.getByRole('button',{name:'Redo map edit'}).click()
+ await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();saved=api.ships.get(shipId)!;expect(saved.plan.parts.find(p=>p.id==='move-ladder')!.x).toBe(8);expect(saved.plan.connections[0].to.x).toBe(8)
+ for(const cancel of ['Escape','pointercancel']){const from=await cell(page,8,6),to=await cell(page,9,6);await page.mouse.move(from.x,from.y);await page.mouse.down();await page.mouse.move(to.x,to.y);if(cancel==='Escape')await page.keyboard.press('Escape');else await page.getByTestId('ship-grid').dispatchEvent('pointercancel',{pointerId:1});await page.mouse.up();await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled()}
+ await drag(page,await cell(page,8,6),await cell(page,0,0));await expect(page.getByText('Openings must join adjacent decks, fit room floors at both ends, and align with other openings between those decks.',{exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled()
+ await drag(page,await cell(page,6,5),await cell(page,7,5));await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();expect(api.ships.get(shipId)!.plan.parts.find(p=>p.id==='move-bed')!.x).toBe(7)
+ await page.reload();await expect(page.locator('[data-kind="part"][data-id="move-bed"]')).toBeVisible()
+})
+
+async function exteriorSpot(page:Page,face:string){
+ const canvas=page.getByTestId('ship-3d-canvas');await canvas.scrollIntoViewIfNeeded();const b=(await canvas.boundingBox())!
+ for(const y of [.5,.4,.6,.3,.7,.8,.9])for(const x of [.5,.4,.6,.3,.7]){const p={x:b.x+b.width*x,y:b.y+b.height*y};await page.mouse.move(p.x,p.y);if(await canvas.getAttribute('data-paint-face')===face&&Number(await canvas.getAttribute('data-brush-tiles'))>0)return p}
+ throw new Error(`No visible paint footprint for ${face}`)
+}
+test('direct exterior and underside strokes stay separate, cancel, undo redo and reload without camera edits',async({page})=>{
+ const api=await backend(page),ship=api.ships.get(shipId)!,d=ship.plan.decks[0];ship.plan.decks=[d];d.rooms=[{...d.rooms[0],x:4,y:4,width:6,height:6}];d.marks=[];ship.plan.parts=[];ship.plan.connections=[]
+ await page.setViewportSize({width:1366,height:900});await page.goto(`/v2/ships/${shipId}`);await page.getByRole('button',{name:'Exterior',exact:true}).click();await expect(page.getByTestId('ship-3d-canvas')).toBeVisible()
+ await page.getByRole('button',{name:'View underside',exact:true}).click();await expect.poll(async()=>Number(await page.getByTestId('ship-3d-canvas').getAttribute('data-camera-y'))).toBeLessThan(0)
+ await page.getByRole('button',{name:'Paint exterior',exact:true}).click();await page.getByLabel('Exterior brush size').fill('3');await page.getByLabel('Exterior paint color').fill('#ff0000')
+ let at=await exteriorSpot(page,'underside');await page.mouse.down();await page.keyboard.press('Escape');await page.mouse.up();await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled()
+ at=await exteriorSpot(page,'underside');await page.mouse.click(at.x,at.y);await page.getByRole('button',{name:'Undo map edit'}).click();await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled();await page.getByRole('button',{name:'Redo map edit'}).click()
+ await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();let surfaces=api.ships.get(shipId)!.plan.surface_design!.surfaces;expect(surfaces.find(s=>s.face==='underside')!.paint.runs.length).toBeGreaterThan(0);expect(surfaces.some(s=>s.face==='floor')).toBe(false)
+ await page.screenshot({path:'test-results/ship-underside-brush.png',fullPage:true})
+ await page.getByRole('button',{name:'Orbit',exact:true}).click();await page.getByRole('button',{name:'Reset view',exact:true}).click();await page.getByRole('button',{name:'Paint exterior',exact:true}).click();at=await exteriorSpot(page,'roof');await page.mouse.click(at.x,at.y)
+ await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();surfaces=api.ships.get(shipId)!.plan.surface_design!.surfaces;expect(surfaces.map(s=>s.face).sort()).toEqual(['roof','underside'])
+ await page.reload();await page.getByRole('button',{name:'Exterior',exact:true}).click();await page.getByRole('button',{name:'View underside',exact:true}).click();await page.getByRole('button',{name:'Erase exterior',exact:true}).click();await page.getByLabel('Exterior brush size').fill('3');at=await exteriorSpot(page,'underside');await page.mouse.click(at.x,at.y);await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();expect(api.ships.get(shipId)!.plan.surface_design!.surfaces.find(s=>s.face==='underside')!.paint.runs).toEqual([])
+})
+test('read-only exterior can orbit below but cannot paint or move',async({page})=>{
+ await backend(page,'player');await page.goto(`/v2/ships/${shipId}`);await expect(page.getByRole('button',{name:'Move',exact:true})).toHaveCount(0);await page.getByRole('button',{name:'Exterior',exact:true}).click();await page.getByRole('button',{name:'View underside',exact:true}).click();await expect.poll(async()=>Number(await page.getByTestId('ship-3d-canvas').getAttribute('data-camera-y'))).toBeLessThan(0);await expect(page.getByRole('button',{name:'Paint exterior',exact:true})).toHaveCount(0)
+})
+
+
+test('sloped exterior paint stays on its visible face and absent underside support fails closed',async({page})=>{
+ const api=await backend(page),ship=api.ships.get(shipId)!,d=ship.plan.decks[0];ship.plan.decks=[d];d.rooms=[{...d.rooms[0],x:4,y:4,width:6,height:6}];d.marks=[];ship.plan.parts=[];ship.plan.connections=[]
+ ship.plan.surface_design={surfaces:[],components:[],sections:[{id:'rear-shape',deck_id:d.id,room_id:d.rooms[0].id,side:'rear',extension_ft:5,slope:.8,taper:.3,bevel_ft:1}]}
+ await page.route('**/rest/v1/rpc/v2_ship_check_surfaces',r=>r.fulfill({status:400,contentType:'application/json',body:JSON.stringify({message:'Invalid painted face'})}))
+ await page.goto(`/v2/ships/${shipId}`);await page.getByRole('button',{name:'Exterior',exact:true}).click();await page.getByRole('button',{name:'Paint exterior',exact:true}).click();const at=await exteriorSpot(page,'exterior-rear');await page.mouse.click(at.x,at.y);await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();expect(api.ships.get(shipId)!.plan.surface_design!.surfaces.map(s=>s.face)).toEqual(['exterior-rear'])
+ await page.getByRole('button',{name:'View underside',exact:true}).click();const canvas=page.getByTestId('ship-3d-canvas'),b=(await canvas.boundingBox())!;await page.mouse.click(b.x+b.width/2,b.y+b.height/2);await expect(page.getByText('Underside painting needs the reviewed underside migration. Other exterior faces remain available.',{exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled()
+ await page.getByLabel('Transparent hull',{exact:true}).check();await expect(page.getByRole('button',{name:'Paint exterior',exact:true})).toBeDisabled();await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled()
 })

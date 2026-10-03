@@ -8,6 +8,7 @@ const gm='10000000-0000-0000-0000-000000000001', player='10000000-0000-0000-0000
 const pending='10000000-0000-0000-0000-000000000003', missing='10000000-0000-0000-0000-000000000004'
 const tables=['active_travels','battlefield_entities','battlefield_entity_reveals','battlefield_gm_notes','battlefield_presets','battlefield_visibility','battlefields','character_words','characters','map_markers','notes','player_fog_polygons','player_marker_visibility','player_positions','published_leaderboard','unlocks','v2_galaxy_settings','v2_star_systems','v2_system_bodies','words_of_power']
 const migration=readFileSync(new URL('../sql/v2_007_registration_approval.sql',import.meta.url),'utf8')
+function sameSurfaces(a,b){const canonical=s=>({...s,surfaces:[...s.surfaces].sort((a,b)=>a.id.localeCompare(b.id))});assert.deepEqual(canonical(a),canonical(b))}
 let passed=0
 async function check(name,fn){await fn();passed++;console.log(`PASS ${name}`)}
 async function as(id,role='authenticated'){
@@ -62,6 +63,16 @@ try {
   const aclBefore=(await db.query("SELECT oid,proacl::text FROM pg_proc WHERE proname IN ('v2_design_action','v2_ship_check_plan','v2_ship_before_write') ORDER BY oid")).rows
   await db.exec(surfaceMigration);await db.exec(surfaceMigration)
   const openingMigration=readFileSync(new URL('../sql/20261002200613_ship_deck_openings.sql',import.meta.url),'utf8');await db.exec(openingMigration);await db.exec(openingMigration)
+  await check('underside migration accepts independent paint, preserves ACLs and rejects malformed faces',async()=>{
+    const probe={decks:[{id:'probe-deck',rooms:[{id:'probe-room'}]}],parts:[],surface_design:{surfaces:[{id:'probe-face',deck_id:'probe-deck',room_id:'probe-room',face:'underside',paint:{palette:[],runs:[]}}],sections:[],components:[]}}
+    await assert.rejects(()=>db.query('SELECT public.v2_ship_check_surfaces($1::jsonb)',[JSON.stringify(probe)]),/Invalid painted face/)
+    const metadata=async()=>(await db.query("SELECT proowner,proacl,prosecdef,proconfig FROM pg_proc WHERE oid='public.v2_ship_check_surfaces(jsonb)'::regprocedure")).rows[0]
+    const before=await metadata(),sql=readFileSync(new URL('../sql/20261003204429_ship_underside_paint.sql',import.meta.url),'utf8')
+    await db.exec(sql);await db.exec(sql);assert.deepEqual(await metadata(),before)
+    await db.query('SELECT public.v2_ship_check_surfaces($1::jsonb)',[JSON.stringify(probe)])
+    probe.surface_design.surfaces[0].face='unknown';await assert.rejects(()=>db.query('SELECT public.v2_ship_check_surfaces($1::jsonb)',[JSON.stringify(probe)]),/Invalid painted face/)
+  })
+
   assert.deepEqual((await db.query("SELECT oid,proacl::text FROM pg_proc WHERE proname IN ('v2_design_action','v2_ship_check_plan','v2_ship_before_write') ORDER BY oid")).rows,aclBefore)
   const id='20000000-0000-0000-0000-000000000001'
   const plan={schema_version:1,decks:[{id:'deck',name:'Deck',width:4,height:4,height_ft:12,rooms:[],marks:[]}],parts:[],connections:[]}
@@ -183,11 +194,14 @@ try {
   design=await act('withdraw',design.version)
   const painted=structuredClone(plan);painted.decks[0].rooms=[{id:'room',name:'Room',x:0,y:0,width:4,height:4,notes:''}]
   painted.surface_design={surfaces:[{id:'surface',deck_id:'deck',room_id:'room',face:'floor',color:'#123456',paint:{palette:['#ff0000'],runs:[[1025,4,0],[2049,4,0]]}}],sections:[{id:'section',deck_id:'deck',room_id:'room',side:'front',extension_ft:8,slope:.5,taper:.25,bevel_ft:1}],components:[]}
+  painted.surface_design.surfaces.push({...structuredClone(painted.surface_design.surfaces[0]),id:'undersurface',face:'underside'})
   design=await act('save',design.version,{...payload,plan:painted})
+  assert.deepEqual([...design.plan.surface_design.surfaces].sort((a,b)=>a.id.localeCompare(b.id)),[...painted.surface_design.surfaces].sort((a,b)=>a.id.localeCompare(b.id)))
+  painted.surface_design=structuredClone(design.plan.surface_design)
   await check('paint and shape persist in private draft; omission preserves exact records',async()=>{
-    assert.deepEqual(design.plan.surface_design,painted.surface_design)
+    sameSurfaces(design.plan.surface_design,painted.surface_design)
     const old=structuredClone(painted);delete old.surface_design
-    design=await act('save',design.version,{...payload,plan:old});assert.deepEqual(design.plan.surface_design,painted.surface_design)
+    design=await act('save',design.version,{...payload,plan:old});sameSurfaces(design.plan.surface_design,painted.surface_design)
   })
   await check('malformed paint refs, overlaps, palette indexes, oversized fills and shapes rejected atomically',async()=>{
     for(const mutate of [p=>p.surfaces[0].paint.runs=[[0,50001,0]],p=>p.surfaces[0].paint.runs=[[0,2,0],[1,1,0]],p=>p.surfaces[0].paint.runs=[[0,1,9]],p=>p.surfaces[0].paint.runs=[[0,1.5,0]],p=>p.surfaces[0].paint.palette=['red'],p=>p.surfaces[0].room_id='missing',p=>p.surfaces[0].extra='secret',p=>p.surfaces[0].id='section',p=>p.sections[0].extension_ft=11,p=>p.sections[0].slope=-1,p=>p.sections[0].taper=1,p=>p.sections[0].bevel_ft=3,p=>p.sections.push({...p.sections[0],id:'other'})]){
@@ -203,7 +217,7 @@ try {
     const legacy='20000000-0000-0000-0000-000000000099'
     await db.query('UPDATE v2_ships SET plan=$1 WHERE id=$2',[JSON.stringify(painted),legacy])
     await db.query("UPDATE v2_ships SET plan=plan-'surface_design' WHERE id=$1",[legacy])
-    assert.deepEqual((await db.query('SELECT plan FROM v2_ships WHERE id=$1',[legacy])).rows[0].plan.surface_design,painted.surface_design)
+    sameSurfaces((await db.query('SELECT plan FROM v2_ships WHERE id=$1',[legacy])).rows[0].plan.surface_design,painted.surface_design)
     assert.equal((await db.query("SELECT has_function_privilege('anon','public.v2_ship_check_surfaces(jsonb)','EXECUTE') AS allowed")).rows[0].allowed,false)
   })
 
@@ -213,7 +227,7 @@ try {
     next=await act('submit',next.version,{},paintedId);await as(gm)
     next=await act('accept',next.version,{submission_version:next.current_submission,owner_id:player,crew_ids:[]},paintedId)
     const live=(await db.query('SELECT plan FROM v2_ships WHERE id=$1',[next.accepted_ship_id])).rows[0].plan
-    assert.deepEqual(live.surface_design,painted.surface_design)
+    sameSurfaces(live.surface_design,painted.surface_design)
     await assert.rejects(()=>db.query("UPDATE v2_ships SET plan=plan-'surface_design' WHERE id=$1",[next.accepted_ship_id]),/versioned/)
     await assert.rejects(()=>db.query("UPDATE v2_ship_submissions SET plan=plan-'surface_design' WHERE design_id=$1",[paintedId]),/permission denied/)
     await as(player);next=await act('revise',next.version,{},paintedId)

@@ -7,7 +7,7 @@ export const CELL_FEET = 5
 export const SCENE_LIMIT = 6000
 export type SceneSelection = { kind: 'room' | 'mark' | 'part' | 'connection'; id: string }
 export type SceneItem = { at: [number, number, number]; size: [number, number, number]; color: string; shape?: 'port' | 'starboard' | 'engine' | 'nose' | 'slope-port' | 'slope-starboard' | 'upright' | 'chevron'; selection?: SceneSelection; deckId: string; hull?: boolean; glow?: boolean }
-export type SceneOptions = { deckId: string; mode: 'cutaway' | 'exterior'; roofs: boolean; allDecks: boolean; separated: boolean; hiddenDeckIds?: string[]; walkthrough?:boolean }
+export type SceneOptions = { deckId: string; mode: 'cutaway' | 'exterior'; roofs: boolean; allDecks: boolean; separated: boolean; hiddenDeckIds?: string[]; walkthrough?:boolean; forceSurfaces?:boolean }
 // Fit the complete interior assembly, including caps/screens, below the ceiling.
 // Exterior hull, wings and engines intentionally use their own dimensions.
 export function fitEquipmentHeight(items: SceneItem[], floor: number, height: number): SceneItem[] {
@@ -56,7 +56,7 @@ export function deckElevations(decks: Deck[], separated = false) {
 }
 export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
   const items: SceneItem[] = []; let omitted = 0
-  const surfaceSkin=options.walkthrough||surfaceModeActive(plan,options.mode)
+  const surfaceSkin=options.walkthrough||surfaceModeActive(plan,options.mode,options.forceSurfaces)
   const appearance=shipAppearance(plan), skin=(fallback:string)=>plan.appearance?.hull_color??fallback
   const elevations = deckElevations(plan.decks, options.separated)
   const offsets=openingLayout(plan).offsets
@@ -73,7 +73,7 @@ export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
     const edge = (vertical: boolean, x: number, z: number, selection: SceneSelection) => edges.set(`${vertical}:${x}:${z}`, { vertical, x, z, selection })
     for (const r of d.rooms) {
       const selection: SceneSelection = { kind: 'room', id: r.id }
-      for(const floor of subtractOpenings(r,deckHoles(plan,d.id,'floor')))box(floor.x+floor.width/2,base-.06,floor.y+floor.height/2,floor.width,.12,floor.height,exterior?'#475569':'#334e63',selection)
+      if(!(exterior&&surfaceSkin))for(const floor of subtractOpenings(r,deckHoles(plan,d.id,'floor')))box(floor.x+floor.width/2,base-.06,floor.y+floor.height/2,floor.width,.12,floor.height,exterior?'#475569':'#334e63',selection)
       if (options.roofs && !surfaceSkin) {
         for(const roof of subtractOpenings(r,deckHoles(plan,d.id,'roof')))box(roof.x+roof.width/2,base+h+.04,roof.y+roof.height/2,Math.max(.01,roof.width-.04),.12,Math.max(.01,roof.height-.04),skin('#718397'),selection,undefined,true)
         if (exterior) box(r.x+r.width/2,base+h+.11,r.y+r.height/2,Math.max(.1,r.width-.3),.025,.045,'#a6b7c8',selection,undefined,true)

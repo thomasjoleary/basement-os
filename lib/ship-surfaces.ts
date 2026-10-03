@@ -4,7 +4,7 @@ import {type PaintedSurface,type SurfaceFace,paintError,MAX_PAINT_TILES,MAX_PAIN
 export type HullSide='front'|'rear'|'port'|'starboard'
 export type HullSection={id:string;deck_id:string;room_id:string;side:HullSide;extension_ft:number;slope:number;taper:number;bevel_ft:number}
 export type SurfaceDesign={surfaces:PaintedSurface[];sections:HullSection[];components:{id:string;part_id:string;color:string}[]}
-export const SURFACE_FACES:SurfaceFace[]=['floor','ceiling','roof','interior-front','interior-rear','interior-port','interior-starboard','exterior-front','exterior-rear','exterior-port','exterior-starboard']
+export const SURFACE_FACES:SurfaceFace[]=['underside','floor','ceiling','roof','interior-front','interior-rear','interior-port','interior-starboard','exterior-front','exterior-rear','exterior-port','exterior-starboard']
 export const EMPTY_SURFACES:SurfaceDesign={surfaces:[],sections:[],components:[]}
 export function defaultSection(side:HullSide):Omit<HullSection,'id'|'deck_id'|'room_id'>{return {side,extension_ft:side==='front'?6.5:side==='rear'?0:2.5,slope:.6,taper:side==='front'?.44:0,bevel_ft:0}}
 export function surfaceDesignError(plan:ShipPlan,unique:(id:string)=>boolean):string|null{
@@ -37,9 +37,9 @@ export type SurfaceQuad={key:string;roomId:string;deckId:string;face:SurfaceFace
 export function roomSurfaces(plan:ShipPlan,deck:Deck,room:Room):SurfaceQuad[]{
   const result:SurfaceQuad[]=[],height=deck.height_ft??8,design=plan.surface_design??EMPTY_SURFACES
   const style=(face:SurfaceFace)=>design.surfaces.find(s=>s.room_id===room.id&&s.face===face)
-  const add=(face:SurfaceFace,v:[Vec3,Vec3,Vec3,Vec3],width:number,h:number,uOffset=0,cap=false)=>{const paint=style(face),hull=face==='roof'||face.startsWith('exterior');result.push({key:`${room.id}/${face}/${result.length}`,roomId:room.id,deckId:deck.id,face,vertices:v,width,height:h,uOffset,hull,color:paint?.color??(hull?plan.appearance?.hull_color??'#718397':face==='floor'?'#334e63':'#b9c8d2'),paint:cap?undefined:paint?.paint,cap})}
+  const add=(face:SurfaceFace,v:[Vec3,Vec3,Vec3,Vec3],width:number,h:number,uOffset=0,cap=false)=>{const paint=style(face),hull=face==='underside'||face==='roof'||face.startsWith('exterior');result.push({key:`${room.id}/${face}/${result.length}`,roomId:room.id,deckId:deck.id,face,vertices:v,width,height:h,uOffset,hull,color:paint?.color??(hull?plan.appearance?.hull_color??'#718397':face==='floor'?'#334e63':'#b9c8d2'),paint:cap?undefined:paint?.paint,cap})}
   const x=room.x*5,z=room.y*5,w=room.width*5,l=room.height*5
-  for(const face of ['floor','roof','ceiling'] as const){const y=face==='floor'?.02:face==='roof'?height:height-.03;for(const rect of subtractOpenings({x:room.x,y:room.y,width:room.width,height:room.height},deckHoles(plan,deck.id,face))){const px=rect.x*5,pz=rect.y*5,pw=rect.width*5,ph=rect.height*5;add(face,[[px,y,pz],[px+pw,y,pz],[px+pw,y,pz+ph],[px,y,pz+ph]],pw,ph,px-x);result[result.length-1].vOffset=pz-z}}
+  for(const face of ['underside','floor','roof','ceiling'] as const){const y=face==='underside'?0:face==='floor'?.02:face==='roof'?height:height-.03;for(const rect of subtractOpenings({x:room.x,y:room.y,width:room.width,height:room.height},deckHoles(plan,deck.id,face==='underside'?'floor':face))){const px=rect.x*5,pz=rect.y*5,pw=rect.width*5,ph=rect.height*5;add(face,[[px,y,pz],[px+pw,y,pz],[px+pw,y,pz+ph],[px,y,pz+ph]],pw,ph,px-x);result[result.length-1].vOffset=pz-z}}
   for(const side of ['front','rear','port','starboard'] as HullSide[]){
     const vertical=side==='port'||side==='starboard',span=vertical?room.height:room.width
     const outward=side==='front'||side==='port'?-1:1,edge=side==='port'?x:side==='starboard'?x+w:side==='front'?z:z+l
@@ -67,8 +67,9 @@ export function roomSurfaces(plan:ShipPlan,deck:Deck,room:Room):SurfaceQuad[]{
   return result
 }
 
-export function surfaceModeActive(plan:ShipPlan,mode:'cutaway'|'exterior'){
+export function surfaceModeActive(plan:ShipPlan,mode:'cutaway'|'exterior',force=false){
+  if(mode==='exterior'&&force)return true
   if(mode==='cutaway'&&plan.connections.some(c=>deckHoles(plan,c.from_deck,'floor').length||deckHoles(plan,c.from_deck,'ceiling').length))return true
   const design=plan.surface_design
-  return !!design&&(mode==='exterior'?design.sections.length>0||design.surfaces.some(s=>s.face==='roof'||s.face.startsWith('exterior')):design.surfaces.some(s=>s.face!=='roof'&&!s.face.startsWith('exterior')))
+  return !!design&&(mode==='exterior'?design.sections.length>0||design.surfaces.some(s=>s.face==='underside'||s.face==='roof'||s.face.startsWith('exterior')):design.surfaces.some(s=>s.face!=='underside'&&s.face!=='roof'&&!s.face.startsWith('exterior')))
 }

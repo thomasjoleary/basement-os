@@ -52,9 +52,9 @@ check('surface dimensions are actual feet and slopes have physical hypotenuse le
  const front=faces.find(f=>f.face==='exterior-front'&&!f.cap);assert.equal(front.height,Math.hypot((deck.height_ft??8)-1,3))
  for(const q of faces)for(const point of q.vertices)assert.ok(point.every(Number.isFinite))
 })
-check('component colors alone never replace existing hull geometry',()=>{
+check('exterior editor can request paintable skins without altering legacy scene defaults',()=>{
  const only=structuredClone(plan);only.surface_design.surfaces=[];only.surface_design.sections=[]
- assert.equal(surfaceModeActive(only,'exterior'),false);assert.equal(surfaceModeActive(only,'cutaway'),false)
+ assert.equal(surfaceModeActive(only,'exterior'),false);assert.equal(surfaceModeActive(only,'exterior',true),true);assert.equal(surfaceModeActive(only,'cutaway'),false)
 })
 check('new skins retain openings instead of painting over doors',()=>{
  const testDeck={id:'deck',name:'Deck',width:10,height:10,height_ft:8,rooms:[{id:'room',name:'Room',x:1,y:1,width:4,height:4,notes:''}],marks:[{id:'door',kind:'door',name:'Door',x:2,y:1,length:1,vertical:false}]}
@@ -72,7 +72,7 @@ check('shaped isolated hull has matching closed seams, including bevel end caps'
  const d={id:'d',name:'D',width:10,height:10,height_ft:8,rooms:[{id:'r',name:'R',x:2,y:2,width:4,height:4,notes:''}],marks:[]}
  const p={schema_version:1,decks:[d],parts:[],connections:[],surface_design:{surfaces:[],components:[],sections:['front','rear','port','starboard'].map((side,i)=>({id:'s'+i,deck_id:'d',room_id:'r',side,extension_ft:3,slope:.5,taper:.2,bevel_ft:1}))}}
  const surfaces=roomSurfaces(p,d,d.rooms[0]).filter(q=>q.hull),edges=new Map()
- surfaces.push({vertices:[[10,0,10],[30,0,10],[30,0,30],[10,0,30]]})
+
  const point=p=>p.map(v=>v.toFixed(6)).join(',')
  for(const q of surfaces)for(let i=0;i<4;i++){const key=[point(q.vertices[i]),point(q.vertices[(i+1)%4])].sort().join('|');edges.set(key,(edges.get(key)??0)+1)}
  for(const [edge,n] of edges)assert.equal(n,2,'unmatched hull seam '+edge)
@@ -139,3 +139,24 @@ check('explicit holes separate ladder inventory, copy references and reject inco
  c.aperture.width=100;assert.ok(validatePlan(p));c.aperture.width=1;part.x++;assert.ok(validatePlan(p))
 })
 console.log(`${count} total geometry checks passed`)
+
+const {moveShipItem}=model('ship-move'),{exteriorBrush,paintExterior}=model('ship-exterior-paint')
+check('move is atomic, carries room-local parts and paint, rejects overlap and out-of-deck fixtures',()=>{
+ const p=instantiateTemplate('fighter'),d=p.decks[0];d.rooms=[{...d.rooms[0],x:3,y:3,width:4,height:4}];d.marks=[];p.connections=[];p.parts=[{...p.parts[0],deck_id:d.id,room_id:d.rooms[0].id,x:4,y:4}]
+ const result=moveShipItem(p,d.id,{kind:'room',id:d.rooms[0].id},{x:2,y:1});assert.equal(result.error,null);assert.equal(result.plan.parts[0].x,6);assert.equal(p.parts[0].x,4)
+ assert.equal(moveShipItem(p,d.id,{kind:'room',id:d.rooms[0].id},{x:-10,y:0}).plan,p)
+ assert.equal(moveShipItem(p,d.id,{kind:'part',id:p.parts[0].id},{x:1000,y:0}).plan,p)
+})
+check('underside is independent from floor and sloped brush uses surface-local feet',()=>{
+ const p=instantiateTemplate('fighter'),d=p.decks[0],r=d.rooms[0],faces=roomSurfaces(p,d,r),q=faces.find(q=>q.face==='underside')
+ assert.ok(q.hull);assert.ok(q.vertices.every(v=>v[1]===0));const next=paintExterior(p,q,exteriorBrush(q,{x:1,y:1},3),'#ff0000');assert.equal(validatePlan(next),null);assert.equal(next.surface_design.surfaces[0].face,'underside');assert.equal(decodePaint(next.surface_design.surfaces[0].paint).size,9)
+ const side=faces.find(q=>q.face==='exterior-front'&&!q.cap);assert.ok(side.height>0);assert.ok(exteriorBrush(side,{x:Math.floor(side.uOffset),y:0},20).every(t=>t.x+1>side.uOffset&&t.x<side.uOffset+side.width))
+})
+console.log(`${count} total geometry and exterior/move checks passed`)
+
+check('exterior meshes expose outward underside normals and roof toggles without interior floor paint',()=>{
+ const p=instantiateTemplate('fighter'),options={deckId:p.decks[0].id,mode:'exterior',roofs:true,allDecks:false,separated:false,forceSurfaces:true},renderer=model('ship-surface-renderer'),all=renderer.createSurfaceMeshes(p,options,false),noRoof=renderer.createSurfaceMeshes(p,{...options,roofs:false},false)
+ const undersides=all.meshes.filter(m=>m.userData.face==='underside');assert.ok(undersides.length);for(const mesh of undersides){assert.ok(mesh.geometry.getAttribute('normal').getY(0)<0);assert.equal(mesh.material.side,THREE.FrontSide)}
+ assert.ok(all.meshes.some(m=>m.userData.face==='roof'));assert.equal(noRoof.meshes.some(m=>m.userData.face==='roof'),false);assert.equal(all.meshes.some(m=>m.userData.face==='floor'),false);all.dispose();noRoof.dispose()
+})
+console.log(`${count} total geometry, movement and exterior renderer checks passed`)
