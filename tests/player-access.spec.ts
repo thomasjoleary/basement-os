@@ -330,7 +330,7 @@ test.describe('Player character sheet access', () => {
         expect(Array.isArray(rows)).toBe(true)
         assignedShip = typeof rows[0]?.id === 'string' ? rows[0].id : undefined
         await expect(page.getByRole('heading', { name: 'Ships', exact: true })).toBeVisible()
-        await expect(page.getByText('Loading shipsâ€¦', { exact: true })).toHaveCount(0)
+        await expect(page.getByText('Loading ships…', { exact: true })).toHaveCount(0)
         await expect(page.locator('main').getByRole('alert')).toHaveCount(0)
         await expect(page.getByRole('button', { name: 'New ship', exact: true })).toHaveCount(0)
       }
