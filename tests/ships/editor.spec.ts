@@ -113,7 +113,7 @@ test('room/fixture editing, quality tags, deck changes, save/reload and discard'
   await page.reload()
   await page.getByLabel('Current deck').selectOption({ label: 'Workshop deck' })
   await page.getByRole('button', { name: 'Inventory', exact: true }).click()
-  await page.getByRole('button', { name: /Repair bench × 2/ }).click()
+  await page.getByRole('button', { name: /Repair bench Ãƒâ€” 2/ }).click()
   await expect(page.getByLabel('Component name')).toHaveValue('Repair bench')
   await expect(page.getByLabel('Black Market', { exact: true })).toBeChecked()
   await page.getByLabel('Component name').fill('Unsaved rename')
@@ -187,12 +187,12 @@ test('failed and conflicting saves retain edits and allow recovery', async ({ pa
 test('assigned player inspects components and changes decks without edit controls or notes requests', async ({ page }) => {
   const api = await backend(page, 'player')
   await page.goto(`/v2/ships/${shipId}`)
-  await expect(page.getByText('Assigned crew · read-only', { exact: false })).toBeVisible()
+  await expect(page.getByText('Assigned crew Ã‚Â· read-only', { exact: false })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Save ship', exact: true })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'fixture', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Bedroom', exact: true }).click()
   await expect(page.getByLabel('Room name')).toBeDisabled()
-  await page.getByRole('button', { name: 'Crew bunk × 1', exact: true }).click()
+  await page.getByRole('button', { name: 'Crew bunk Ãƒâ€” 1', exact: true }).click()
   await expect(page.getByLabel('Component name')).toBeDisabled()
   await page.getByLabel('Current deck').selectOption({ label: 'Cargo deck' })
   await page.getByRole('button', { name: 'Cargo lift', exact: true }).click()
@@ -224,7 +224,7 @@ test('mobile deck and inventory controls remain usable', async ({ page }) => {
   await page.goto(`/v2/ships/${shipId}`)
   await page.getByLabel('Current deck').selectOption({ label: 'Cargo deck' })
   await page.getByRole('button', { name: 'Inventory', exact: true }).click()
-  await page.getByRole('button', { name: /Main propulsion × 1/ }).click()
+  await page.getByRole('button', { name: /Main propulsion Ãƒâ€” 1/ }).click()
   await expect(page.getByLabel('Component name')).toHaveValue('Main propulsion')
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   await page.screenshot({ path: 'test-results/ship-mobile.png', fullPage: true })
@@ -691,4 +691,39 @@ test('sloped exterior paint stays on its visible face and absent underside suppo
  await page.goto(`/v2/ships/${shipId}`);await page.getByRole('button',{name:'Exterior',exact:true}).click();await page.getByRole('button',{name:'Paint exterior',exact:true}).click();const at=await exteriorSpot(page,'exterior-rear');await page.mouse.click(at.x,at.y);await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();expect(api.ships.get(shipId)!.plan.surface_design!.surfaces.map(s=>s.face)).toEqual(['exterior-rear'])
  await page.getByRole('button',{name:'View underside',exact:true}).click();const canvas=page.getByTestId('ship-3d-canvas');await expect.poll(async()=>Number(await canvas.getAttribute('data-camera-y'))).toBeLessThan(0);await canvas.scrollIntoViewIfNeeded();const b=(await canvas.boundingBox())!;await canvas.click({position:{x:b.width/2,y:b.height/2}});await expect(page.getByText('Underside painting needs the reviewed underside migration. Other exterior faces remain available.',{exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled()
  await page.getByLabel('Transparent hull',{exact:true}).check();await expect(page.getByRole('button',{name:'Paint exterior',exact:true})).toBeDisabled();await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled()
+})
+
+
+test('live exterior stripe crosses adjoining rooms before release with one undo and multiroom eraser',async({page})=>{
+ test.setTimeout(180000)
+ const api=await backend(page),ship=api.ships.get(shipId)!,d=ship.plan.decks[0]
+ ship.plan.decks=[d];d.rooms=Array.from({length:3},(_,i)=>({...d.rooms[0],id:`stripe-room-${i}`,name:['Cockpit','Cabin','Engineering'][i],x:4,y:3+i*4,width:6,height:4}));d.marks=[];ship.plan.parts=[];ship.plan.connections=[]
+ await page.setViewportSize({width:1366,height:900});await page.goto(`/v2/ships/${shipId}`);await page.getByRole('button',{name:'Exterior',exact:true}).click();await page.getByRole('button',{name:'Paint exterior',exact:true}).click();await page.getByLabel('Exterior paint color').fill('#ff0000');await page.getByLabel('Exterior brush size').fill('3')
+ const canvas=page.getByTestId('ship-3d-canvas')
+ async function spots(face:string){
+  await canvas.scrollIntoViewIfNeeded();const b=(await canvas.boundingBox())!,found=new Map<string,{x:number;y:number}[]>()
+  for(let y=.15;y<=.9;y+=.075)for(let x=.15;x<=.85;x+=.075){const p={x:b.x+b.width*x,y:b.y+b.height*y};await page.mouse.move(p.x,p.y);if(await canvas.getAttribute('data-paint-face')===face){const id=await canvas.getAttribute('data-paint-room');if(id){const points=found.get(id)??[];points.push(p);found.set(id,points)}}}
+  return d.rooms.map(r=>{const points=found.get(r.id);expect(points?.length,`${face} ${r.name} visible`).toBeGreaterThan(0);return points!.reduce((a,p)=>({x:a.x+p.x/points!.length,y:a.y+p.y/points!.length}),{x:0,y:0})})
+ }
+ let points=await spots('roof');await page.mouse.move(points[0].x,points[0].y);const before=await canvas.screenshot();await page.mouse.down()
+ // A single fast event for each room exercises interpolation rather than many test-generated events.
+ for(const p of points.slice(1))await page.mouse.move(p.x,p.y)
+ await expect.poll(async()=>Number(await canvas.getAttribute('data-live-paint-tiles'))).toBeGreaterThan(30)
+ expect((await canvas.screenshot()).equals(before)).toBe(false);await page.screenshot({path:'test-results/ship-live-multiroom-stripe.png',fullPage:true})
+ expect(api.stats.saves).toBe(0);await page.mouse.up();await page.getByRole('button',{name:'Undo map edit'}).click();await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled();await page.getByRole('button',{name:'Redo map edit'}).click()
+ await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible()
+ let surfaces=api.ships.get(shipId)!.plan.surface_design!.surfaces;expect(surfaces.map(s=>s.room_id).sort()).toEqual(d.rooms.map(r=>r.id).sort());expect(surfaces.every(s=>s.face==='roof'&&s.paint.palette.includes('#ff0000')&&s.paint.runs.length)).toBe(true)
+ const saved=JSON.stringify(surfaces);await page.reload();await page.getByRole('button',{name:'Exterior',exact:true}).click();await page.getByRole('button',{name:'Erase exterior',exact:true}).click();await page.getByLabel('Exterior brush size').fill('3');points=await spots('roof')
+ for(const cancel of ['Escape','pointercancel','pointerleave','tool']){
+  await page.mouse.move(points[0].x,points[0].y);await page.mouse.down();for(const p of points.slice(1))await page.mouse.move(p.x,p.y)
+  if(cancel==='Escape')await page.keyboard.press('Escape');else if(cancel==='tool')await page.getByRole('button',{name:'Orbit',exact:true}).evaluate((el:HTMLButtonElement)=>el.click());else await canvas.dispatchEvent(cancel,{pointerId:1})
+  await page.mouse.up();await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled();expect(JSON.stringify(api.ships.get(shipId)!.plan.surface_design!.surfaces)).toBe(saved)
+  if(cancel==='tool')await page.getByRole('button',{name:'Erase exterior',exact:true}).click()
+ }
+ await page.mouse.move(points[0].x,points[0].y);await page.mouse.down();for(const p of points.slice(1))await page.mouse.move(p.x,p.y);await page.mouse.up();await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();surfaces=api.ships.get(shipId)!.plan.surface_design!.surfaces;expect(surfaces.every(s=>s.paint.runs.length===0)).toBe(true)
+ await page.getByRole('button',{name:'View underside',exact:true}).click();await expect.poll(async()=>Number(await canvas.getAttribute('data-camera-y'))).toBeLessThan(0);await page.getByRole('button',{name:'Paint exterior',exact:true}).click();points=await spots('underside')
+ await page.mouse.move(points[0].x,points[0].y);await page.mouse.down();for(const p of points.slice(1))await page.mouse.move(p.x,p.y);await expect.poll(async()=>Number(await canvas.getAttribute('data-live-paint-tiles'))).toBeGreaterThan(30);await page.mouse.up();await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();expect(api.ships.get(shipId)!.plan.surface_design!.surfaces.filter(s=>s.face==='underside')).toHaveLength(3)
+ await page.getByRole('button',{name:'Reset view',exact:true}).click();points=await spots('exterior-starboard')
+ await page.mouse.move(points[0].x,points[0].y);await page.mouse.down();for(const p of points.slice(1))await page.mouse.move(p.x,p.y);await expect.poll(async()=>Number(await canvas.getAttribute('data-live-paint-tiles'))).toBeGreaterThan(30);await page.mouse.up();await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();expect(api.ships.get(shipId)!.plan.surface_design!.surfaces.filter(s=>s.face==='exterior-starboard')).toHaveLength(3)
+
 })

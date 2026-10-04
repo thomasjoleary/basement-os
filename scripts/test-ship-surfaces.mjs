@@ -160,3 +160,37 @@ check('exterior meshes expose outward underside normals and roof toggles without
  assert.ok(all.meshes.some(m=>m.userData.face==='roof'));assert.equal(noRoof.meshes.some(m=>m.userData.face==='roof'),false);assert.equal(all.meshes.some(m=>m.userData.face==='floor'),false);all.dispose();noRoof.dispose()
 })
 console.log(`${count} total geometry, movement and exterior renderer checks passed`)
+
+check('one exterior transaction spans touching rooms and preserves disjoint faces atomically',()=>{
+ const {paintExteriorStroke,exteriorMeshesTouch}=model('ship-exterior-paint'),renderer=model('ship-surface-renderer'),p=instantiateTemplate('fighter'),d=p.decks[0]
+ p.decks=[d];p.parts=[];p.connections=[];d.marks=[];d.rooms=Array.from({length:3},(_,i)=>({...d.rooms[0],id:'stripe-'+i,x:3,y:3+i*3,width:5,height:3}))
+ const options={deckId:d.id,mode:'exterior',roofs:true,allDecks:false,separated:false,forceSurfaces:true},scene=renderer.createSurfaceMeshes(p,options,false),roofs=scene.meshes.filter(m=>m.userData.face==='roof')
+ assert.equal(exteriorMeshesTouch(roofs[0],roofs[1]),true);assert.equal(exteriorMeshesTouch(roofs[0],roofs[2]),false)
+ const edits=roofs.map(m=>({q:m.userData.surface,tiles:[{x:2,y:2},{x:3,y:2}]})),next=paintExteriorStroke(p,edits,'#ff0000')
+ assert.equal(next.surface_design.surfaces.length,3);assert.equal(p.surface_design,undefined);assert.equal(validatePlan(next),null)
+ const cleared=paintExteriorStroke(next,edits,null);assert.ok(cleared.surface_design.surfaces.every(s=>s.paint.runs.length===0));scene.dispose()
+})
+console.log(`${count} checks including multiroom stroke transactions passed`)
+
+check('live stroke never joins detached roofs or paints through a first-hit occluder',()=>{
+ const {attachExteriorPaint}=model('ship-exterior-paint'),renderer=model('ship-surface-renderer'),p=instantiateTemplate('fighter'),d=p.decks[0]
+ p.decks=[d];p.parts=[];p.connections=[];d.marks=[];d.rooms=[3,6,12].map((y,i)=>({...d.rooms[0],id:'visible-'+i,x:3,y,width:4,height:3}))
+ const surfaces=renderer.createSurfaceMeshes(p,{deckId:d.id,mode:'exterior',roofs:true,allDecks:false,separated:false,forceSurfaces:true},false),roofs=surfaces.meshes.filter(m=>m.userData.face==='roof'),scene=new THREE.Scene(),camera=new THREE.OrthographicCamera(-10,10,10,-10,.1,100)
+ camera.position.set(7,30,9);camera.up.set(0,0,-1);camera.lookAt(7,0,9);camera.updateMatrixWorld();scene.add(...surfaces.meshes);scene.updateMatrixWorld(true)
+ let canvas=new EventTarget();canvas.dataset={};canvas.getBoundingClientRect=()=>({left:0,top:0,right:1000,bottom:1000,width:1000,height:1000});let capture=false;canvas.setPointerCapture=()=>capture=true;canvas.hasPointerCapture=()=>capture;canvas.releasePointerCapture=()=>capture=false
+ const previous=globalThis.window;globalThis.window=new EventTarget();let commits=[]
+ const center=m=>{const attr=m.geometry.getAttribute('position'),v=new THREE.Vector3();for(let i=0;i<4;i++)v.add(new THREE.Vector3().fromBufferAttribute(attr,i));return v.multiplyScalar(.25)}
+ const pos=m=>{const v=center(m).project(camera);return {clientX:(v.x+1)*500,clientY:(1-v.y)*500}}
+ const send=(type,m)=>{const e=new Event(type);Object.assign(e,{button:0,pointerId:1,...pos(m)});canvas.dispatchEvent(e)}
+ let stop
+ try{
+  stop=attachExteriorPaint({canvas,camera,scene,objects:surfaces.meshes,size:1,color:'#ff0000',erase:false,underside:true,onCommit:s=>commits.push(s),onMessage:()=>{},render:()=>{}})
+  send('pointerdown',roofs[0]);send('pointermove',roofs[1]);assert.ok(Number(canvas.dataset.livePaintTiles)>5);assert.equal(commits.length,0);send('pointermove',roofs[2]);send('pointerup',roofs[2]);assert.equal(commits.length,1);assert.deepEqual([...new Set(commits[0].map(s=>s.q.roomId))].sort(),['visible-0','visible-1'])
+  stop();commits=[]
+  const oldCanvas=canvas;canvas=new EventTarget();canvas.dataset={};for(const name of ['getBoundingClientRect','setPointerCapture','hasPointerCapture','releasePointerCapture'])canvas[name]=oldCanvas[name]
+  const block=new THREE.Mesh(new THREE.BoxGeometry(5,1,5),new THREE.MeshBasicMaterial());block.position.copy(center(roofs[0])).add(new THREE.Vector3(0,1,0));scene.add(block);scene.updateMatrixWorld(true)
+  stop=attachExteriorPaint({canvas,camera,scene,objects:[...surfaces.meshes,block],size:3,color:'#ff0000',erase:false,underside:true,onCommit:s=>commits.push(s),onMessage:()=>{},render:()=>{}})
+  send('pointerdown',roofs[0]);send('pointerup',roofs[0]);assert.equal(commits.length,0);block.geometry.dispose();block.material.dispose()
+ }finally{stop?.();surfaces.dispose();globalThis.window=previous}
+})
+console.log(`${count} checks including live occlusion and disconnected stroke boundaries passed`)

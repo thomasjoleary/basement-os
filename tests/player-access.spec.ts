@@ -233,8 +233,8 @@ test.describe('Player character sheet access', () => {
 
   test('approved underside rollout enables real capability probe and synthetic paint save reload', async ({ page }) => {
     test.setTimeout(90000)
-    // Pin activation verification to the exact UI approved before the migration.
-    const target = 'https://basement-h9ck7dr4c-thomas-olearys-projects.vercel.app'
+    // Verify the exact deployment selected by CI; all ship edits stay intercepted.
+    const target = BASE_URL
     const fixtureId = '20000000-0000-0000-0000-000000000091'
     const plan = instantiateTemplate('freighter'), deck = plan.decks[0]
     plan.decks = [deck]; deck.rooms = [{ ...deck.rooms[0], x: 4, y: 4, width: 6, height: 6 }]
@@ -282,7 +282,9 @@ test.describe('Player character sheet access', () => {
       }
       throw new Error('No actual underside ray hit')
     }
-    const at = await underside(); await page.mouse.click(at.x,at.y)
+    const at = await underside(); await page.mouse.move(at.x,at.y); await page.mouse.down()
+    await expect.poll(async () => Number(await canvas.getAttribute('data-live-paint-tiles'))).toBeGreaterThan(0)
+    await page.mouse.up()
     await page.getByRole('button', { name: 'Undo map edit' }).click()
     await expect(page.getByRole('button', { name: 'Save ship', exact: true })).toBeDisabled()
     await page.getByRole('button', { name: 'Redo map edit' }).click()
@@ -295,7 +297,7 @@ test.describe('Player character sheet access', () => {
     await underside()
     await expect(page.getByRole('button', { name: 'Save ship', exact: true })).toBeDisabled()
     expect({ saves, blockedWrites, errors }).toEqual({ saves: 1, blockedWrites: 0, errors: 0 })
-    console.log('::notice title=Underside activation::Exact 4e3a57d preview: live authenticated capability probe passed; real underside hit, red paint, undo/redo, intercepted save/reload passed. Zero campaign writes; synthetic GM UI only; existing account unchanged.')
+    console.log('::notice title=Underside activation::Exact CI preview: live authenticated capability probe passed; real underside hit, live paint before release, red paint, undo/redo, intercepted save/reload passed. Zero campaign writes; synthetic GM UI only; existing account unchanged.')
   })
 
   test.describe('Live ship schema smoke', () => {
@@ -328,7 +330,7 @@ test.describe('Player character sheet access', () => {
         expect(Array.isArray(rows)).toBe(true)
         assignedShip = typeof rows[0]?.id === 'string' ? rows[0].id : undefined
         await expect(page.getByRole('heading', { name: 'Ships', exact: true })).toBeVisible()
-        await expect(page.getByText('Loading ships…', { exact: true })).toHaveCount(0)
+        await expect(page.getByText('Loading shipsâ€¦', { exact: true })).toHaveCount(0)
         await expect(page.locator('main').getByRole('alert')).toHaveCount(0)
         await expect(page.getByRole('button', { name: 'New ship', exact: true })).toHaveCount(0)
       }

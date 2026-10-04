@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
-import {attachExteriorPaint,paintExterior} from '@/lib/ship-exterior-paint'
+import {attachExteriorPaint,paintExteriorStroke} from '@/lib/ship-exterior-paint'
 import {supabase} from '@/lib/supabase'
 import {sceneGeometry} from '@/lib/ship-geometry'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
@@ -102,7 +102,7 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
       if(hit?.object.userData.face)latest.current.onSurface?.(hit.object.userData.face)
       latest.current.onSelect(item?.selection??null,item?.deckId)
     }
-    const stopPainting=painting?attachExteriorPaint({canvas,camera,scene,objects:[...meshes,...surfaces.meshes],size:brushSize,color:paintColor,erase:paintTool==='erase',underside:undersideReady,onCommit:(q,tiles,color)=>{try{const next=paintExterior(plan,q,tiles,color);latest.current.onChange?.(next);setPaintMessage('')}catch(error){setPaintMessage((error as Error).message)}},onMessage:setPaintMessage,render:requestRender}):()=>{}
+    const stopPainting=painting?attachExteriorPaint({canvas,camera,scene,objects:[...meshes,...surfaces.meshes],size:brushSize,color:paintColor,erase:paintTool==='erase',underside:undersideReady,onCommit:(stroke,color)=>{try{const next=paintExteriorStroke(plan,stroke,color);latest.current.onChange?.(next);setPaintMessage('')}catch(error){setPaintMessage((error as Error).message)}},onMessage:setPaintMessage,render:requestRender}):()=>{}
     function lost(e:Event){e.preventDefault();setFailure(true)}
     canvas.addEventListener('pointerdown',down);canvas.addEventListener('pointermove',move);canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',cancel);canvas.addEventListener('lostpointercapture',cancel);canvas.addEventListener('webglcontextlost',lost)
     return()=>{stopPainting();cameraMemory.current={key,position:camera.position.clone(),target:controls.target.clone(),zoom:camera.zoom};disposed=true;cancelAnimationFrame(frame);actions.current=null;observer.disconnect();controls.dispose();canvas.removeEventListener('webglcontextlost',lost);surfaces.dispose();surfaceNotice.remove();renderer.dispose();renderer.forceContextLoss();geometries.forEach(g=>g.dispose());material.dispose();glowMaterial.dispose();hullMaterial.dispose();meshes.forEach(m=>m.dispose());canvas.remove();labels.forEach(l=>l.element.remove())}
