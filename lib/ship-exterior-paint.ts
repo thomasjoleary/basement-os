@@ -54,20 +54,22 @@ function surfaceCoordinates(mesh:THREE.Mesh,point:THREE.Vector3){
 
 // The first ray hit remains authoritative. Live geometry is a disposable stroke
 // preview; finishing the stroke commits one atomic edit to the document/history.
-export function attachExteriorPaint({canvas,camera,scene,objects,size,color,erase,underside,onCommit,onMessage,render,onOrbit}:{canvas:HTMLCanvasElement;camera:THREE.Camera;scene:THREE.Scene;objects:THREE.Object3D[];size:number;color:string;erase:boolean;underside:boolean;onCommit:(stroke:ExteriorStroke,color:string|null)=>void;onMessage:(s:string)=>void;render:()=>void;onOrbit?:(dx:number,dy:number)=>void}){
- const ray=new THREE.Raycaster(),pointer=new THREE.Vector2(),preview=new THREE.Group(),live=new THREE.Group();scene.add(preview,live)
+export function attachExteriorPaint({canvas,camera,scene,objects,size,color,erase,underside,onCommit,onMessage,render,onOrbit,onGesture}:{canvas:HTMLCanvasElement;camera:THREE.Camera;scene:THREE.Scene;objects:THREE.Object3D[];size:number;color:string;erase:boolean;underside:boolean;onCommit:(stroke:ExteriorStroke,color:string|null)=>boolean|void;onMessage:(s:string)=>void;render:()=>void;onOrbit?:(dx:number,dy:number)=>void;onGesture?:(active:boolean)=>void}){
+ const ray=new THREE.Raycaster(),pointer=new THREE.Vector2(),preview=new THREE.Group(),live=new THREE.Group(),settled=new THREE.Group();scene.add(preview,live,settled)
  type Entry={q:SurfaceQuad;mesh:THREE.Mesh;tiles:Map<number,FootTile>;overlay?:THREE.Mesh;dirty:boolean}
  type Pick={mesh:THREE.Mesh;q:SurfaceQuad;at:FootTile}
- let drag:{id:number;entries:Map<THREE.Mesh,Entry>;last:Pick|null;x:number;y:number;count:number;resume:boolean;held:boolean}|null=null
- let alt=false
+ let drag:{id:number;entries:Map<THREE.Mesh,Entry>;last:Pick|null;x:number;y:number;count:number}|null=null
+ const committed=new Map<THREE.Mesh,Entry>()
+ let alt=false,pointerState:{id:number;x:number;y:number}|null=null
  const hulls=objects.filter((o):o is THREE.Mesh=>o instanceof THREE.Mesh&&!!o.userData.surface?.hull),bounds=new Map(hulls.map(m=>[m,new THREE.Box3().setFromObject(m).expandByScalar(EDGE_EPS)])),adjacency=new Map<THREE.Mesh,THREE.Mesh[]>()
  function adjacent(mesh:THREE.Mesh){if(!adjacency.has(mesh))adjacency.set(mesh,hulls.filter(m=>m!==mesh&&bounds.get(mesh)!.intersectsBox(bounds.get(m)!)&&touching(mesh,m)));return adjacency.get(mesh)!}
  function seamConnected(a:THREE.Mesh,b:THREE.Mesh){if(touching(a,b))return true;const seen=new Set([a]),queue=[{mesh:a,depth:0}];for(const {mesh,depth} of queue){if(depth>=4)continue;for(const n of adjacent(mesh)){if(n===b)return true;if(n.userData.surface.cap&&!seen.has(n)){seen.add(n);queue.push({mesh:n,depth:depth+1})}}}return false}
- function connected(a:THREE.Mesh,b:THREE.Mesh){const seen=new Set([a]),queue=[a];for(const m of queue){if(m===b)return true;for(const n of adjacent(m))if(!seen.has(n)){seen.add(n);queue.push(n)}}return false}
+
  const visibility=new Map<THREE.Mesh,Map<number,boolean>>(),neighbors=new Map<string,boolean>()
  function touching(a:THREE.Mesh,b:THREE.Mesh){const key=[a.id,b.id].sort().join(':');if(!neighbors.has(key))neighbors.set(key,exteriorMeshesTouch(a,b));return neighbors.get(key)!}
  function clear(group:THREE.Group){for(const child of [...group.children]){const m=child as THREE.Mesh;m.geometry.dispose();(m.material as THREE.Material).dispose();group.remove(m)}}
- function cancel(){const id=drag?.id;drag=null;clear(preview);clear(live);visibility.clear();delete canvas.dataset.paintFace;delete canvas.dataset.paintRoom;delete canvas.dataset.paintDeck;delete canvas.dataset.paintCap;delete canvas.dataset.paintOrbit;delete canvas.dataset.paintPaused;delete canvas.dataset.brushTiles;delete canvas.dataset.livePaintTiles;delete canvas.dataset.livePaintSurfaces;if(id!==undefined&&canvas.hasPointerCapture(id))canvas.releasePointerCapture(id);render()}
+ function cancel(){const id=pointerState?.id;pointerState=null;drag=null;clear(preview);clear(live);clear(settled);committed.clear();visibility.clear();delete canvas.dataset.paintFace;delete canvas.dataset.paintRoom;delete canvas.dataset.paintDeck;delete canvas.dataset.paintCap;delete canvas.dataset.paintOrbit;delete canvas.dataset.livePaintTiles;delete canvas.dataset.livePaintSurfaces;if(id!==undefined&&canvas.hasPointerCapture(id))canvas.releasePointerCapture(id);if(id!==undefined)onGesture?.(false);render()}
+
  function hit(x:number,y:number){const rect=canvas.getBoundingClientRect();if(x<rect.left||y<rect.top||x>rect.right||y>rect.bottom)return null;pointer.set((x-rect.left)/rect.width*2-1,1-(y-rect.top)/rect.height*2);ray.setFromCamera(pointer,camera);const h=ray.intersectObjects(objects,false)[0],q=h?.object.userData.surface as SurfaceQuad|undefined;return h&&h.uv&&q?.hull?{h,q}:null}
  function point(mesh:THREE.Mesh,q:SurfaceQuad,x:number,y:number){const p=mesh.geometry.getAttribute('position'),a=new THREE.Vector3().fromBufferAttribute(p,0),b=new THREE.Vector3().fromBufferAttribute(p,1),c=new THREE.Vector3().fromBufferAttribute(p,2),d=new THREE.Vector3().fromBufferAttribute(p,3);const u=(x-q.uOffset)/q.width,v=(y-(q.vOffset??0))/q.height;return v<=u?a.addScaledVector(b.clone().sub(a),u).addScaledVector(c.sub(b),v):a.addScaledVector(d.clone().sub(a),v).addScaledVector(c.sub(d),u)}
  function projectedHit(p:THREE.Vector3){const center=p.clone().project(camera),r=canvas.getBoundingClientRect();return hit(r.left+(center.x+1)*r.width/2,r.top+(1-center.y)*r.height/2)}
@@ -110,31 +112,32 @@ export function attachExteriorPaint({canvas,camera,scene,objects,size,color,eras
   const picked=hit(x,y);if(!picked){delete canvas.dataset.paintFace;return null}
   if(picked.q.face==='underside'&&!underside){onMessage('Underside painting needs the reviewed underside migration. Other exterior faces remain available.');return null}
   const next=local(picked),last=drag?.last
-  if(record&&last&&last.mesh!==next.mesh&&!(drag?.resume?connected(last.mesh,next.mesh):seamConnected(last.mesh,next.mesh)))return null
-  if(record&&drag?.resume){drag.resume=false;drag.last=null;brush(next,true);if(drag)drag.last=next;return next}
+  if(record&&last&&last.mesh!==next.mesh&&!seamConnected(last.mesh,next.mesh))return null
   if(record&&last?.mesh===next.mesh&&last.at.x===next.at.x&&last.at.y===next.at.y)return next
   if(record&&last?.mesh===next.mesh){for(const at of strokeTiles(last.at,next.at))if(!brush({...next,at},true))return null}
   else if(!brush(next,record))return null
   if(record&&drag)drag.last=next;return next
  }
- function down(e:PointerEvent){if(e.button!==0)return;e.preventDefault();e.stopImmediatePropagation();if(drag?.held){cancel();return}canvas.focus?.({preventScroll:true});clear(preview);visibility.clear();alt=e.altKey
-  if(drag){drag.id=e.pointerId;drag.held=true;drag.resume=true;drag.x=e.clientX;drag.y=e.clientY;delete canvas.dataset.paintPaused;onMessage('');canvas.setPointerCapture(e.pointerId);if(!alt)sample(e.clientX,e.clientY,true);flush();return}
-  const picked=alt?null:sample(e.clientX,e.clientY,false);if(!picked&&!alt){render();return}clear(preview);drag={id:e.pointerId,entries:new Map(),last:null,x:e.clientX,y:e.clientY,count:0,resume:false,held:true};canvas.setPointerCapture(e.pointerId);if(!alt)sample(e.clientX,e.clientY,true);flush()
+ function begin(x:number,y:number){if(!pointerState)return;drag={id:pointerState.id,entries:new Map(),last:null,x,y,count:0};sample(x,y,true);flush()}
+ function finishStroke(){const stroke=drag;if(!stroke)return;drag=null;clear(preview);const edits=[...stroke.entries.values()].map(s=>({q:s.q,tiles:[...s.tiles.values()]}));const accepted=edits.length&&onCommit(edits,erase?null:color)!==false
+  if(accepted)for(const [mesh,entry] of stroke.entries){const prior=committed.get(mesh);if(prior){for(const [id,tile] of entry.tiles)prior.tiles.set(id,tile);if(prior.overlay){prior.overlay.geometry.dispose();prior.overlay.geometry=geometry(mesh,prior.q,prior.tiles.values())}}else{committed.set(mesh,entry);if(entry.overlay)settled.add(entry.overlay)}}
+  clear(live);delete canvas.dataset.livePaintTiles;delete canvas.dataset.livePaintSurfaces
+  if([...committed.values()].reduce((n,e)=>n+e.tiles.size,0)>50000){cancel();onMessage('Paint saved to the edit history. Start another drag to continue.')}render()
  }
- function move(e:PointerEvent){e.stopImmediatePropagation();clear(preview);if(!drag?.held){visibility.clear();sample(e.clientX,e.clientY,false);render();return}if(drag.id!==e.pointerId)return
-  if(e.altKey||alt){onOrbit?.(e.clientX-drag.x,e.clientY-drag.y);visibility.clear();drag.resume=true;drag.x=e.clientX;drag.y=e.clientY;canvas.dataset.paintOrbit='true';render();return}
+
+ function down(e:PointerEvent){if(e.button!==0)return;e.preventDefault();e.stopImmediatePropagation();if(pointerState){cancel();return}canvas.focus?.({preventScroll:true});clear(preview);visibility.clear();alt=e.altKey;pointerState={id:e.pointerId,x:e.clientX,y:e.clientY};onGesture?.(true);canvas.setPointerCapture(e.pointerId);if(!alt)begin(e.clientX,e.clientY)}
+ function move(e:PointerEvent){e.stopImmediatePropagation();clear(preview)
+  if(!pointerState){visibility.clear();if(!e.altKey&&!alt)sample(e.clientX,e.clientY,false);render();return}if(pointerState.id!==e.pointerId)return
+  const previous={x:pointerState.x,y:pointerState.y};pointerState.x=e.clientX;pointerState.y=e.clientY
+  if(e.altKey||alt){finishStroke();if(!pointerState)return;onOrbit?.(e.clientX-previous.x,e.clientY-previous.y);visibility.clear();canvas.dataset.paintOrbit='true';render();return}
   delete canvas.dataset.paintOrbit
-  const start={x:drag.x,y:drag.y},steps=drag.resume?1:Math.max(1,Math.ceil(Math.hypot(e.clientX-start.x,e.clientY-start.y)));if(steps>4096){cancel();onMessage('Pointer moved beyond the paint view; start a new stroke.');return}for(let i=1;i<=steps&&drag;i++)sample(start.x+(e.clientX-start.x)*i/steps,start.y+(e.clientY-start.y)*i/steps,true);if(drag){drag.x=e.clientX;drag.y=e.clientY}flush()
+  if(!drag){begin(e.clientX,e.clientY);return}
+  const start={x:drag.x,y:drag.y},steps=Math.max(1,Math.ceil(Math.hypot(e.clientX-start.x,e.clientY-start.y)));if(steps>4096){cancel();onMessage('Pointer moved beyond the paint view; start a new stroke.');return}for(let i=1;i<=steps&&drag;i++)sample(start.x+(e.clientX-start.x)*i/steps,start.y+(e.clientY-start.y)*i/steps,true);if(drag){drag.x=e.clientX;drag.y=e.clientY}flush()
  }
- function finish(){const stroke=drag;if(!stroke)return;onMessage('');const edits=[...stroke.entries.values()].map(s=>({q:s.q,tiles:[...s.tiles.values()]}));cancel();if(edits.length)onCommit(edits,erase?null:color)}
- function up(e:PointerEvent){e.stopImmediatePropagation();if(!drag?.held||drag.id!==e.pointerId)return
-  if(alt||e.altKey){drag.held=false;drag.resume=true;canvas.dataset.paintPaused='true';if(canvas.hasPointerCapture(e.pointerId))canvas.releasePointerCapture(e.pointerId);onMessage('Stroke paused. Click visible connected hull to continue, Enter to finish, or Esc to cancel.');render();return}finish()
- }
- function key(e:KeyboardEvent){if(e.key==='Escape'){cancel();onMessage('')};if(e.key==='Enter'&&drag&&!drag.held&&document.activeElement===canvas){e.preventDefault();finish()};if(e.key==='Alt'&&drag&&(drag.held||document.activeElement===canvas)){e.preventDefault();alt=e.type==='keydown';visibility.clear();drag.resume=true}}
- function leave(){if(drag&&!drag.held){clear(preview);render();return}cancel()}
- function lostCapture(){if(drag?.held)cancel()}
+ function up(e:PointerEvent){e.stopImmediatePropagation();if(pointerState?.id!==e.pointerId)return;finishStroke();cancel()}
+ function key(e:KeyboardEvent){if(e.key==='Escape'){cancel();onMessage('')}if(e.key==='Alt'&&(pointerState||document.activeElement===canvas)){e.preventDefault();alt=e.type==='keydown';if(alt)finishStroke();visibility.clear();clear(preview);render()}}
  function pointerCancelled(){cancel();onMessage('')}
  function blur(){alt=false;pointerCancelled()}
- canvas.addEventListener('pointerdown',down,true);canvas.addEventListener('pointermove',move,true);canvas.addEventListener('pointerup',up,true);canvas.addEventListener('pointercancel',pointerCancelled);canvas.addEventListener('lostpointercapture',lostCapture);canvas.addEventListener('pointerleave',leave);window.addEventListener('keydown',key);window.addEventListener('keyup',key);window.addEventListener('blur',blur)
- return()=>{cancel();scene.remove(preview,live);canvas.removeEventListener('pointerdown',down,true);canvas.removeEventListener('pointermove',move,true);canvas.removeEventListener('pointerup',up,true);canvas.removeEventListener('pointercancel',pointerCancelled);canvas.removeEventListener('lostpointercapture',lostCapture);canvas.removeEventListener('pointerleave',leave);window.removeEventListener('keydown',key);window.removeEventListener('keyup',key);window.removeEventListener('blur',blur)}
+ canvas.addEventListener('pointerdown',down,true);canvas.addEventListener('pointermove',move,true);canvas.addEventListener('pointerup',up,true);canvas.addEventListener('pointercancel',pointerCancelled);canvas.addEventListener('lostpointercapture',pointerCancelled);canvas.addEventListener('pointerleave',pointerCancelled);window.addEventListener('keydown',key);window.addEventListener('keyup',key);window.addEventListener('blur',blur)
+ return()=>{cancel();scene.remove(preview,live,settled);canvas.removeEventListener('pointerdown',down,true);canvas.removeEventListener('pointermove',move,true);canvas.removeEventListener('pointerup',up,true);canvas.removeEventListener('pointercancel',pointerCancelled);canvas.removeEventListener('lostpointercapture',pointerCancelled);canvas.removeEventListener('pointerleave',pointerCancelled);window.removeEventListener('keydown',key);window.removeEventListener('keyup',key);window.removeEventListener('blur',blur)}
 }

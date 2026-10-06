@@ -14,7 +14,9 @@ type Props = { editable?:boolean; onChange?:(plan:ShipPlan)=>void; plan: ShipPla
 export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, onFallback, onSurface, editable=false, onChange }: Props) {
   const host = useRef<HTMLDivElement>(null)
   const actions = useRef<{ reset: () => void; zoom: (factor: number) => void; highlight: () => void; underside:()=>void } | null>(null)
-  const latest = useRef({ selection, onSelect, onSurface, onChange })
+  const latest = useRef({ selection, onSelect, onSurface, onChange, plan })
+  const [gesturePlan,setGesturePlan]=useState<ShipPlan|null>(null)
+  const scenePlan=gesturePlan??plan
   const [paintTool,setPaintTool]=useState<'orbit'|'brush'|'erase'>('orbit'),[brushSize,setBrushSize]=useState(1),[paintColor,setPaintColor]=useState('#ef4444'),[paintMessage,setPaintMessage]=useState(''),[undersideReady,setUndersideReady]=useState(false)
   useEffect(()=>{if(!editable||mode!=='exterior')return;let active=true;void supabase.rpc('v2_ship_check_surfaces',{p:{decks:[{id:'probe-deck',rooms:[{id:'probe-room'}]}],parts:[],surface_design:{surfaces:[{id:'probe-face',deck_id:'probe-deck',room_id:'probe-room',face:'underside',paint:{palette:[],runs:[]}}],sections:[],components:[]}}}).then(({error})=>{if(active)setUndersideReady(!error)});return()=>{active=false}},[editable,mode])
   const cameraMemory = useRef<{ key: string; position: THREE.Vector3; target: THREE.Vector3; zoom: number } | null>(null)
@@ -24,8 +26,8 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
   const visibleDeckCount = allDecks ? plan.decks.filter(d => !hiddenDeckIds.includes(d.id)).length : 1
   const separated = explodeRequested && visibleDeckCount > 1
   const [failure, setFailure] = useState(false)
-  const sceneData = useMemo(() => buildShipScene(plan, { deckId, mode, roofs, allDecks, separated, hiddenDeckIds, forceSurfaces:mode==='exterior' }), [plan, deckId, mode, roofs, allDecks, separated, hiddenDeckIds])
-  useEffect(() => { latest.current = { selection, onSelect, onSurface, onChange }; actions.current?.highlight() }, [selection, onSelect, onSurface, onChange])
+  const sceneData = useMemo(() => buildShipScene(scenePlan, { deckId, mode, roofs, allDecks, separated, hiddenDeckIds, forceSurfaces:mode==='exterior' }), [scenePlan, deckId, mode, roofs, allDecks, separated, hiddenDeckIds])
+  useEffect(() => { latest.current = { selection, onSelect, onSurface, onChange, plan }; actions.current?.highlight() }, [selection, onSelect, onSurface, onChange, plan])
   useEffect(() => {
     const container = host.current!
     let renderer: THREE.WebGLRenderer
@@ -48,7 +50,7 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
     const grouped = new Map<string,SceneItem[]>()
     for(const item of sceneData.items) { const key=(item.shape??'box')+(item.glow?':glow':'')+(item.hull?':hull':''); if(!grouped.has(key))grouped.set(key,[]); grouped.get(key)!.push(item) }
     const material = new THREE.MeshStandardMaterial({ roughness:.56, metalness:mode==='exterior'?.48:.15 })
-    const glowMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: shipAppearance(plan).engine_color, emissiveIntensity: 1.4, roughness: .35 })
+    const glowMaterial = new THREE.MeshStandardMaterial({ color: '#ffffff', emissive: shipAppearance(scenePlan).engine_color, emissiveIntensity: 1.4, roughness: .35 })
     const hullMaterial = material.clone(); hullMaterial.transparent = transparentHull; hullMaterial.opacity = transparentHull ? .18 : 1; hullMaterial.depthWrite = !transparentHull
     const meshes: THREE.InstancedMesh[] = []
     const matrix=new THREE.Matrix4(), quaternion=new THREE.Quaternion(), position=new THREE.Vector3(), scale=new THREE.Vector3()
@@ -57,7 +59,7 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
       items.forEach((item,i)=>{matrix.compose(position.fromArray(item.at),quaternion,scale.fromArray(item.size));mesh.setMatrixAt(i,matrix);mesh.setColorAt(i,new THREE.Color(item.color))})
       mesh.userData.items=items;mesh.userData.hull=shape.includes(':hull'); mesh.computeBoundingSphere(); scene.add(mesh); meshes.push(mesh)
     }
-    const surfaces=createSurfaceMeshes(plan,{deckId,mode,roofs,allDecks,separated,hiddenDeckIds,forceSurfaces:mode==='exterior'},transparentHull)
+    const surfaces=createSurfaceMeshes(scenePlan,{deckId,mode,roofs,allDecks,separated,hiddenDeckIds,forceSurfaces:mode==='exterior'},transparentHull)
     surfaces.meshes.forEach(mesh=>scene.add(mesh))
     const surfaceNotice=document.createElement('span');surfaceNotice.className='absolute bottom-2 left-2 text-xs text-amber-200 bg-gray-950 p-1';surfaceNotice.textContent='Surface detail limit reached. Select a single deck to inspect paint.';surfaceNotice.hidden=!surfaces.omitted;container.appendChild(surfaceNotice)
     const bounds=new THREE.Box3()
@@ -71,7 +73,7 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
     controls.target.copy(center)
     let disposed=false, frame=0
     const labels: { element: HTMLSpanElement; point: THREE.Vector3 }[]=[]
-    if(mode==='cutaway' && !roofs && !allDecks) for(const room of (plan.decks.find(d=>d.id===deckId)?.rooms??[]).slice(0,24)) {
+    if(mode==='cutaway' && !roofs && !allDecks) for(const room of (scenePlan.decks.find(d=>d.id===deckId)?.rooms??[]).slice(0,24)) {
       const element=document.createElement('span');element.textContent=room.name;element.className='pointer-events-none absolute text-[10px] text-slate-200 bg-slate-950/80 rounded px-1 max-w-28 truncate'
       container.appendChild(element);labels.push({element,point:new THREE.Vector3(room.x+room.width/2,.08,room.y+room.height/2)})
     }
@@ -102,11 +104,11 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
       if(hit?.object.userData.face)latest.current.onSurface?.(hit.object.userData.face)
       latest.current.onSelect(item?.selection??null,item?.deckId)
     }
-    const stopPainting=painting?attachExteriorPaint({canvas,camera,scene,objects:[...meshes,...surfaces.meshes],size:brushSize,color:paintColor,erase:paintTool==='erase',underside:undersideReady,onCommit:(stroke,color)=>{try{const next=paintExteriorStroke(plan,stroke,color);latest.current.onChange?.(next);setPaintMessage('')}catch(error){setPaintMessage((error as Error).message)}},onMessage:setPaintMessage,render:requestRender,onOrbit:(dx,dy)=>{const spherical=new THREE.Spherical().setFromVector3(camera.position.clone().sub(controls.target));spherical.theta-=dx*.006;spherical.phi=Math.max(.01,Math.min(Math.PI-.01,spherical.phi+dy*.006));camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(spherical));controls.update();camera.updateMatrixWorld();requestRender()}}):()=>{}
+    const stopPainting=painting?attachExteriorPaint({canvas,camera,scene,objects:[...meshes,...surfaces.meshes],size:brushSize,color:paintColor,erase:paintTool==='erase',underside:undersideReady,onCommit:(stroke,color)=>{try{const next=paintExteriorStroke(latest.current.plan,stroke,color);if(next===latest.current.plan)return false;latest.current.plan=next;latest.current.onChange?.(next);setPaintMessage('');return true}catch(error){setPaintMessage((error as Error).message);return false}},onMessage:setPaintMessage,render:requestRender,onGesture:(active)=>setGesturePlan(active?latest.current.plan:null),onOrbit:(dx,dy)=>{const spherical=new THREE.Spherical().setFromVector3(camera.position.clone().sub(controls.target));spherical.theta-=dx*.006;spherical.phi=Math.max(.01,Math.min(Math.PI-.01,spherical.phi+dy*.006));camera.position.copy(controls.target).add(new THREE.Vector3().setFromSpherical(spherical));controls.update();camera.updateMatrixWorld();requestRender()}}):()=>{}
     function lost(e:Event){e.preventDefault();setFailure(true)}
     canvas.addEventListener('pointerdown',down);canvas.addEventListener('pointermove',move);canvas.addEventListener('pointerup',up);canvas.addEventListener('pointercancel',cancel);canvas.addEventListener('lostpointercapture',cancel);canvas.addEventListener('webglcontextlost',lost)
     return()=>{stopPainting();cameraMemory.current={key,position:camera.position.clone(),target:controls.target.clone(),zoom:camera.zoom};disposed=true;cancelAnimationFrame(frame);actions.current=null;observer.disconnect();controls.dispose();canvas.removeEventListener('webglcontextlost',lost);surfaces.dispose();surfaceNotice.remove();renderer.dispose();renderer.forceContextLoss();geometries.forEach(g=>g.dispose());material.dispose();glowMaterial.dispose();hullMaterial.dispose();meshes.forEach(m=>m.dispose());canvas.remove();labels.forEach(l=>l.element.remove())}
-  },[sceneData,plan,deckId,mode,roofs,allDecks,separated,transparentHull,hiddenDeckIds,painting,paintTool,brushSize,paintColor,undersideReady])
+  },[sceneData,scenePlan,deckId,mode,roofs,allDecks,separated,transparentHull,hiddenDeckIds,painting,paintTool,brushSize,paintColor,undersideReady])
   return <section className="min-w-0 rounded-xl border border-gray-700 bg-gray-950 overflow-hidden" aria-label="3D ship viewer">
     <div className="flex flex-wrap gap-3 items-center p-3 text-sm border-b border-gray-700">
       <button onClick={()=>actions.current?.reset()}>Reset view</button>{mode==='exterior'&&<button onClick={()=>actions.current?.underside()}>View underside</button>}<button aria-label="Zoom 3D out" onClick={()=>actions.current?.zoom(.8)}>-</button><button aria-label="Zoom 3D in" onClick={()=>actions.current?.zoom(1.25)}>+</button>
@@ -119,7 +121,7 @@ export default function ShipViewer3D({ plan, deckId, mode, selection, onSelect, 
       {(['orbit','brush','erase'] as const).map(t=><button key={t} aria-pressed={paintTool===t} disabled={transparentHull&&t!=='orbit'} onClick={()=>{setPaintTool(t);setPaintMessage('')}} className={`rounded border px-3 py-2 ${paintTool===t?'border-cyan-400 bg-cyan-950':'border-gray-600'}`}>{t==='orbit'?'Orbit':t==='brush'?'Paint exterior':'Erase exterior'}</button>)}
       <label>Brush size <input aria-label="Exterior brush size" type="number" min="1" max="20" value={brushSize} onChange={e=>setBrushSize(Math.min(20,Math.max(1,Number(e.target.value)||1)))} className="w-16 bg-gray-900 border border-gray-600 p-1"/> ft</label>
       <label>Color <input aria-label="Exterior paint color" type="color" value={paintColor} onChange={e=>setPaintColor(e.target.value)}/></label>
-      <span className="text-xs text-gray-400">{transparentHull?'Disable Transparent hull to paint.':painting?'Drag to paint. Alt-drag orbits without paint. Release the mouse with Alt held to pause; click to resume. Enter finishes a paused stroke; Esc cancels.':'Drag to orbit, including below the ship. Select Paint exterior to brush.'}</span>
+      <span className="text-xs text-gray-400">{transparentHull?'Disable Transparent hull to paint.':painting?'Drag to paint. Alt ends the stroke and lets you drag to rotate. Release Alt to paint a new stroke. Esc cancels the current stroke.':'Drag to orbit, including below the ship. Select Paint exterior to brush.'}</span>
       {!undersideReady&&<span className="text-xs text-amber-200">Underside paint setup pending; wall and roof painting are available.</span>}
       {paintMessage&&<span role="status" className="text-xs text-amber-200">{paintMessage}</span>}
     </div>}
