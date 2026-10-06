@@ -126,7 +126,7 @@ check('exterior nose and side fairings remain outside rooms and do not affect cu
 check('all interior assemblies including both consoles stay below every supported ceiling', () => {
   for(const height of [1,2,8,12.5,100]) for(const mode of ['cutaway','exterior']) for(const roofs of [true,false]) {
     const p=structuredClone(freighter);p.decks.forEach(d=>d.height_ft=height)
-    const elevations=deckElevations(p.decks)
+    const elevations=deckElevations(p.decks,false,mode==='exterior')
     const scene=buildShipScene(p,{deckId:p.decks[0].id,mode,roofs,allDecks:true,separated:false})
     for(const part of p.parts.filter(p=>!['Port wing','Starboard wing','Booster','Hull panel'].includes(p.type))) {
       const items=scene.items.filter(i=>i.selection?.kind==='part'&&i.selection.id===part.id)

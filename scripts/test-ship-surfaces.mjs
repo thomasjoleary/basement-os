@@ -194,3 +194,23 @@ check('live stroke never joins detached roofs or paints through a first-hit occl
  }finally{stop?.();surfaces.dispose();globalThis.window=previous}
 })
 console.log(`${count} checks including live occlusion and disconnected stroke boundaries passed`)
+
+check('assembled decks share edges, exploded decks stay detached, and brush folds round real hull corners',()=>{
+ const renderer=model('ship-surface-renderer'),{exteriorMeshesTouch,foldExteriorPoint,paintExteriorStroke}=model('ship-exterior-paint'),p=instantiateTemplate('freighter'),[a,b]=p.decks
+ p.parts=[];p.connections=[];for(const d of p.decks){d.rooms=[{...d.rooms[0],x:3,y:3,width:4,height:4}];d.marks=[];d.height_ft=10}
+ p.surface_design={surfaces:[],components:[],sections:p.decks.flatMap(d=>['front','rear','port','starboard'].map(side=>({id:crypto.randomUUID(),deck_id:d.id,room_id:d.rooms[0].id,side,extension_ft:0,slope:0,taper:0,bevel_ft:0})))}
+ const options={deckId:a.id,mode:'exterior',roofs:true,allDecks:true,separated:false,forceSurfaces:true},scene=renderer.createSurfaceMeshes(p,options,false),exploded=renderer.createSurfaceMeshes(p,{...options,separated:true},false)
+ const find=(s,id,face)=>s.meshes.find(m=>m.userData.deckId===id&&m.userData.face===face&&!m.userData.surface.cap)
+ const wall=find(scene,a.id,'exterior-starboard'),roof=find(scene,a.id,'roof'),lower=find(scene,b.id,'exterior-starboard')
+ assert.equal(exteriorMeshesTouch(wall,lower),true);assert.equal(exteriorMeshesTouch(find(exploded,a.id,'exterior-starboard'),find(exploded,b.id,'exterior-starboard')),false)
+ const folded=foldExteriorPoint(roof,wall,new THREE.Vector3(7.2,4,5));assert.ok(folded);assert.ok(folded.distanceTo(new THREE.Vector3(7,3.8,5))<1e-5)
+ const painted=paintExteriorStroke(p,[{q:wall.userData.surface,tiles:[{x:1,y:9}]},{q:lower.userData.surface,tiles:[{x:1,y:0}]},{q:roof.userData.surface,tiles:[{x:1,y:1}]}],'#ff0000');assert.equal(validatePlan(painted),null);assert.equal(painted.surface_design.surfaces.length,3)
+ scene.dispose();exploded.dispose()
+})
+check('shaped seam caps have separate bounded paint coordinates and preserve main-wall addresses',()=>{
+ const p=instantiateTemplate('fighter'),d=p.decks[0],r=d.rooms[0],quads=roomSurfaces(p,d,r)
+ for(const q of quads.filter(q=>q.cap)){assert.ok(q.vOffset>=128&&q.vOffset+q.height<1024);assert.ok(q.uOffset+q.width<1024);assert.ok(q.capSide)}
+ const wall=quads.find(q=>q.face==='exterior-front'&&!q.cap),cap=quads.find(q=>q.face==='exterior-front'&&q.capSide==='top'),next=model('ship-exterior-paint').paintExteriorStroke(p,[{q:wall,tiles:[{x:Math.ceil(wall.uOffset),y:0}]},{q:cap,tiles:[{x:Math.ceil(cap.uOffset),y:384}]}],'#ff0000')
+ assert.equal(validatePlan(next),null);const tiles=decodePaint(next.surface_design.surfaces[0].paint);assert.equal(tiles.size,2);assert.equal(tiles.get(384*1024+Math.ceil(cap.uOffset)),'#ff0000')
+})
+console.log(`${count} geometry, seam and cross-deck checks passed`)

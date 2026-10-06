@@ -49,16 +49,16 @@ export function equipmentModel(type: string, tint: string, selection: SceneSelec
   }
   return items
 }
-export function deckElevations(decks: Deck[], separated = false) {
+export function deckElevations(decks: Deck[], separated = false, assembledExterior = false) {
   const elevations = new Map<string, number>(); let y = 0
-  for (const d of [...decks].reverse()) { elevations.set(d.id, y); y += deckHeight(d) / CELL_FEET + .12 + (separated ? 2 : 0) }
+  for (const d of [...decks].reverse()) { elevations.set(d.id, y); y += deckHeight(d) / CELL_FEET + (assembledExterior ? 0 : .12) + (separated ? 2 : 0) }
   return elevations
 }
 export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
   const items: SceneItem[] = []; let omitted = 0
   const surfaceSkin=options.walkthrough||surfaceModeActive(plan,options.mode,options.forceSurfaces)
   const appearance=shipAppearance(plan), skin=(fallback:string)=>plan.appearance?.hull_color??fallback
-  const elevations = deckElevations(plan.decks, options.separated)
+  const elevations = deckElevations(plan.decks, options.separated, options.mode==='exterior')
   const offsets=openingLayout(plan).offsets
   const add = (item: SceneItem) => {if(options.allDecks){const offset=offsets.get(item.deckId)!;item={...item,at:[item.at[0]+offset.x,item.at[1],item.at[2]+offset.y]}} if (items.length < SCENE_LIMIT) items.push(item); else omitted++ }
   // Active deck first ensures large overviews retain its inspectable detail.

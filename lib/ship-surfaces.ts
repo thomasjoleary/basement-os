@@ -31,13 +31,13 @@ export function pruneSurfaces(plan:ShipPlan):ShipPlan{
   return {...plan,surface_design:{surfaces:plan.surface_design.surfaces.filter(s=>rooms.has(s.room_id)),sections:plan.surface_design.sections.filter(s=>rooms.has(s.room_id)),components:plan.surface_design.components.filter(c=>parts.has(c.part_id))}}
 }
 export type Vec3=[number,number,number]
-export type SurfaceQuad={key:string;roomId:string;deckId:string;face:SurfaceFace;vertices:[Vec3,Vec3,Vec3,Vec3];width:number;height:number;uOffset:number;vOffset?:number;hull:boolean;color:string;paint?:PaintedSurface['paint'];cap?:boolean}
+export type SurfaceQuad={key:string;roomId:string;deckId:string;face:SurfaceFace;vertices:[Vec3,Vec3,Vec3,Vec3];width:number;height:number;uOffset:number;vOffset?:number;hull:boolean;color:string;paint?:PaintedSurface['paint'];cap?:boolean;capSide?:'start'|'end'|'top'|'bottom'}
 // All coordinates here are feet, then converted by the viewer's 5 ft/cell scale.
 // Each exposed contiguous side has capped outward skin. Room space is unchanged.
 export function roomSurfaces(plan:ShipPlan,deck:Deck,room:Room):SurfaceQuad[]{
   const result:SurfaceQuad[]=[],height=deck.height_ft??8,design=plan.surface_design??EMPTY_SURFACES
   const style=(face:SurfaceFace)=>design.surfaces.find(s=>s.room_id===room.id&&s.face===face)
-  const add=(face:SurfaceFace,v:[Vec3,Vec3,Vec3,Vec3],width:number,h:number,uOffset=0,cap=false)=>{const paint=style(face),hull=face==='underside'||face==='roof'||face.startsWith('exterior');result.push({key:`${room.id}/${face}/${result.length}`,roomId:room.id,deckId:deck.id,face,vertices:v,width,height:h,uOffset,hull,color:paint?.color??(hull?plan.appearance?.hull_color??'#718397':face==='floor'?'#334e63':'#b9c8d2'),paint:cap?undefined:paint?.paint,cap})}
+  const add=(face:SurfaceFace,v:[Vec3,Vec3,Vec3,Vec3],width:number,h:number,uOffset=0,cap=false)=>{const paint=style(face),hull=face==='underside'||face==='roof'||face.startsWith('exterior');result.push({key:`${room.id}/${face}/${result.length}`,roomId:room.id,deckId:deck.id,face,vertices:v,width,height:h,uOffset,hull,color:paint?.color??(hull?plan.appearance?.hull_color??'#718397':face==='floor'?'#334e63':'#b9c8d2'),paint:paint?.paint,cap})}
   const x=room.x*5,z=room.y*5,w=room.width*5,l=room.height*5
   for(const face of ['underside','floor','roof','ceiling'] as const){const y=face==='underside'?0:face==='floor'?.02:face==='roof'?height:height-.03;for(const rect of subtractOpenings({x:room.x,y:room.y,width:room.width,height:room.height},deckHoles(plan,deck.id,face==='underside'?'floor':face))){const px=rect.x*5,pz=rect.y*5,pw=rect.width*5,ph=rect.height*5;add(face,[[px,y,pz],[px+pw,y,pz],[px+pw,y,pz+ph],[px,y,pz+ph]],pw,ph,px-x);result[result.length-1].vOffset=pz-z}}
   for(const side of ['front','rear','port','starboard'] as HullSide[]){
@@ -47,6 +47,7 @@ export function roomSurfaces(plan:ShipPlan,deck:Deck,room:Room):SurfaceQuad[]{
     const point=(at:number,y:number,offset:number):Vec3=>vertical?[edge+outward*offset,y,along+at]:[along+at,y,edge+outward*offset]
     const door=(i:number)=>deck.marks.some(m=>m.kind==='door'&&m.vertical===vertical&&(vertical?m.x*5===edge&&(room.y+i)>=m.y&&(room.y+i)<m.y+m.length:m.y*5===edge&&(room.x+i)>=m.x&&(room.x+i)<m.x+m.length))
     for(let i=0;i<span;){if(door(i)){i++;continue}const start=i;while(i<span&&!door(i))i++;add(`interior-${side}`,[point(start*5,0,-.06),point(i*5,0,-.06),point(i*5,height,-.06),point(start*5,height,-.06)],(i-start)*5,height,start*5)}
+    let capCursor=0
     const section=design.sections.find(s=>s.room_id===room.id&&s.side===side)??defaultSection(side)
     const exposed=(i:number)=>!door(i)&&!deck.rooms.some(r=>r.id!==room.id&&(vertical?
       room.y+i>=r.y&&room.y+i<r.y+r.height&&(side==='port'?r.x+r.width===room.x:r.x===room.x+room.width):
@@ -57,11 +58,13 @@ export function roomSurfaces(plan:ShipPlan,deck:Deck,room:Room):SurfaceQuad[]{
       const p0=point(a,0,outer),p1=point(b,0,outer),p2=point(b,wallHeight,top),p3=point(a,wallHeight,top)
       const face:SurfaceFace=`exterior-${side}`,slopeHeight=Math.hypot(wallHeight,outer-top)
       add(face,[p0,p1,p2,p3],b-a,slopeHeight,a)
-      // Closed caps join the skin to the room boundary; they inherit section color.
-      add(face,[point(start*5,0,0),p0,p3,point(start*5,height,0)],Math.max(.01,Math.hypot(inset,outer)),wallHeight,0,true)
-      add(face,[p1,point(i*5,0,0),point(i*5,height,0),p2],Math.max(.01,Math.hypot(inset,outer)),wallHeight,0,true)
-      add(face,[p3,p2,point(i*5,height,0),point(start*5,height,0)],length,Math.max(.01,Math.hypot(bevel,top)),0,true)
-      add(face,[point(start*5,0,0),point(i*5,0,0),p1,p0],length,Math.max(.01,outer),0,true)
+      // Existing sparse surface paint also stores the seam caps in reserved bands.
+      // Main-wall UVs stay unchanged; bands fit the existing 1024-foot address space.
+      const cap=(side:'start'|'end'|'top'|'bottom',u:number,v:number)=>{const q=result[result.length-1];q.capSide=side;q.uOffset=u;q.vOffset=v}
+      add(face,[point(start*5,0,0),p0,p3,point(start*5,height,0)],Math.max(.01,Math.hypot(inset,outer)),wallHeight,0,true);cap('start',capCursor,128)
+      add(face,[p1,point(i*5,0,0),point(i*5,height,0),p2],Math.max(.01,Math.hypot(inset,outer)),wallHeight,0,true);cap('end',capCursor,256);capCursor+=Math.ceil(Math.max(.01,Math.hypot(inset,outer)))
+      add(face,[p3,p2,point(i*5,height,0),point(start*5,height,0)],length,Math.max(.01,Math.hypot(bevel,top)),0,true);cap('top',start*5,384)
+      add(face,[point(start*5,0,0),point(i*5,0,0),p1,p0],length,Math.max(.01,outer),0,true);cap('bottom',start*5,512)
     }
   }
   return result

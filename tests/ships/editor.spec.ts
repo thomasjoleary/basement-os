@@ -1,3 +1,5 @@
+import * as THREE from 'three'
+import {createSurfaceMeshes} from '../../lib/ship-surface-renderer'
 import { test, expect, type Page } from '@playwright/test'
 import { instantiateTemplate } from '../../lib/ship-templates'
 import { type Ship } from '../../lib/ships'
@@ -726,4 +728,46 @@ test('live exterior stripe crosses adjoining rooms before release with one undo 
  await page.getByRole('button',{name:'Reset view',exact:true}).click();points=await spots('exterior-starboard')
  await page.mouse.move(points[0].x,points[0].y);await page.mouse.down();for(const p of points.slice(1))await page.mouse.move(p.x,p.y);await expect.poll(async()=>Number(await canvas.getAttribute('data-live-paint-tiles'))).toBeGreaterThan(30);await page.mouse.up();await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();expect(api.ships.get(shipId)!.plan.surface_design!.surfaces.filter(s=>s.face==='exterior-starboard')).toHaveLength(3)
 
+})
+
+
+test('one live shaped-hull stripe crosses decks and wraps wall roof opposite wall with paused orbit',async({page})=>{
+ test.setTimeout(120000)
+ const api=await backend(page),ship=api.ships.get(shipId)!,[upper,lower]=ship.plan.decks
+ ship.plan.parts=[];ship.plan.connections=[]
+ for(const [i,d] of [upper,lower].entries()){d.height_ft=10;d.rooms=[{...d.rooms[0],id:`wrap-room-${i}`,x:4,y:4,width:6,height:8}];d.marks=[]}
+ // Matching shaped sides meet through their physical seam caps and the deck ledges.
+ ship.plan.surface_design={surfaces:[],components:[],sections:[upper,lower].flatMap(d=>['front','rear','port','starboard'].map(side=>({id:`${d.id}-${side}`,deck_id:d.id,room_id:d.rooms[0].id,side:side as 'front'|'rear'|'port'|'starboard',extension_ft:side==='port'||side==='starboard'?2:0,slope:.5,taper:side==='port'||side==='starboard'?.2:0,bevel_ft:0})))}
+ const model=createSurfaceMeshes(ship.plan,{deckId:upper.id,mode:'exterior',roofs:true,allDecks:true,separated:false,forceSurfaces:true},false)
+ const canvas=page.getByTestId('ship-3d-canvas')
+ async function spot(deckId:string,face:string,cap?:string){
+  await canvas.scrollIntoViewIfNeeded();const box=(await canvas.boundingBox())!,camera=new THREE.PerspectiveCamera(38,box.width/box.height,.1,2000)
+  camera.position.fromArray((await canvas.getAttribute('data-camera-position'))!.split(',').map(Number));camera.lookAt(new THREE.Vector3().fromArray((await canvas.getAttribute('data-camera-target'))!.split(',').map(Number)));camera.updateMatrixWorld()
+  const mesh=model.meshes.find(m=>m.userData.deckId===deckId&&m.userData.face===face&&(cap?m.userData.surface.capSide===cap:!m.userData.surface.cap))!,v=new THREE.Vector3(),position=mesh.geometry.getAttribute('position')
+  for(let i=0;i<4;i++)v.add(new THREE.Vector3().fromBufferAttribute(position,i));v.multiplyScalar(.25).project(camera)
+  return{x:box.x+(v.x+1)*box.width/2,y:box.y+(1-v.y)*box.height/2}
+ }
+ await page.setViewportSize({width:1366,height:1000});await page.goto(`/v2/ships/${shipId}`);await page.getByRole('button',{name:'Exterior',exact:true}).click();await page.getByRole('button',{name:'Paint exterior',exact:true}).click();await page.getByLabel('Exterior brush size').fill('3');await page.getByLabel('Exterior paint color').fill('#ff0000')
+ let at=await spot(lower.id,'exterior-starboard');await page.mouse.move(at.x,at.y);const before=await canvas.screenshot();await page.mouse.down()
+ for(const [deckId,face,cap] of [[lower.id,'exterior-starboard','top'],[upper.id,'exterior-starboard','bottom'],[upper.id,'exterior-starboard',''],[upper.id,'exterior-starboard','top'],[upper.id,'roof','']]){at=await spot(deckId,face,cap||undefined);await page.mouse.move(at.x,at.y,{steps:5})}
+ await expect(canvas).toHaveAttribute('data-live-paint-surfaces',new RegExp(lower.id+'/exterior-starboard'));await expect(canvas).toHaveAttribute('data-live-paint-surfaces',new RegExp(upper.id+'/exterior-starboard'));await expect(canvas).toHaveAttribute('data-live-paint-surfaces',/roof/);expect((await canvas.getAttribute('data-live-paint-surfaces'))!).not.toContain('exterior-port')
+ expect((await canvas.screenshot()).equals(before)).toBe(false);await page.screenshot({path:'test-results/ship-cross-deck-held.png',fullPage:true})
+ const count=await canvas.getAttribute('data-live-paint-tiles'),cameraBefore=await canvas.getAttribute('data-camera-position')
+ await page.keyboard.down('Alt');await page.mouse.move(at.x+400,at.y,{steps:10});await expect(canvas).toHaveAttribute('data-paint-orbit','true');expect(await canvas.getAttribute('data-camera-position')).not.toBe(cameraBefore);expect(await canvas.getAttribute('data-live-paint-tiles')).toBe(count);await page.mouse.up();await page.keyboard.up('Alt');await expect(canvas).toHaveAttribute('data-paint-paused','true');await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled();await page.waitForTimeout(50);at=await spot(upper.id,'roof');await page.mouse.move(at.x,at.y);expect(await canvas.getAttribute('data-live-paint-tiles')).toBe(count);await page.mouse.down()
+ for(const [deckId,face,cap] of [[upper.id,'roof',''],[upper.id,'exterior-port','top'],[upper.id,'exterior-port',''],[upper.id,'exterior-port','bottom'],[lower.id,'exterior-port','top'],[lower.id,'exterior-port','']]){at=await spot(deckId,face,cap||undefined);await page.mouse.move(at.x,at.y,{steps:5})}
+ await expect(canvas).toHaveAttribute('data-live-paint-surfaces',new RegExp(lower.id+'/exterior-port'));await page.screenshot({path:'test-results/ship-wrapped-held.png',fullPage:true});await page.mouse.up()
+ await page.getByRole('button',{name:'Undo map edit'}).click();await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled();await page.getByRole('button',{name:'Redo map edit'}).click();await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible()
+ const surfaces=api.ships.get(shipId)!.plan.surface_design!.surfaces
+ for(const d of [upper,lower])for(const face of ['exterior-port','exterior-starboard'])expect(surfaces.some(s=>s.deck_id===d.id&&s.face===face&&s.paint.runs.length>0)).toBe(true)
+ expect(surfaces.some(s=>s.face==='roof'&&s.paint.runs.length>0)).toBe(true);expect(surfaces.some(s=>s.paint.runs.some(r=>r[0]>=384*1024))).toBe(true)
+ await page.reload();await page.getByRole('button',{name:'Exterior',exact:true}).click();await expect(canvas).toBeVisible();await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled();expect(api.stats.saves).toBe(1)
+ await page.getByRole('button',{name:'Erase exterior',exact:true}).click();await page.getByLabel('Exterior brush size').fill('3')
+ // A paused orbit can be canceled without committing the eraser preview.
+ at=await spot(lower.id,'exterior-starboard');await page.mouse.move(at.x,at.y);await page.mouse.down();await page.keyboard.down('Alt');await page.mouse.move(at.x+10,at.y);await page.mouse.up();await page.keyboard.up('Alt');await expect(canvas).toHaveAttribute('data-paint-paused','true');await page.keyboard.press('Escape');await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled()
+ at=await spot(lower.id,'exterior-starboard');await page.mouse.move(at.x,at.y);await page.mouse.down()
+ for(const [deckId,cap] of [[lower.id,'top'],[upper.id,'bottom'],[upper.id,'']]){at=await spot(deckId,'exterior-starboard',cap||undefined);await page.mouse.move(at.x,at.y,{steps:5})}
+ await page.keyboard.down('Alt');await page.mouse.up();await page.keyboard.up('Alt');await expect(canvas).toHaveAttribute('data-paint-paused','true');await page.keyboard.press('Enter')
+ await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible()
+ for(const d of [upper,lower]){const size=(rows:typeof surfaces)=>rows.find(s=>s.deck_id===d.id&&s.face==='exterior-starboard')!.paint.runs.reduce((n,r)=>n+r[1],0);expect(size(api.ships.get(shipId)!.plan.surface_design!.surfaces)).toBeLessThan(size(surfaces))}
+ expect(api.stats.saves).toBe(2);model.dispose()
 })

@@ -22,28 +22,54 @@ export function paintExteriorStroke(plan:ShipPlan,stroke:ExteriorStroke,color:st
  return stroke.reduce((next,s)=>paintExterior(next,s.q,s.tiles,color),plan)
 }
 
-// Actual shared edges, not overlapping screen bounds: separate ships/decks and
-// surfaces across open space must never be connected by pointer interpolation.
-export function exteriorMeshesTouch(a:THREE.Mesh,b:THREE.Mesh){
- if(a===b)return true
- const vertices=(m:THREE.Mesh)=>Array.from({length:4},(_,i)=>new THREE.Vector3().fromBufferAttribute(m.geometry.getAttribute('position'),i))
+const EDGE_EPS=1e-4
+function vertices(mesh:THREE.Mesh){return Array.from({length:4},(_,i)=>new THREE.Vector3().fromBufferAttribute(mesh.geometry.getAttribute('position'),i).applyMatrix4(mesh.matrixWorld))}
+export function exteriorSharedEdge(a:THREE.Mesh,b:THREE.Mesh){
  const av=vertices(a),bv=vertices(b)
- return [[av,bv],[bv,av]].some(([from,to])=>from.some(p=>to.some((v,i)=>new THREE.Line3(v,to[(i+1)%4]).closestPointToPoint(p,true,new THREE.Vector3()).distanceToSquared(p)<1e-8)))
+ for(let i=0;i<4;i++)for(let j=0;j<4;j++){
+  const start=av[i],end=av[(i+1)%4],direction=end.clone().sub(start),length=direction.length();if(length<EDGE_EPS)continue;direction.divideScalar(length)
+  const c=bv[j],d=bv[(j+1)%4],bc=c.clone().sub(start),bd=d.clone().sub(start)
+  if(bc.clone().cross(direction).length()>EDGE_EPS||bd.clone().cross(direction).length()>EDGE_EPS)continue
+  const lo=Math.max(0,Math.min(bc.dot(direction),bd.dot(direction))),hi=Math.min(length,Math.max(bc.dot(direction),bd.dot(direction)))
+  if(hi-lo>EDGE_EPS){const normal=(v:THREE.Vector3[],edge:number,m:THREE.Mesh)=>{const n=new THREE.Triangle(v[0],v[edge<2?1:2],v[edge<2?2:3]).getNormal(new THREE.Vector3()),out=new THREE.Vector3().fromBufferAttribute(m.geometry.getAttribute('normal'),edge);return n.dot(out)<0?n.negate():n};return {start:start.clone().addScaledVector(direction,lo),direction,fromNormal:normal(av,i,a),toNormal:normal(bv,j,b)}}
+ }
+ return null
+}
+export function exteriorMeshesTouch(a:THREE.Mesh,b:THREE.Mesh){return a===b||!!exteriorSharedEdge(a,b)}
+// Rotate the brush's unfolded continuation around the shared physical edge.
+// No face/deck-name assumptions and no projection onto the far side of the ship.
+export function foldExteriorPoint(a:THREE.Mesh,b:THREE.Mesh,point:THREE.Vector3){
+ const edge=exteriorSharedEdge(a,b);if(!edge)return null
+ const {start,direction,fromNormal,toNormal}=edge
+ const center=vertices(a).reduce((sum,v)=>sum.add(v),new THREE.Vector3()).multiplyScalar(.25),across=direction.clone().cross(fromNormal)
+ if(point.clone().sub(start).dot(across)*center.sub(start).dot(across)>EDGE_EPS)return null
+ const angle=Math.atan2(direction.dot(fromNormal.clone().cross(toNormal)),fromNormal.dot(toNormal))
+ return point.clone().sub(start).applyAxisAngle(direction,angle).add(start)
+}
+function surfaceCoordinates(mesh:THREE.Mesh,point:THREE.Vector3){
+ const v=vertices(mesh),uv=mesh.geometry.getAttribute('uv')
+ for(const ids of [[0,1,2],[0,2,3]]){const triangle=new THREE.Triangle(...ids.map(i=>v[i]) as [THREE.Vector3,THREE.Vector3,THREE.Vector3]),near=triangle.closestPointToPoint(point,new THREE.Vector3());if(near.distanceTo(point)>EDGE_EPS)continue;const weights=triangle.getBarycoord(near,new THREE.Vector3());if(!weights)continue;const coords=new THREE.Vector2();ids.forEach((id,i)=>coords.addScaledVector(new THREE.Vector2(uv.getX(id),uv.getY(id)),weights.getComponent(i)));return {x:Math.floor(coords.x*mesh.userData.paintWidth),y:Math.floor(coords.y*mesh.userData.paintHeight)}}
+ return null
 }
 
 // The first ray hit remains authoritative. Live geometry is a disposable stroke
-// preview; only pointerup commits a single atomic edit to the document/history.
-export function attachExteriorPaint({canvas,camera,scene,objects,size,color,erase,underside,onCommit,onMessage,render}:{canvas:HTMLCanvasElement;camera:THREE.Camera;scene:THREE.Scene;objects:THREE.Object3D[];size:number;color:string;erase:boolean;underside:boolean;onCommit:(stroke:ExteriorStroke,color:string|null)=>void;onMessage:(s:string)=>void;render:()=>void}){
+// preview; finishing the stroke commits one atomic edit to the document/history.
+export function attachExteriorPaint({canvas,camera,scene,objects,size,color,erase,underside,onCommit,onMessage,render,onOrbit}:{canvas:HTMLCanvasElement;camera:THREE.Camera;scene:THREE.Scene;objects:THREE.Object3D[];size:number;color:string;erase:boolean;underside:boolean;onCommit:(stroke:ExteriorStroke,color:string|null)=>void;onMessage:(s:string)=>void;render:()=>void;onOrbit?:(dx:number,dy:number)=>void}){
  const ray=new THREE.Raycaster(),pointer=new THREE.Vector2(),preview=new THREE.Group(),live=new THREE.Group();scene.add(preview,live)
  type Entry={q:SurfaceQuad;mesh:THREE.Mesh;tiles:Map<number,FootTile>;overlay?:THREE.Mesh;dirty:boolean}
  type Pick={mesh:THREE.Mesh;q:SurfaceQuad;at:FootTile}
- let drag:{id:number;entries:Map<THREE.Mesh,Entry>;last:Pick|null;x:number;y:number;count:number}|null=null
+ let drag:{id:number;entries:Map<THREE.Mesh,Entry>;last:Pick|null;x:number;y:number;count:number;resume:boolean;held:boolean}|null=null
+ let alt=false
+ const hulls=objects.filter((o):o is THREE.Mesh=>o instanceof THREE.Mesh&&!!o.userData.surface?.hull),bounds=new Map(hulls.map(m=>[m,new THREE.Box3().setFromObject(m).expandByScalar(EDGE_EPS)])),adjacency=new Map<THREE.Mesh,THREE.Mesh[]>()
+ function adjacent(mesh:THREE.Mesh){if(!adjacency.has(mesh))adjacency.set(mesh,hulls.filter(m=>m!==mesh&&bounds.get(mesh)!.intersectsBox(bounds.get(m)!)&&touching(mesh,m)));return adjacency.get(mesh)!}
+ function seamConnected(a:THREE.Mesh,b:THREE.Mesh){if(touching(a,b))return true;const seen=new Set([a]),queue=[{mesh:a,depth:0}];for(const {mesh,depth} of queue){if(depth>=4)continue;for(const n of adjacent(mesh)){if(n===b)return true;if(n.userData.surface.cap&&!seen.has(n)){seen.add(n);queue.push({mesh:n,depth:depth+1})}}}return false}
+ function connected(a:THREE.Mesh,b:THREE.Mesh){const seen=new Set([a]),queue=[a];for(const m of queue){if(m===b)return true;for(const n of adjacent(m))if(!seen.has(n)){seen.add(n);queue.push(n)}}return false}
  const visibility=new Map<THREE.Mesh,Map<number,boolean>>(),neighbors=new Map<string,boolean>()
  function touching(a:THREE.Mesh,b:THREE.Mesh){const key=[a.id,b.id].sort().join(':');if(!neighbors.has(key))neighbors.set(key,exteriorMeshesTouch(a,b));return neighbors.get(key)!}
  function clear(group:THREE.Group){for(const child of [...group.children]){const m=child as THREE.Mesh;m.geometry.dispose();(m.material as THREE.Material).dispose();group.remove(m)}}
- function cancel(){const id=drag?.id;drag=null;clear(preview);clear(live);visibility.clear();delete canvas.dataset.paintFace;delete canvas.dataset.paintRoom;delete canvas.dataset.brushTiles;delete canvas.dataset.livePaintTiles;if(id!==undefined&&canvas.hasPointerCapture(id))canvas.releasePointerCapture(id);render()}
- function hit(x:number,y:number){const rect=canvas.getBoundingClientRect();if(x<rect.left||y<rect.top||x>rect.right||y>rect.bottom)return null;pointer.set((x-rect.left)/rect.width*2-1,1-(y-rect.top)/rect.height*2);ray.setFromCamera(pointer,camera);const h=ray.intersectObjects(objects,false)[0],q=h?.object.userData.surface as SurfaceQuad|undefined;return h&&h.uv&&q?.hull&&!q.cap?{h,q}:null}
- function point(mesh:THREE.Mesh,q:SurfaceQuad,x:number,y:number){const p=mesh.geometry.getAttribute('position'),a=new THREE.Vector3().fromBufferAttribute(p,0),b=new THREE.Vector3().fromBufferAttribute(p,1),c=new THREE.Vector3().fromBufferAttribute(p,2),d=new THREE.Vector3().fromBufferAttribute(p,3);const u=(x-q.uOffset)/q.width,v=(y-(q.vOffset??0))/q.height;return a.lerp(b,u).lerp(d.lerp(c,u),v)}
+ function cancel(){const id=drag?.id;drag=null;clear(preview);clear(live);visibility.clear();delete canvas.dataset.paintFace;delete canvas.dataset.paintRoom;delete canvas.dataset.paintDeck;delete canvas.dataset.paintCap;delete canvas.dataset.paintOrbit;delete canvas.dataset.paintPaused;delete canvas.dataset.brushTiles;delete canvas.dataset.livePaintTiles;delete canvas.dataset.livePaintSurfaces;if(id!==undefined&&canvas.hasPointerCapture(id))canvas.releasePointerCapture(id);render()}
+ function hit(x:number,y:number){const rect=canvas.getBoundingClientRect();if(x<rect.left||y<rect.top||x>rect.right||y>rect.bottom)return null;pointer.set((x-rect.left)/rect.width*2-1,1-(y-rect.top)/rect.height*2);ray.setFromCamera(pointer,camera);const h=ray.intersectObjects(objects,false)[0],q=h?.object.userData.surface as SurfaceQuad|undefined;return h&&h.uv&&q?.hull?{h,q}:null}
+ function point(mesh:THREE.Mesh,q:SurfaceQuad,x:number,y:number){const p=mesh.geometry.getAttribute('position'),a=new THREE.Vector3().fromBufferAttribute(p,0),b=new THREE.Vector3().fromBufferAttribute(p,1),c=new THREE.Vector3().fromBufferAttribute(p,2),d=new THREE.Vector3().fromBufferAttribute(p,3);const u=(x-q.uOffset)/q.width,v=(y-(q.vOffset??0))/q.height;return v<=u?a.addScaledVector(b.clone().sub(a),u).addScaledVector(c.sub(b),v):a.addScaledVector(d.clone().sub(a),v).addScaledVector(c.sub(d),u)}
  function projectedHit(p:THREE.Vector3){const center=p.clone().project(camera),r=canvas.getBoundingClientRect();return hit(r.left+(center.x+1)*r.width/2,r.top+(1-center.y)*r.height/2)}
  function local(h:NonNullable<ReturnType<typeof hit>>):Pick {const mesh=h.h.object as THREE.Mesh;return {mesh,q:h.q,at:{x:Math.floor(h.h.uv!.x*mesh.userData.paintWidth),y:Math.floor(h.h.uv!.y*mesh.userData.paintHeight)}}}
  function visible(mesh:THREE.Mesh,q:SurfaceQuad,tile:FootTile){
@@ -52,45 +78,63 @@ export function attachExteriorPaint({canvas,camera,scene,objects,size,color,eras
  }
  function geometry(mesh:THREE.Mesh,q:SurfaceQuad,tiles:Iterable<FootTile>){
   const normal=new THREE.Vector3().fromBufferAttribute(mesh.geometry.getAttribute('normal'),0).multiplyScalar(.003),vertices:number[]=[]
-  for(const tile of tiles){const x0=Math.max(q.uOffset,tile.x),x1=Math.min(q.uOffset+q.width,tile.x+1),y0=Math.max(q.vOffset??0,tile.y),y1=Math.min((q.vOffset??0)+q.height,tile.y+1);const points=[[x0,y0],[x1,y0],[x1,y1],[x0,y1]].map(([x,y])=>point(mesh,q,x,y).add(normal));for(const i of [0,1,2,0,2,3])vertices.push(...points[i].toArray())}
+  for(const tile of tiles){const x0=Math.max(q.uOffset,tile.x),x1=Math.min(q.uOffset+q.width,tile.x+1),y0=Math.max(q.vOffset??0,tile.y),y1=Math.min((q.vOffset??0)+q.height,tile.y+1);const points=[[x0,y0],[x1,y0],[x1,y1],[x0,y1]].map(([x,y])=>point(mesh,q,x,y).add(normal));const outward=points[1].clone().sub(points[0]).cross(points[2].clone().sub(points[0])).dot(normal)>=0;for(const i of outward?[0,1,2,0,2,3]:[0,2,1,0,3,2])vertices.push(...points[i].toArray())}
   const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(vertices,3));g.computeVertexNormals();return g
  }
  function flush(){
   if(drag)for(const entry of drag.entries.values())if(entry.dirty){
    if(entry.overlay){entry.overlay.geometry.dispose();entry.overlay.geometry=geometry(entry.mesh,entry.q,entry.tiles.values())}
-   else{const material=(entry.mesh.material as THREE.MeshStandardMaterial).clone();material.map=null;material.color.set(erase?entry.q.color:color);material.side=THREE.DoubleSide;entry.overlay=new THREE.Mesh(geometry(entry.mesh,entry.q,entry.tiles.values()),material);live.add(entry.overlay)}entry.dirty=false
+   else{const material=(entry.mesh.material as THREE.MeshStandardMaterial).clone();material.map=null;material.color.set(erase?entry.q.color:color);material.side=THREE.FrontSide;entry.overlay=new THREE.Mesh(geometry(entry.mesh,entry.q,entry.tiles.values()),material);live.add(entry.overlay)}entry.dirty=false
   }
-  if(drag)canvas.dataset.livePaintTiles=String(drag.count);render()
+  if(drag){canvas.dataset.livePaintTiles=String(drag.count);canvas.dataset.livePaintSurfaces=JSON.stringify([...new Set([...drag.entries.values()].filter(e=>e.tiles.size).map(e=>e.q.deckId+'/'+e.q.face))])}render()
  }
  function brush(pick:Pick,record:boolean){
   const {mesh,q,at}=pick,half=Math.floor((size-1)/2),targets=new Map<THREE.Mesh,{q:SurfaceQuad;tiles:Map<number,FootTile>}>()
   function add(m:THREE.Mesh,s:SurfaceQuad,t:FootTile){if(!exteriorBrush(s,t,1).length||!visible(m,s,t))return;let target=targets.get(m);if(!target){target={q:s,tiles:new Map()};targets.set(m,target)}target.tiles.set(t.y*PAINT_STRIDE+t.x,t)}
   for(let y=at.y-half;y<at.y-half+size;y++)for(let x=at.x-half;x<at.x-half+size;x++){
    if(exteriorBrush(q,{x,y},1).length)add(mesh,q,{x,y})
-   else{const world=point(mesh,q,x+.5,y+.5),neighbor=projectedHit(world);if(!neighbor||neighbor.q.face!==q.face||neighbor.h.point.distanceToSquared(world)>.0025)continue;const next=local(neighbor);if(touching(mesh,next.mesh))add(next.mesh,next.q,next.at)}
+   else{
+    const queue=[{mesh,world:point(mesh,q,x+.5,y+.5),depth:0}],seen=new Set([mesh])
+    for(const entry of queue){if(entry.depth>=6||seen.size>64)continue;for(const n of adjacent(entry.mesh)){if(seen.has(n))continue;const world=foldExteriorPoint(entry.mesh,n,entry.world);if(!world)continue;seen.add(n);const target=surfaceCoordinates(n,world),surface=n.userData.surface as SurfaceQuad;if(surface.face==='underside'&&!underside)continue;if(target)add(n,surface,target);else queue.push({mesh:n,world,depth:entry.depth+1})}}
+   }
   }
   let count=0
   for(const [m,target] of targets){count+=target.tiles.size
    if(record&&drag){let entry=drag.entries.get(m);if(!entry){entry={q:target.q,mesh:m,tiles:new Map(),dirty:false};drag.entries.set(m,entry)}for(const [key,tile] of target.tiles)if(!entry.tiles.has(key)){entry.tiles.set(key,tile);entry.dirty=true;drag.count++}}
    else preview.add(new THREE.Mesh(geometry(m,target.q,target.tiles.values()),new THREE.MeshBasicMaterial({color:erase?'#fbbf24':color,transparent:true,opacity:.6,side:THREE.DoubleSide,depthWrite:false})))
   }
-  canvas.dataset.paintFace=q.face;canvas.dataset.paintRoom=q.roomId;canvas.dataset.brushTiles=String(count)
+  canvas.dataset.paintFace=q.face;canvas.dataset.paintRoom=q.roomId;canvas.dataset.paintDeck=q.deckId;canvas.dataset.paintCap=q.capSide??'';canvas.dataset.brushTiles=String(count)
   if(drag&&drag.count>50000){cancel();onMessage('Stroke exceeds 50,000 squares.');return false}return true
  }
  function sample(x:number,y:number,record:boolean):Pick|null{
   const picked=hit(x,y);if(!picked){delete canvas.dataset.paintFace;return null}
   if(picked.q.face==='underside'&&!underside){onMessage('Underside painting needs the reviewed underside migration. Other exterior faces remain available.');return null}
   const next=local(picked),last=drag?.last
-  if(record&&last&&last.mesh!==next.mesh&&!touching(last.mesh,next.mesh))return null
+  if(record&&last&&last.mesh!==next.mesh&&!(drag?.resume?connected(last.mesh,next.mesh):seamConnected(last.mesh,next.mesh)))return null
+  if(record&&drag?.resume){drag.resume=false;drag.last=null;brush(next,true);if(drag)drag.last=next;return next}
   if(record&&last?.mesh===next.mesh&&last.at.x===next.at.x&&last.at.y===next.at.y)return next
   if(record&&last?.mesh===next.mesh){for(const at of strokeTiles(last.at,next.at))if(!brush({...next,at},true))return null}
   else if(!brush(next,record))return null
   if(record&&drag)drag.last=next;return next
  }
- function down(e:PointerEvent){if(e.button!==0)return;e.preventDefault();e.stopImmediatePropagation();if(drag){cancel();return}clear(preview);visibility.clear();const picked=sample(e.clientX,e.clientY,false);if(!picked){render();return}clear(preview);drag={id:e.pointerId,entries:new Map(),last:null,x:e.clientX,y:e.clientY,count:0};canvas.setPointerCapture(e.pointerId);sample(e.clientX,e.clientY,true);flush()}
- function move(e:PointerEvent){e.stopImmediatePropagation();clear(preview);if(!drag){visibility.clear();sample(e.clientX,e.clientY,false);render();return}if(drag.id!==e.pointerId)return;const start={x:drag.x,y:drag.y},steps=Math.max(1,Math.ceil(Math.hypot(e.clientX-start.x,e.clientY-start.y)));if(steps>4096){cancel();onMessage('Pointer moved beyond the paint view; start a new stroke.');return}for(let i=1;i<=steps&&drag;i++)sample(start.x+(e.clientX-start.x)*i/steps,start.y+(e.clientY-start.y)*i/steps,true);if(drag){drag.x=e.clientX;drag.y=e.clientY}flush()}
- function up(e:PointerEvent){e.stopImmediatePropagation();const stroke=drag;if(!stroke||stroke.id!==e.pointerId)return;const edits=[...stroke.entries.values()].map(s=>({q:s.q,tiles:[...s.tiles.values()]}));cancel();if(edits.length)onCommit(edits,erase?null:color)}
- function key(e:KeyboardEvent){if(e.key==='Escape')cancel()}
- canvas.addEventListener('pointerdown',down,true);canvas.addEventListener('pointermove',move,true);canvas.addEventListener('pointerup',up,true);canvas.addEventListener('pointercancel',cancel);canvas.addEventListener('lostpointercapture',cancel);canvas.addEventListener('pointerleave',cancel);window.addEventListener('keydown',key)
- return()=>{cancel();scene.remove(preview,live);canvas.removeEventListener('pointerdown',down,true);canvas.removeEventListener('pointermove',move,true);canvas.removeEventListener('pointerup',up,true);canvas.removeEventListener('pointercancel',cancel);canvas.removeEventListener('lostpointercapture',cancel);canvas.removeEventListener('pointerleave',cancel);window.removeEventListener('keydown',key)}
+ function down(e:PointerEvent){if(e.button!==0)return;e.preventDefault();e.stopImmediatePropagation();if(drag?.held){cancel();return}canvas.focus?.({preventScroll:true});clear(preview);visibility.clear();alt=e.altKey
+  if(drag){drag.id=e.pointerId;drag.held=true;drag.resume=true;drag.x=e.clientX;drag.y=e.clientY;delete canvas.dataset.paintPaused;onMessage('');canvas.setPointerCapture(e.pointerId);if(!alt)sample(e.clientX,e.clientY,true);flush();return}
+  const picked=alt?null:sample(e.clientX,e.clientY,false);if(!picked&&!alt){render();return}clear(preview);drag={id:e.pointerId,entries:new Map(),last:null,x:e.clientX,y:e.clientY,count:0,resume:false,held:true};canvas.setPointerCapture(e.pointerId);if(!alt)sample(e.clientX,e.clientY,true);flush()
+ }
+ function move(e:PointerEvent){e.stopImmediatePropagation();clear(preview);if(!drag?.held){visibility.clear();sample(e.clientX,e.clientY,false);render();return}if(drag.id!==e.pointerId)return
+  if(e.altKey||alt){onOrbit?.(e.clientX-drag.x,e.clientY-drag.y);visibility.clear();drag.resume=true;drag.x=e.clientX;drag.y=e.clientY;canvas.dataset.paintOrbit='true';render();return}
+  delete canvas.dataset.paintOrbit
+  const start={x:drag.x,y:drag.y},steps=drag.resume?1:Math.max(1,Math.ceil(Math.hypot(e.clientX-start.x,e.clientY-start.y)));if(steps>4096){cancel();onMessage('Pointer moved beyond the paint view; start a new stroke.');return}for(let i=1;i<=steps&&drag;i++)sample(start.x+(e.clientX-start.x)*i/steps,start.y+(e.clientY-start.y)*i/steps,true);if(drag){drag.x=e.clientX;drag.y=e.clientY}flush()
+ }
+ function finish(){const stroke=drag;if(!stroke)return;onMessage('');const edits=[...stroke.entries.values()].map(s=>({q:s.q,tiles:[...s.tiles.values()]}));cancel();if(edits.length)onCommit(edits,erase?null:color)}
+ function up(e:PointerEvent){e.stopImmediatePropagation();if(!drag?.held||drag.id!==e.pointerId)return
+  if(alt||e.altKey){drag.held=false;drag.resume=true;canvas.dataset.paintPaused='true';if(canvas.hasPointerCapture(e.pointerId))canvas.releasePointerCapture(e.pointerId);onMessage('Stroke paused. Click visible connected hull to continue, Enter to finish, or Esc to cancel.');render();return}finish()
+ }
+ function key(e:KeyboardEvent){if(e.key==='Escape'){cancel();onMessage('')};if(e.key==='Enter'&&drag&&!drag.held&&document.activeElement===canvas){e.preventDefault();finish()};if(e.key==='Alt'&&drag&&(drag.held||document.activeElement===canvas)){e.preventDefault();alt=e.type==='keydown';visibility.clear();drag.resume=true}}
+ function leave(){if(drag&&!drag.held){clear(preview);render();return}cancel()}
+ function lostCapture(){if(drag?.held)cancel()}
+ function pointerCancelled(){cancel();onMessage('')}
+ function blur(){alt=false;pointerCancelled()}
+ canvas.addEventListener('pointerdown',down,true);canvas.addEventListener('pointermove',move,true);canvas.addEventListener('pointerup',up,true);canvas.addEventListener('pointercancel',pointerCancelled);canvas.addEventListener('lostpointercapture',lostCapture);canvas.addEventListener('pointerleave',leave);window.addEventListener('keydown',key);window.addEventListener('keyup',key);window.addEventListener('blur',blur)
+ return()=>{cancel();scene.remove(preview,live);canvas.removeEventListener('pointerdown',down,true);canvas.removeEventListener('pointermove',move,true);canvas.removeEventListener('pointerup',up,true);canvas.removeEventListener('pointercancel',pointerCancelled);canvas.removeEventListener('lostpointercapture',lostCapture);canvas.removeEventListener('pointerleave',leave);window.removeEventListener('keydown',key);window.removeEventListener('keyup',key);window.removeEventListener('blur',blur)}
 }
