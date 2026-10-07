@@ -23,7 +23,7 @@ export default function ShipWalkthrough({plan,deckId,onDeck,onFallback}:{plan:Sh
   const options:SceneOptions={deckId:currentDeck.id,mode:'cutaway',roofs:true,allDecks:true,separated:false,walkthrough:true},data=buildShipScene(plan,options),surfaces=createSurfaceMeshes(plan,options,false)
   const geometries=new Map<string,THREE.BufferGeometry>(),materials:THREE.Material[]=[],targets:THREE.Object3D[]=[]
   for(const item of data.items){const material=new THREE.MeshStandardMaterial({color:item.color,roughness:.6});materials.push(material);const mesh=new THREE.Mesh(sceneGeometry(geometries,item.shape),material);mesh.position.fromArray(item.at);mesh.scale.fromArray(item.size);mesh.userData.connection=item.selection?.kind==='connection'?item.selection.id:undefined;scene.add(mesh);targets.push(mesh)}
-  for(const mesh of surfaces.meshes){scene.add(mesh);targets.push(mesh)}
+  for(const mesh of [...surfaces.meshes,...surfaces.backings]){scene.add(mesh);targets.push(mesh)}
   const camera=new THREE.PerspectiveCamera(75,1,.025,1000)
   let walls=walkWalls(currentDeck),holes=deckHoles(plan,currentDeck.id,'floor'),spawn=walkSpawn(currentDeck,undefined,holes)
   let position=spawn??{x:0,y:0},yaw=0,pitch=0,enabled=false,frame=0,last=performance.now(),drag:{x:number;y:number;id:number;moved:boolean;distance:number}|null=null

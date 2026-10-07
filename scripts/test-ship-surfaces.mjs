@@ -214,3 +214,35 @@ check('shaped seam caps have separate bounded paint coordinates and preserve mai
  assert.equal(validatePlan(next),null);const tiles=decodePaint(next.surface_design.surfaces[0].paint);assert.equal(tiles.size,2);assert.equal(tiles.get(384*1024+Math.ceil(cap.uOffset)),'#ff0000')
 })
 console.log(`${count} geometry, seam and cross-deck checks passed`)
+
+check('freighter engineering and booster meshes stay above their floor in every renderer',()=>{
+ const {buildShipScene,deckElevations}=model('ship-scene'),{sceneGeometry}=model('ship-geometry'),cache=new Map()
+ const p=instantiateTemplate('freighter')
+ for(const mode of ['cutaway','exterior'])for(const allDecks of [false,true])for(const walkthrough of [false,true]){
+  const options={deckId:p.decks[1].id,mode,roofs:true,allDecks,separated:false,walkthrough,forceSurfaces:true},scene=buildShipScene(p,options),bases=deckElevations(p.decks,false,mode==='exterior')
+  for(const item of scene.items.filter(i=>i.selection?.kind==='part')){
+   const g=sceneGeometry(cache,item.shape);g.computeBoundingBox();const bottom=g.boundingBox.min.y*item.size[1]+item.at[1],base=allDecks?bases.get(item.deckId):0
+   assert.ok(bottom>=base-1e-6,`${p.parts.find(p=>p.id===item.selection.id)?.name} bottom ${bottom} below ${base}`)
+  }
+ }
+ cache.forEach(g=>g.dispose())
+})
+check('fixture regions use stable defaults, preserve screens and copy independently',()=>{
+ const {equipmentModel}=model('ship-scene'),{fixtureRegions}=model('ship-fixture-colors'),selection={kind:'part',id:'p'}
+ for(const type of ['Control','Seat','Cargo','Propulsion','Power','Life support','Furniture','Sanitation','Appliance','Ladder']){
+  for(const region of fixtureRegions(type)){const items=equipmentModel(type,'#586e82',selection,'d',0,0,0,{[region.key]:'#ff00ff'});assert.ok(items.some(i=>i.color==='#ff00ff'),type+' '+region.key)}
+ }
+ assert.ok(equipmentModel('Control','#586e82',selection,'d',0,0,0,{trim:'#ff0000',detail:'#ff0000'}).some(i=>i.color==='#37c7df'))
+ const p=instantiateTemplate('freighter');p.surface_design={surfaces:[],sections:[],components:[{id:'c',part_id:p.parts[0].id,color:'#123456',materials:{trim:'#ff0000',detail:'#00ff00'}}]}
+ assert.equal(validatePlan(p),null);const copy=copyPlan(p);copy.surface_design.components[0].materials.trim='#000000';assert.equal(p.surface_design.components[0].materials.trim,'#ff0000')
+ for(const materials of [null,[],{trim:'red'},{glow:'#ff0000'},{detail:1}]){const invalid=structuredClone(p);invalid.surface_design.components[0].materials=materials;assert.ok(validatePlan(invalid))}
+})
+check('inward hull backing preserves outer paint geometry, floor height and openings',()=>{
+ const {createSurfaceMeshes,HULL_SKIN_THICKNESS_FT}=model('ship-surface-renderer'),p=instantiateTemplate('freighter'),d=p.decks[1],result=createSurfaceMeshes(p,{deckId:d.id,mode:'exterior',roofs:true,allDecks:false,separated:false,forceSurfaces:true},false)
+ assert.equal(result.backings.length,result.meshes.length);assert.ok(HULL_SKIN_THICKNESS_FT>0&&HULL_SKIN_THICKNESS_FT<.02)
+ result.meshes.forEach((mesh,i)=>{const front=mesh.geometry.getAttribute('position'),back=result.backings[i].geometry.getAttribute('position'),normal=new THREE.Vector3().fromBufferAttribute(mesh.geometry.getAttribute('normal'),0)
+  for(let j=0;j<4;j++){const point=new THREE.Vector3().fromBufferAttribute(front,j);assert.ok(point.distanceTo(new THREE.Vector3().fromBufferAttribute(back,j))<1e-6);assert.ok(point.clone().addScaledVector(normal,-HULL_SKIN_THICKNESS_FT/5).distanceTo(new THREE.Vector3().fromBufferAttribute(back,j+4))<1e-6)}
+  assert.equal(result.backings[i].userData.surface,undefined)
+ });result.dispose()
+})
+console.log(`${count} geometry and fixture checks passed`)

@@ -4,12 +4,13 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 const ShipViewer3D = dynamic(() => import('./ShipViewer3D'), { ssr: false, loading: () => <div className="h-[520px] flex items-center justify-center">Loading 3D view…</div> })
 import {openingLayout,fitsFloor} from '@/lib/ship-openings'
+import ShipFixtureColors from './ShipFixtureColors'
 import ShipOpeningEditor from './ShipOpeningEditor'
 import DeckPaintView from './DeckPaintView'
 const ShipWalkthrough = dynamic(() => import('./ShipWalkthrough'), {ssr:false})
 import ShipSurfaceEditor from './ShipSurfaceEditor'
 import {type SurfaceFace} from '@/lib/ship-paint'
-import {EMPTY_SURFACES,pruneSurfaces} from '@/lib/ship-surfaces'
+import {pruneSurfaces} from '@/lib/ship-surfaces'
 import ShipAppearanceEditor from './ShipAppearanceEditor'
 import ShipGrid, { type Selection, type ShipTool } from './ShipGrid'
 import { type Ship, type ShipPlan, type Part, type Connection, QUALITIES, CONDITIONS, newDeck, newId, removeDeck, removeRoom, movePart, validatePlan, deckHeight } from '@/lib/ships'
@@ -158,8 +159,7 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles, 
                   <label className="block text-xs text-gray-400">Component deck<select disabled={linkedLadder} aria-label="Component deck" value={part.deck_id} onChange={e => { const d = ship.plan.decks.find(d => d.id === e.target.value)!; change(movePart(ship.plan, part.id, d, part)); setDeckId(d.id) }} className={inputClass}>{ship.plan.decks.map(d => <option value={d.id} key={d.id}>{d.name}</option>)}</select></label>
                   <div className="grid grid-cols-2 gap-2">{(['x', 'y'] as const).map(axis => <Field key={axis} label={`Position ${axis}`} disabled={linkedLadder} type="number" min={0} max={(axis === 'x' ? deck.width : deck.height) - 1} value={part[axis]} onChange={v => change(movePart(ship.plan, part.id, deck, { ...part, [axis]: Number(v) }))} />)}</div>
                   <p className="text-xs text-gray-400">Room: {deck.rooms.find(r => r.id === part.room_id)?.name ?? 'Unassigned (outside rooms)'}</p>
-                  <label className="block text-xs">Component color<input aria-label="Component color" type="color" value={ship.plan.surface_design?.components.find(c=>c.part_id===part.id)?.color??'#586e82'} onChange={e=>{const design=ship.plan.surface_design??EMPTY_SURFACES;change({...ship.plan,surface_design:{...design,components:[...design.components.filter(c=>c.part_id!==part.id),{id:design.components.find(c=>c.part_id===part.id)?.id??newId(),part_id:part.id,color:e.target.value}]}})}}/></label>
-                  <button type="button" className="text-xs underline" onClick={()=>{const design=ship.plan.surface_design??EMPTY_SURFACES;change({...ship.plan,surface_design:{...design,components:design.components.filter(c=>c.part_id!==part.id)}})}}>Use default component color</button>
+                  <ShipFixtureColors key={part.id} plan={ship.plan} part={part} disabled={!canEdit||busy} onChange={change}/>
                   <Notes label="Public component notes" value={part.notes} onChange={notes => patchPart({ notes })} />
                 </>}
                 {connection && <>

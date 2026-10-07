@@ -790,3 +790,42 @@ test('Alt ends paint immediately, idle orbit never paints, and releasing Alt mid
  for(const kind of ['pointercancel','blur']){at=await exteriorSpot(page,'roof');await page.mouse.down();if(kind==='blur')await page.evaluate(()=>window.dispatchEvent(new Event('blur')));else await canvas.dispatchEvent('pointercancel',{pointerId:1});await page.mouse.up();await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled()}
  await page.keyboard.press('Enter');await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled();expect(api.stats.saves).toBe(0)
 })
+
+
+test('fixture regions preview, undo, reset and persist independently without floor clipping',async({page})=>{
+ const api=await backend(page),errors:string[]=[];page.on('pageerror',e=>errors.push(e.message))
+ await page.setViewportSize({width:1366,height:900});await page.goto(`/v2/ships/${shipId}`)
+ await page.getByRole('button',{name:'Inventory',exact:true}).click();await page.getByRole('button',{name:/Main propulsion.*1/}).click()
+ await expect(page.getByLabel('Component name')).toHaveValue('Main propulsion')
+ const color=page.getByLabel('Fixture part color',{exact:true}),region=page.getByLabel('Paintable fixture part',{exact:true})
+ await expect(color).toBeEnabled();await expect(region).toHaveValue('trim');await expect(color).toHaveValue('#9eabb4')
+ await color.fill('#ff0000');await region.selectOption('detail');await color.fill('#00ff00')
+ await page.getByRole('button',{name:'Undo map edit',exact:true}).click();await expect(color).toHaveValue('#394957')
+ await page.getByRole('button',{name:'Redo map edit',exact:true}).click();await expect(color).toHaveValue('#00ff00')
+ await page.getByRole('button',{name:'Reset selected part color',exact:true}).click();await expect(color).toHaveValue('#394957')
+ await page.getByRole('button',{name:'Undo map edit',exact:true}).click();await expect(color).toHaveValue('#00ff00')
+ await page.getByRole('button',{name:'Cutaway',exact:true}).click();await expect(page.getByTestId('ship-3d-canvas')).toBeVisible({timeout:30000})
+ await page.getByRole('button',{name:'Zoom 3D in',exact:true}).click();await page.getByRole('button',{name:'Zoom 3D in',exact:true}).click()
+ await page.screenshot({path:'test-results/fixture-engineering-colors-laptop.png',fullPage:true})
+ await page.getByRole('button',{name:'Exterior',exact:true}).click();await page.getByRole('button',{name:'View underside',exact:true}).click()
+ await page.screenshot({path:'test-results/fixture-freighter-underside-laptop.png',fullPage:true})
+ await page.getByRole('button',{name:'Walkthrough',exact:true}).click();await expect(page.getByTestId('ship-walk-canvas')).toBeVisible()
+ await page.getByRole('button',{name:'2D',exact:true}).click();await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible()
+ const saved=api.ships.get(shipId)!,part=saved.plan.parts.find(p=>p.name==='Main propulsion')!,style=saved.plan.surface_design!.components.find(c=>c.part_id===part.id)!
+ expect(style.materials).toEqual({trim:'#ff0000',detail:'#00ff00'})
+ await page.reload();await page.getByRole('button',{name:'Inventory',exact:true}).click();await page.getByRole('button',{name:/Main propulsion.*1/}).click();await expect(color).toHaveValue('#ff0000');await region.selectOption('detail');await expect(color).toHaveValue('#00ff00')
+ await page.getByRole('button',{name:'Use default component color',exact:true}).click();await expect(color).toHaveValue('#394957');await page.getByRole('button',{name:'Undo map edit',exact:true}).click();await expect(color).toHaveValue('#00ff00')
+ expect(errors).toEqual([]);expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
+})
+
+test('fixture per-part paint fails closed before setup and remains read-only for players',async({page})=>{
+ const api=await backend(page,'player');await page.goto(`/v2/ships/${shipId}`)
+ await page.getByRole('button',{name:'Inventory',exact:true}).click();await page.getByRole('button',{name:/Main propulsion.*1/}).click();await expect(page.getByLabel('Fixture part color',{exact:true})).toBeDisabled();expect(api.stats.saves).toBe(0)
+})
+
+test('unapplied fixture migration disables extra colors while casing remains editable',async({page})=>{
+ const api=await backend(page)
+ await page.route('**/rest/v1/rpc/v2_ship_check_surfaces',route=>route.fulfill({status:400,contentType:'application/json',body:JSON.stringify({message:'Invalid component color',code:'P0001'})}))
+ await page.goto(`/v2/ships/${shipId}`);await page.getByRole('button',{name:'Inventory',exact:true}).click();await page.getByRole('button',{name:/Main propulsion.*1/}).click()
+ await expect(page.getByText('Per-part colors need fixture-color setup.',{exact:false})).toBeVisible();await expect(page.getByLabel('Fixture part color',{exact:true})).toBeDisabled();await expect(page.getByLabel('Component color',{exact:true})).toBeEnabled();expect(api.stats.saves).toBe(0)
+})

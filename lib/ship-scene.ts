@@ -1,3 +1,4 @@
+import {type FixtureColors,fixtureStyle} from './ship-fixture-colors'
 import {hasLadder,openingLayout,physicalOpening,deckHoles,subtractOpenings} from './ship-openings'
 import {surfaceModeActive,roomSurfaces} from './ship-surfaces'
 import { type ShipPlan, type Deck, deckHeight, partFootprint, shipAppearance, windowAnchor } from './ships'
@@ -11,14 +12,15 @@ export type SceneOptions = { deckId: string; mode: 'cutaway' | 'exterior'; roofs
 // Fit the complete interior assembly, including caps/screens, below the ceiling.
 // Exterior hull, wings and engines intentionally use their own dimensions.
 export function fitEquipmentHeight(items: SceneItem[], floor: number, height: number): SceneItem[] {
+  const bottom = Math.min(0, ...items.map(i => i.at[1] - i.size[1] / 2 - floor))
   const top = Math.max(0, ...items.map(i => i.at[1] + i.size[1] / 2 - floor))
-  const available = height - Math.min(.1, height * .1)
-  const scale = top > 0 ? Math.min(1, available / top) : 1
-  return items.map(i => ({ ...i, at: [i.at[0], floor + (i.at[1] - floor) * scale, i.at[2]], size: [i.size[0], i.size[1] * scale, i.size[2]] }))
+  const clearance = Math.min(.01,height*.01),available = height - Math.min(.1, height * .1) - clearance
+  const scale = top > bottom ? Math.min(1, available / (top-bottom)) : 1
+  return items.map(i => ({ ...i, at: [i.at[0], floor + clearance + (i.at[1] - floor - bottom) * scale, i.at[2]], size: [i.size[0], i.size[1] * scale, i.size[2]] }))
 }
-export function equipmentModel(type: string, tint: string, selection: SceneSelection, deckId: string, x: number, floor: number, z: number): SceneItem[] {
+export function equipmentModel(type: string, tint: string, selection: SceneSelection, deckId: string, x: number, floor: number, z: number, materials:FixtureColors={}): SceneItem[] {
   const items: SceneItem[]=[]
-  const piece=(dx:number,y:number,dz:number,w:number,h:number,depth:number,color=tint,shape?:SceneItem['shape'])=>items.push({at:[x+dx,floor+y,z+dz],size:[w,h,depth],color,shape,selection,deckId})
+  const piece=(dx:number,y:number,dz:number,w:number,h:number,depth:number,color?:string,shape?:SceneItem['shape'])=>items.push({at:[x+dx,floor+y,z+dz],size:[w,h,depth],color:color===undefined?tint:color==='#37c7df'?color:color==='#526b82'||color==='#a99064'||color==='#394957'||color==='#d6dde0'||color==='#bbcdd5'?(materials.detail??color):(materials.trim??color),shape,selection,deckId})
   const seat=()=>{
     piece(0,.17,.24,.08,.34,.08,'#9aabb5');piece(0,.035,.24,.38,.07,.32)
     piece(0,.35,.24,.38,.12,.34,'#526b82');piece(0,.52,.4,.38,.4,.08,'#526b82')
@@ -35,15 +37,18 @@ export function equipmentModel(type: string, tint: string, selection: SceneSelec
       for(const dx of [-.19,.19]) {piece(dx,y+.18,0,.31,.29,.51,'#a99064');piece(dx,y+.18,.262,.04,.29,.02,'#cfbd92')}
     }
   } else if(type==='Propulsion') {
-    piece(0,.09,0,.72,.18,.85);piece(0,.42,0,.58,.58,.78,tint,'engine')
+    piece(0,.09,0,.72,.18,.85);piece(0,.42,0,.58,.58,.78,undefined,'engine')
     piece(0,.42,.4,.42,.42,.08,'#394957','engine');piece(0,.42,-.25,.68,.68,.1,'#9eabb4','engine')
   } else if(type==='Power'||type==='Life support') {
-    piece(0,.07,0,.7,.14,.7);piece(0,.55,0,.55,.95,.55,tint,'upright')
+    piece(0,.07,0,.7,.14,.7);piece(0,.55,0,.55,.95,.55,undefined,'upright')
     piece(0,.9,0,.61,.07,.61,type==='Power'?'#ddb864':'#73c7ac','upright')
   } else if(type==='Furniture') {
     piece(0,.12,0,.63,.24,.86);piece(0,.29,0,.65,.14,.88,'#8b9cab');piece(0,.39,-.27,.47,.07,.24,'#d6dde0')
   } else if(type==='Sanitation') {
-    piece(0,.18,.1,.35,.36,.4,'#c7d4d9','upright');piece(0,.39,.1,.46,.07,.46,'#e0e8eb','upright');piece(0,.4,-.23,.42,.65,.17,'#bbcdd5')
+    piece(0,.18,.1,.35,.36,.4,undefined,'upright');piece(0,.39,.1,.46,.07,.46,'#e0e8eb','upright');piece(0,.4,-.23,.42,.65,.17,'#bbcdd5')
+  } else if(type==='Ladder') {
+    for(const dx of [-.28,.28])piece(dx,.7,0,.045,1.4,.06)
+    for(let y=.15;y<1.4;y+=.22)piece(0,y,0,.56,.045,.06,'#dfb95e')
   } else {
     piece(0,.3,0,.7,.6,.7);piece(0,.625,0,.52,.05,.48,'#a6b5bd')
   }
@@ -118,10 +123,10 @@ export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
       if(plan.connections.some(c=>c.aperture?.ladder_part_id===p.id))continue
       if(items.length>=SCENE_LIMIT){omitted++;continue}
       const size=partFootprint(p.type), s: SceneSelection={kind:'part',id:p.id}, x=p.x+size.width/2,z=p.y+size.height/2
-      const tint=plan.surface_design?.components.find(c=>c.part_id===p.id)?.color??(p.condition==='Broken'?'#74545b':p.condition==='Damaged'?'#937155':'#586e82')
+      const {color:tint,materials}=fixtureStyle(plan,p)
       if(p.type==='Port wing'||p.type==='Starboard wing') {
         box(x,base+.25,z,size.width,.2,size.height,tint,s,p.type==='Port wing'?'port':'starboard')
-        box(x,base+.37,z,.09,.035,size.height*.65,appearance.accent_color,s)
+        box(x,base+.37,z,.09,.035,size.height*.65,materials.trim??appearance.accent_color,s)
         if(exterior) {
           const port=p.type==='Port wing', root=port?p.x+size.width:p.x
           // Add a root fairing only when the wing actually meets occupied hull.
@@ -129,14 +134,14 @@ export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
           if(adjacent) box(root+(port?-.4:.4),base+Math.min(h,.9)/2,z,.8,Math.min(h,.9),size.height*.82,tint,s,port?'slope-port':'slope-starboard',true)
         }
       } else if(p.type==='Booster') {
-        box(x,base+.5,z,1.25,1.25,2.5,tint,s,'engine')
-        box(x,base+.5,z+1.28,.85,.85,.12,appearance.engine_color,s,'engine',false,true)
-        box(x,base+.5,z-.8,1.5,1.5,.18,'#9ba8b4',s,'engine')
+        box(x,base+.76,z,1.25,1.25,2.5,tint,s,'engine')
+        box(x,base+.76,z+1.28,.85,.85,.12,appearance.engine_color,s,'engine',false,true)
+        box(x,base+.76,z-.8,1.5,1.5,.18,materials.trim??'#9ba8b4',s,'engine')
       } else if(p.type==='Hull panel') {
         box(x,base+.4,z,size.width,.5,size.height,tint,s)
-        box(x,base+.66,z,size.width*.8,.035,size.height*.7,'#94a5b5',s)
+        box(x,base+.66,z,size.width*.8,.035,size.height*.7,materials.trim??'#94a5b5',s)
       } else {
-        fitEquipmentHeight(equipmentModel(p.type,tint,s,d.id,x,base,z),base,h).forEach(add)
+        fitEquipmentHeight(equipmentModel(p.type,tint,s,d.id,x,base,z,materials),base,h).forEach(add)
       }
     }
     if(exterior) for(const w of appearance.windows.filter(w=>w.deck_id===d.id)) {
@@ -172,7 +177,7 @@ export function buildShipScene(plan: ShipPlan, options: SceneOptions) {
     }
     for(const c of plan.connections) {
       const at=c.from_deck===d.id?c.from:c.to_deck===d.id?c.to:null
-      if(at&&hasLadder(plan,c)){const selection:SceneSelection={kind:'connection',id:c.id},other=c.from_deck===d.id?c.to_deck:c.from_deck,upper=plan.decks.findIndex(v=>v.id===d.id)<plan.decks.findIndex(v=>v.id===other),ladderHeight=physicalOpening(plan,c)?upper?.35:h+.3:h;for(const dx of [.22,.78])box(at.x+dx,base+ladderHeight/2,at.y+.65,.045,ladderHeight,.06,'#b8c8d0',selection);for(let y=.15;y<ladderHeight;y+=.22)box(at.x+.5,base+y,at.y+.65,.56,.045,.06,'#dfb95e',selection)}
+      if(at&&hasLadder(plan,c)){const ladder=plan.parts.find(p=>p.id===c.aperture?.ladder_part_id),style=ladder?fixtureStyle(plan,ladder):{color:'#b8c8d0',materials:{} as FixtureColors};const selection:SceneSelection={kind:'connection',id:c.id},other=c.from_deck===d.id?c.to_deck:c.from_deck,upper=plan.decks.findIndex(v=>v.id===d.id)<plan.decks.findIndex(v=>v.id===other),ladderHeight=physicalOpening(plan,c)?upper?.35:h+.3:h;for(const dx of [.22,.78])box(at.x+dx,base+ladderHeight/2,at.y+.65,.045,ladderHeight,.06,style.color,selection);for(let y=.15;y<ladderHeight;y+=.22)box(at.x+.5,base+y,at.y+.65,.56,.045,.06,style.materials.trim??'#dfb95e',selection)}
     }
     if(!d.rooms.length) box(d.width/2,base-.1,d.height/2,d.width,.05,d.height,'#182634')
   }

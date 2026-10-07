@@ -1,9 +1,10 @@
+import {type FixtureColors,fixtureColorsError} from './ship-fixture-colors'
 import {deckHoles,subtractOpenings} from './ship-openings'
 import type {ShipPlan,Deck,Room} from './ships'
 import {type PaintedSurface,type SurfaceFace,paintError,MAX_PAINT_TILES,MAX_PAINT_RUNS} from './ship-paint'
 export type HullSide='front'|'rear'|'port'|'starboard'
 export type HullSection={id:string;deck_id:string;room_id:string;side:HullSide;extension_ft:number;slope:number;taper:number;bevel_ft:number}
-export type SurfaceDesign={surfaces:PaintedSurface[];sections:HullSection[];components:{id:string;part_id:string;color:string}[]}
+export type SurfaceDesign={surfaces:PaintedSurface[];sections:HullSection[];components:{id:string;part_id:string;color:string;materials?:FixtureColors}[]}
 export const SURFACE_FACES:SurfaceFace[]=['underside','floor','ceiling','roof','interior-front','interior-rear','interior-port','interior-starboard','exterior-front','exterior-rear','exterior-port','exterior-starboard']
 export const EMPTY_SURFACES:SurfaceDesign={surfaces:[],sections:[],components:[]}
 export function defaultSection(side:HullSide):Omit<HullSection,'id'|'deck_id'|'room_id'>{return {side,extension_ft:side==='front'?6.5:side==='rear'?0:2.5,slope:.6,taper:side==='front'?.44:0,bevel_ft:0}}
@@ -22,7 +23,7 @@ export function surfaceDesignError(plan:ShipPlan,unique:(id:string)=>boolean):st
     if(!unique(section.id)||!room(section.deck_id,section.room_id)||!['front','rear','port','starboard'].includes(section.side)||keys.has(key)||![section.extension_ft,section.slope,section.taper,section.bevel_ft].every(Number.isFinite)||section.extension_ft<0||section.extension_ft>10||section.slope<0||section.slope>1||section.taper<0||section.taper>.8||section.bevel_ft<0||section.bevel_ft>2)return 'Invalid hull section.'
     keys.add(key)
   }
-  for(const component of s.components){if(!unique(component.id)||!plan.parts.some(p=>p.id===component.part_id)||!color(component.color)||keys.has(`part:${component.part_id}`))return 'Invalid component color.';keys.add(`part:${component.part_id}`)}
+  for(const component of s.components){if(!unique(component.id)||!plan.parts.some(p=>p.id===component.part_id)||!color(component.color)||(component.materials!==undefined&&fixtureColorsError(component.materials))||keys.has(`part:${component.part_id}`))return 'Invalid component color.';keys.add(`part:${component.part_id}`)}
   return null
 }
 export function pruneSurfaces(plan:ShipPlan):ShipPlan{

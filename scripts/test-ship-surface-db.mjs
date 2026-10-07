@@ -73,6 +73,21 @@ try {
     probe.surface_design.surfaces[0].face='unknown';await assert.rejects(()=>db.query('SELECT public.v2_ship_check_surfaces($1::jsonb)',[JSON.stringify(probe)]),/Invalid painted face/)
   })
 
+  await check('fixture materials migration is additive, idempotent and retains exact privileges',async()=>{
+    const metadata=async()=>(await db.query("SELECT proowner,proacl,prosecdef,proconfig FROM pg_proc WHERE oid='public.v2_ship_check_surfaces(jsonb)'::regprocedure")).rows[0]
+    const probe={decks:[],parts:[{id:'p'}],surface_design:{surfaces:[],sections:[],components:[{id:'c',part_id:'p',color:'#123456',materials:{trim:'#ff0000',detail:'#00ff00'}}]}}
+    await assert.rejects(()=>db.query('SELECT v2_ship_check_surfaces($1)',[JSON.stringify(probe)]),/Invalid component color/)
+    const before=await metadata(),sql=readFileSync(new URL('../sql/20261007001704_ship_fixture_materials.sql',import.meta.url),'utf8')
+    await assert.rejects(()=>db.exec(sql.replace('COMMIT;','SELECT 1/0; COMMIT;')),/division by zero/);await db.exec('ROLLBACK')
+    assert.deepEqual(await metadata(),before);await assert.rejects(()=>db.query('SELECT v2_ship_check_surfaces($1)',[JSON.stringify(probe)]),/Invalid component color/)
+    await db.exec(sql);await db.exec(sql);assert.deepEqual(await metadata(),before)
+    const legacy=structuredClone(probe);delete legacy.surface_design.components[0].materials;await db.query('SELECT v2_ship_check_surfaces($1)',[JSON.stringify(legacy)])
+    await db.query('SELECT v2_ship_check_surfaces($1)',[JSON.stringify(probe)])
+    for(const materials of [null,[],{trim:'red'},{glow:'#ff0000'},{detail:1},{trim:'#000000',extra:'#ffffff'}]){
+      const bad=structuredClone(probe);bad.surface_design.components[0].materials=materials
+      await assert.rejects(()=>db.query('SELECT v2_ship_check_surfaces($1)',[JSON.stringify(bad)]),/Invalid fixture material/)
+    }
+  })
   assert.deepEqual((await db.query("SELECT oid,proacl::text FROM pg_proc WHERE proname IN ('v2_design_action','v2_ship_check_plan','v2_ship_before_write') ORDER BY oid")).rows,aclBefore)
   const id='20000000-0000-0000-0000-000000000001'
   const plan={schema_version:1,decks:[{id:'deck',name:'Deck',width:4,height:4,height_ft:12,rooms:[],marks:[]}],parts:[],connections:[]}
@@ -194,6 +209,8 @@ try {
   design=await act('withdraw',design.version)
   const painted=structuredClone(plan);painted.decks[0].rooms=[{id:'room',name:'Room',x:0,y:0,width:4,height:4,notes:''}]
   painted.surface_design={surfaces:[{id:'surface',deck_id:'deck',room_id:'room',face:'floor',color:'#123456',paint:{palette:['#ff0000'],runs:[[1025,4,0],[2049,4,0]]}}],sections:[{id:'section',deck_id:'deck',room_id:'room',side:'front',extension_ft:8,slope:.5,taper:.25,bevel_ft:1}],components:[]}
+  painted.parts=[{id:'fixture',deck_id:'deck',room_id:'room',x:1,y:1,name:'Power unit',type:'Power',quantity:1,quality:'Store-bought',black_market:false,condition:'Working',notes:''}]
+  painted.surface_design.components=[{id:'fixture-color',part_id:'fixture',color:'#123456',materials:{trim:'#ff0000',detail:'#00ff00'}}]
   painted.surface_design.surfaces.push({...structuredClone(painted.surface_design.surfaces[0]),id:'undersurface',face:'underside'})
   design=await act('save',design.version,{...payload,plan:painted})
   assert.deepEqual([...design.plan.surface_design.surfaces].sort((a,b)=>a.id.localeCompare(b.id)),[...painted.surface_design.surfaces].sort((a,b)=>a.id.localeCompare(b.id)))
@@ -204,7 +221,7 @@ try {
     design=await act('save',design.version,{...payload,plan:old});sameSurfaces(design.plan.surface_design,painted.surface_design)
   })
   await check('malformed paint refs, overlaps, palette indexes, oversized fills and shapes rejected atomically',async()=>{
-    for(const mutate of [p=>p.surfaces[0].paint.runs=[[0,50001,0]],p=>p.surfaces[0].paint.runs=[[0,2,0],[1,1,0]],p=>p.surfaces[0].paint.runs=[[0,1,9]],p=>p.surfaces[0].paint.runs=[[0,1.5,0]],p=>p.surfaces[0].paint.palette=['red'],p=>p.surfaces[0].room_id='missing',p=>p.surfaces[0].extra='secret',p=>p.surfaces[0].id='section',p=>p.sections[0].extension_ft=11,p=>p.sections[0].slope=-1,p=>p.sections[0].taper=1,p=>p.sections[0].bevel_ft=3,p=>p.sections.push({...p.sections[0],id:'other'})]){
+    for(const mutate of [p=>p.components[0].materials={trim:'red'},p=>p.components[0].materials={unknown:'#ff0000'},p=>p.surfaces[0].paint.runs=[[0,50001,0]],p=>p.surfaces[0].paint.runs=[[0,2,0],[1,1,0]],p=>p.surfaces[0].paint.runs=[[0,1,9]],p=>p.surfaces[0].paint.runs=[[0,1.5,0]],p=>p.surfaces[0].paint.palette=['red'],p=>p.surfaces[0].room_id='missing',p=>p.surfaces[0].extra='secret',p=>p.surfaces[0].id='section',p=>p.sections[0].extension_ft=11,p=>p.sections[0].slope=-1,p=>p.sections[0].taper=1,p=>p.sections[0].bevel_ft=3,p=>p.sections.push({...p.sections[0],id:'other'})]){
       const bad=structuredClone(painted);mutate(bad.surface_design);await assert.rejects(()=>act('save',design.version,{...payload,plan:bad}))
     }
     assert.equal((await db.query('SELECT version FROM v2_ship_designs WHERE id=$1',[id])).rows[0].version,design.version)
@@ -257,7 +274,7 @@ try {
   await check('ladder is an independent anchored fixture; deletion through an old client removes traversal only',async()=>{
     const withLadder=structuredClone(openingPlan);withLadder.parts.push({id:'ladder',name:'Cargo ladder',deck_id:'deck',room_id:'room',x:1,y:1,type:'Ladder',quantity:1,quality:'Store-bought',condition:'Working',black_market:false,notes:''});withLadder.connections[0].aperture.ladder_part_id='ladder'
     openingDesign=await act('save',openingDesign.version,{...payload,plan:withLadder},openId)
-    const moved=structuredClone(withLadder);moved.parts[0].x=2;await assert.rejects(()=>act('save',openingDesign.version,{...payload,plan:moved},openId))
+    const moved=structuredClone(withLadder);moved.parts.find(p=>p.id==='ladder').x=2;await assert.rejects(()=>act('save',openingDesign.version,{...payload,plan:moved},openId))
     const old=structuredClone(openingPlan);delete old.connections[0].aperture
     openingDesign=await act('save',openingDesign.version,{...payload,plan:old},openId);assert.equal(openingDesign.plan.connections[0].aperture.ladder_part_id,null)
   })

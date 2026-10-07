@@ -35,3 +35,18 @@ Exterior defaults to Orbit. Paint exterior and Erase exterior reserve normal dra
 Once underside data exists, retain the extended validator even if reverting the UI. Older clients that omit surface customization preserve it through the existing merge behavior. Local database tests cover draft/acceptance/legacy-save preservation and permission invariants. Live browser smoke uses synthetic responses and must not create campaign data.
 
 Exterior cap paint uses reserved rows 128, 256, 384 and 512 in the existing wall-face sparse paint grid (start/end/top/bottom caps). Main-wall coordinates are unchanged, cap regions are bounded below the existing 1024-square address limit, and no database migration or permission change is needed. Only texture regions that actually contain paint consume the existing renderer texture budget. Older clients preserve these out-of-footprint squares through the existing save/merge path.
+
+
+### Fixture placement and material colors
+
+Rear booster assemblies sit wholly above the deck floor (including the intake collar). Interior equipment is fitted as a complete assembly between floor and ceiling, with a small floor clearance. The same scene models drive cutaway, exterior and walkthrough. Existing ships pick up the rendering fix without changing saved coordinates or template copies.
+
+Exterior skin has a 0.015 ft inward metal backing. This is render geometry only: original outer faces, paint UVs, floor finish, deck heights, openings, collision and external dimensions stay unchanged. Backing edges and inner faces cannot receive exterior paint.
+
+Select a fixture and use its Casing color or named Paintable part menu. Available regions match the model: intake collar/exhaust housing, seat upholstery, cargo containers, service band, mattress/pillow, bowl/tank, ladder rungs, wing marking, or panel inset. Screens and engine emission are not overridden. Changes use the editor's existing undo/redo and save/reload; reset one region or all component colors. Regions use optional `surface_design.components[].materials` with only `trim` and `detail` six-digit hex values; the existing `color` remains the casing color.
+
+Activation: review and separately approve `sql/20261007001704_ship_fixture_materials.sql` before applying it to the verified project. It replaces only the existing invoker surface validator, guards the known previous/current function body hashes, preserves ACL/owner/search_path, and modifies no stored records or policies. The UI calls the pure validator with a synthetic probe and disables extra colors on any error; casing edits and the placement fix do not need this migration. Reload after activation. Never test by creating live campaign records.
+
+Recovery: before any new colors are saved, the previous validator can be restored from the reviewed underside migration's CREATE FUNCTION body in a transaction. After colors are saved, retain the additive validator when reverting UI so existing plans remain readable/savable; removing new fields would be a separate data change requiring approval. Older clients preserve material fields during unrelated edits, but their old component-color reset/editor replaces the component style; use the current preview for color edits.
+
+Verification uses synthetic freighters and real mesh bounds, in-memory PostgreSQL, and mocked browser saves. A read-only lookup found no published or draft ship named freighter; this fix was verified against the starter model, not an identified personal design.
