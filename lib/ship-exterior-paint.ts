@@ -136,7 +136,7 @@ export function attachExteriorPaint({canvas,camera,scene,objects,size,color,eras
  }
  function up(e:PointerEvent){e.stopImmediatePropagation();if(pointerState?.id!==e.pointerId)return;finishStroke();cancel()}
  function key(e:KeyboardEvent){if(e.key==='Escape'){cancel();onMessage('')}if(e.key==='Alt'&&(pointerState||document.activeElement===canvas)){e.preventDefault();alt=e.type==='keydown';if(alt)finishStroke();visibility.clear();clear(preview);render()}}
- function pointerCancelled(){cancel();onMessage('')}
+ function pointerCancelled(){const active=!!pointerState;cancel();if(active)onMessage('')}
  function blur(){alt=false;pointerCancelled()}
  canvas.addEventListener('pointerdown',down,true);canvas.addEventListener('pointermove',move,true);canvas.addEventListener('pointerup',up,true);canvas.addEventListener('pointercancel',pointerCancelled);canvas.addEventListener('lostpointercapture',pointerCancelled);canvas.addEventListener('pointerleave',pointerCancelled);window.addEventListener('keydown',key);window.addEventListener('keyup',key);window.addEventListener('blur',blur)
  return()=>{cancel();scene.remove(preview,live,settled);canvas.removeEventListener('pointerdown',down,true);canvas.removeEventListener('pointermove',move,true);canvas.removeEventListener('pointerup',up,true);canvas.removeEventListener('pointercancel',pointerCancelled);canvas.removeEventListener('lostpointercapture',pointerCancelled);canvas.removeEventListener('pointerleave',pointerCancelled);window.removeEventListener('keydown',key);window.removeEventListener('keyup',key);window.removeEventListener('blur',blur)}
