@@ -4,6 +4,13 @@ on:
   push:
     branches: ['**']
   pull_request:
+  workflow_dispatch:
+    inputs:
+      smoke_preview_url:
+        description: 'Optional existing Basement OS preview to verify after activation'
+        required: false
+        default: ''
+        type: string
 
 jobs:
   e2e:
@@ -75,6 +82,7 @@ jobs:
       - name: Run E2E tests
         env:
           TEST_BASE_URL: ${{ steps.vercel.outputs.url }}
+          TEST_ADDITIONAL_PREVIEW_URL: ${{ github.event.inputs.smoke_preview_url }}
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
           PLAYER_EMAIL: ${{ secrets.PLAYER_EMAIL }}

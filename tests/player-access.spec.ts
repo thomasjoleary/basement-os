@@ -300,6 +300,49 @@ test.describe('Player character sheet access', () => {
     console.log('::notice title=Underside activation::Exact CI preview: live authenticated capability probe passed; real underside hit, live paint before release, red paint, undo/redo, intercepted save/reload passed. Zero campaign writes; synthetic GM UI only; existing account unchanged.')
   })
 
+  test('fixture colors activate on deployed previews with intercepted saves only', async ({ page }) => {
+    test.setTimeout(120000)
+    const additional=process.env.TEST_ADDITIONAL_PREVIEW_URL?.replace(/\/$/,'')
+    if(additional&&!/^https:\/\/basement-[a-z0-9]+-thomas-olearys-projects\.vercel\.app$/.test(additional))throw new Error('Additional preview must belong to Basement OS')
+    for(const target of [...new Set([BASE_URL,...(additional?[additional]:[])])]){
+      const fixtureId='20000000-0000-0000-0000-000000000092'
+      let ship={id:fixtureId,name:'Synthetic fixture activation',description:'',owner_id:playerUserId,crew_ids:[],version:1,plan:instantiateTemplate('freighter')}
+      let saves=0,blockedWrites=0,errors=0,probes=0
+      const error=()=>errors++;page.on('pageerror',error)
+      const response=(r:import('@playwright/test').Response)=>{if(new URL(r.url()).pathname==='/rest/v1/rpc/v2_ship_check_surfaces'&&r.ok()&&r.request().postData()?.includes('fixture-color-probe'))probes++}
+      page.on('response',response)
+      await page.route(`${new URL(SUPABASE_URL).origin}/rest/v1/**`,async route=>{
+        const request=route.request(),url=new URL(request.url()),path=url.pathname
+        const fulfill=(data:unknown)=>route.fulfill({contentType:'application/json',body:JSON.stringify(data)})
+        if(path==='/rest/v1/rpc/campaign_access_status')return fulfill({status:'approved',is_gm:true})
+        if(path==='/rest/v1/profiles')return fulfill(url.searchParams.get('select')==='role'?{role:'gm'}:[])
+        if(path==='/rest/v1/v2_ship_gm_notes')return fulfill({notes:''})
+        if(path==='/rest/v1/v2_ships')return fulfill(ship)
+        if(path==='/rest/v1/rpc/v2_save_ship'){const data=request.postDataJSON();expect(data.ship_id).toBe(fixtureId);ship={...ship,plan:data.ship_plan,version:ship.version+1};saves++;return fulfill(ship)}
+        if(path==='/rest/v1/rpc/v2_ship_check_surfaces')return route.continue()
+        if(!['GET','HEAD'].includes(request.method())){blockedWrites++;return route.abort()}
+        return fulfill([])
+      })
+      await injectSession(page,target);await page.setViewportSize({width:1366,height:900});await page.goto(`${target}/v2/ships/${fixtureId}`)
+      async function select(){await page.getByRole('button',{name:'Inventory',exact:true}).click();await page.getByRole('button',{name:/Main propulsion.*1/}).click()}
+      await select();const color=page.getByLabel('Fixture part color',{exact:true}),region=page.getByLabel('Paintable fixture part',{exact:true})
+      await expect(color).toBeEnabled();await expect.poll(()=>probes).toBeGreaterThan(0)
+      await color.fill('#ff0000');await region.selectOption('detail');await color.fill('#00ff00')
+      await page.getByRole('button',{name:'Undo map edit',exact:true}).click();await expect(color).toHaveValue('#394957')
+      await page.getByRole('button',{name:'Redo map edit',exact:true}).click();await expect(color).toHaveValue('#00ff00')
+      await page.getByRole('button',{name:'Reset selected part color',exact:true}).click();await expect(color).toHaveValue('#394957')
+      await page.getByRole('button',{name:'Undo map edit',exact:true}).click();await expect(color).toHaveValue('#00ff00')
+      for(const view of ['Cutaway','Exterior','Walkthrough','2D']){await page.getByRole('button',{name:view,exact:true}).click();await expect(page.getByTestId(view==='Walkthrough'?'ship-walk-canvas':view==='2D'?'ship-grid':'ship-3d-canvas')).toBeVisible()}
+      await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible()
+      const part=ship.plan.parts.find(p=>p.name==='Main propulsion')!;expect(ship.plan.surface_design!.components.find(c=>c.part_id===part.id)!.materials).toEqual({trim:'#ff0000',detail:'#00ff00'})
+      await page.reload();await select();await expect(color).toHaveValue('#ff0000');await region.selectOption('detail');await expect(color).toHaveValue('#00ff00')
+      await page.getByRole('button',{name:'Use default component color',exact:true}).click();await expect(color).toHaveValue('#394957');await page.getByRole('button',{name:'Undo map edit',exact:true}).click();await expect(color).toHaveValue('#00ff00')
+      expect({saves,blockedWrites,errors}).toEqual({saves:1,blockedWrites:0,errors:0})
+      console.log(`::notice title=Fixture color activation::${target}: real authenticated material probe; enabled controls; independent colors/defaults/undo-redo; three views; intercepted save/reload passed. Zero campaign writes. Synthetic GM UI only; existing account unchanged.`)
+      await page.unroute(`${new URL(SUPABASE_URL).origin}/rest/v1/**`);page.off('response',response);page.off('pageerror',error)
+    }
+  })
+
   test.describe('Live ship schema smoke', () => {
     test('preview reads migrated ship storage without errors or campaign writes', async ({ page }) => {
       test.setTimeout(60000)
