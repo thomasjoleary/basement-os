@@ -338,6 +338,16 @@ test.describe('Player character sheet access', () => {
       await page.reload();await select();await expect(color).toHaveValue('#ff0000');await region.selectOption('detail');await expect(color).toHaveValue('#00ff00')
       await page.getByRole('button',{name:'Use default component color',exact:true}).click();await expect(color).toHaveValue('#394957');await page.getByRole('button',{name:'Undo map edit',exact:true}).click();await expect(color).toHaveValue('#00ff00')
       expect({saves,blockedWrites,errors}).toEqual({saves:1,blockedWrites:0,errors:0})
+      if(target===BASE_URL){
+        const before=ship.plan.parts.length
+        await page.getByText(/Layout tools ·/).click();await page.getByRole('button',{name:'Copy selection',exact:true}).click();await page.getByLabel('Paste X',{exact:true}).fill('0');await page.getByLabel('Paste Y',{exact:true}).fill('0');await page.getByRole('button',{name:'Paste selection',exact:true}).click()
+        await page.getByLabel('Vertical symmetry line',{exact:false}).check();await page.getByRole('button',{name:'Mirror selection across X',exact:true}).click();await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();expect(ship.plan.parts).toHaveLength(before+2)
+        await page.getByRole('button',{name:'Paint',exact:true}).click();await page.getByLabel('Paint color',{exact:true}).fill('#125678');await page.getByRole('button',{name:'Save color to palette',exact:true}).click();await expect(page.getByRole('button',{name:'Use saved color #125678',exact:true})).toBeVisible();await page.getByLabel('Mirror painting',{exact:true}).check()
+        const room=ship.plan.decks[0].rooms[0];await page.getByLabel('Square x',{exact:true}).fill(String(room.x*5+1));await page.getByLabel('Square y',{exact:true}).fill(String(room.y*5+1));await page.getByRole('button',{name:'Paint square',exact:true}).click();await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible()
+        await page.getByRole('button',{name:'Export deck plan',exact:true}).click();await expect(page.getByTestId('deck-export-preview')).toContainText('PLAN KEY');await expect(page.getByRole('link',{name:'Download SVG',exact:true})).toBeVisible();await page.getByRole('button',{name:'Close export',exact:true}).click()
+        expect({saves,blockedWrites,errors}).toEqual({saves:3,blockedWrites:0,errors:0})
+        console.log(`::notice title=Editor conveniences smoke::${target}: copy, mirror, saved palette, mirrored flat paint, intercepted saves and labeled export preview passed. Zero campaign writes; synthetic fixture only.`)
+      }
       console.log(`::notice title=Fixture color activation::${target}: real authenticated material probe; enabled controls; independent colors/defaults/undo-redo; three views; intercepted save/reload passed. Zero campaign writes. Synthetic GM UI only; existing account unchanged.`)
       await page.unroute(`${new URL(SUPABASE_URL).origin}/rest/v1/**`);page.off('response',response);page.off('pageerror',error)
     }

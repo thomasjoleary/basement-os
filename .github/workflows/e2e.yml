@@ -47,6 +47,9 @@ jobs:
       - name: Test bounded opening helpers and recovery locally
         run: node scripts/test-ship-openings-hardening.mjs
 
+      - name: Test ship editor conveniences locally
+        run: node scripts/test-ship-edit-tools.mjs
+
       - name: Test ship editor locally
         run: npm run test:ships:ui
 

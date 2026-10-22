@@ -1,5 +1,6 @@
 'use client'
 
+import type {Symmetry} from '@/lib/ship-edit-tools'
 import {moveShipItem,type MoveTarget} from '@/lib/ship-move'
 import {apertureSize,hasLadder} from '@/lib/ship-openings'
 import { useEffect, useRef, useState } from 'react'
@@ -9,8 +10,8 @@ export type ShipTool = 'select' | 'move' | 'pan' | 'room' | 'wall' | 'door' | 'l
 export type Selection = { kind: 'room' | 'mark' | 'part' | 'connection'; id: string } | null
 type Gesture = { target?: MoveTarget; start: Point; current: Point; client: Point; pan: Point; part?: string; origin?: Point; mode: ShipTool; pointerId: number; inverse: DOMMatrix; scale: Point; dragging: boolean }
 
-export default function ShipGrid({ deck, plan, editable, tool, selection, onSelect, onChange, onDeck, onMessage }: {
-  deck: Deck; plan: ShipPlan; editable: boolean; tool: ShipTool; selection: Selection
+export default function ShipGrid({ guides, deck, plan, editable, tool, selection, onSelect, onChange, onDeck, onMessage }: {
+  guides?:Symmetry; deck: Deck; plan: ShipPlan; editable: boolean; tool: ShipTool; selection: Selection
   onSelect: (s: Selection) => void; onChange: (p: ShipPlan) => void; onDeck: (id: string) => void; onMessage: (message: string) => void
 }) {
   const svg = useRef<SVGSVGElement>(null), group = useRef<SVGGElement>(null)
@@ -166,6 +167,8 @@ export default function ShipGrid({ deck, plan, editable, tool, selection, onSele
             {hasLadder(plan,c)&&<path d="M-7 -11V11 M7 -11V11 M-7 -8H7 M-7 -2H7 M-7 4H7 M-7 10H7" stroke="#dfb95e" strokeWidth="2"/>}<title>{c.name} — opening to connected deck</title>
           </g>
         })}
+        {guides?.x!==null&&guides?.x!==undefined&&<line data-testid="symmetry-x" x1={guides.x*32} x2={guides.x*32} y1={0} y2={deck.height*32} stroke="#f472b6" strokeWidth={2} strokeDasharray="8 6" pointerEvents="none"/>}
+        {guides?.y!==null&&guides?.y!==undefined&&<line data-testid="symmetry-y" y1={guides.y*32} y2={guides.y*32} x1={0} x2={deck.width*32} stroke="#f472b6" strokeWidth={2} strokeDasharray="8 6" pointerEvents="none"/>}
         {outline && <rect x={outline.x*32} y={outline.y*32} width={outline.width*32} height={outline.height*32} fill="#06b6d4" fillOpacity=".3" stroke="#67e8f9" strokeDasharray="5 3" pointerEvents="none"/>}
         {draft?.mode === 'room' && <rect x={Math.min(draft.start.x, draft.current.x) * 32} y={Math.min(draft.start.y, draft.current.y) * 32} width={(Math.abs(draft.start.x - draft.current.x) + 1) * 32} height={(Math.abs(draft.start.y - draft.current.y) + 1) * 32} fill="#06b6d4" fillOpacity=".2" stroke="#67e8f9" strokeDasharray="6 4" pointerEvents="none" />}
       </g>

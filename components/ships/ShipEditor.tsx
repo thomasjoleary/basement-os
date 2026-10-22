@@ -4,6 +4,9 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 const ShipViewer3D = dynamic(() => import('./ShipViewer3D'), { ssr: false, loading: () => <div className="h-[520px] flex items-center justify-center">Loading 3D view…</div> })
 import {openingLayout,fitsFloor} from '@/lib/ship-openings'
+import DeckPlanExport from './DeckPlanExport'
+import ShipEditTools from './ShipEditTools'
+import type {Symmetry} from '@/lib/ship-edit-tools'
 import ShipFixtureColors from './ShipFixtureColors'
 import ShipOpeningEditor from './ShipOpeningEditor'
 import DeckPaintView from './DeckPaintView'
@@ -30,6 +33,7 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles, 
   const [deckId, setDeckId] = useState(initialShip.plan.decks[0].id)
   const [tool, setTool] = useState<ShipTool>('select'), [selection, setSelection] = useState<Selection>(null)
   const [view, setView] = useState<'2d' | 'cutaway' | 'exterior' | 'paint' | 'walkthrough'>('2d')
+  const [guideMap,setGuideMap]=useState<Record<string,Symmetry>>({})
   const [surfaceFace,setSurfaceFace]=useState<SurfaceFace>('floor')
   const [undoPlans,setUndoPlans]=useState<ShipPlan[]>([]),[redoPlans,setRedoPlans]=useState<ShipPlan[]>([])
   const [tab, setTab] = useState<'inspect' | 'inventory' | 'ship'>('inspect')
@@ -38,6 +42,8 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles, 
   const dirty = useMemo(()=>JSON.stringify(ship)!==JSON.stringify(saved.ship)||notes!==saved.notes,[ship,saved,notes])
   useEffect(() => { onDirtyChange?.(dirty) }, [dirty, onDirtyChange])
   const deck = ship.plan.decks.find(d => d.id === deckId) ?? ship.plan.decks[0]
+  const guides=guideMap[deck.id]??{x:null,y:null}
+  const setGuides=(value:Symmetry)=>setGuideMap(old=>({...old,[deck.id]:value}))
   const room = selection?.kind === 'room' ? deck.rooms.find(r => r.id === selection.id) : undefined
   const mark = selection?.kind === 'mark' ? deck.marks.find(m => m.id === selection.id) : undefined
   const part = selection?.kind === 'part' ? ship.plan.parts.find(p => p.id === selection.id) : undefined
@@ -105,14 +111,16 @@ export default function ShipEditor({ initialShip, initialNotes, isGM, profiles, 
       {message && <p role="status" className="rounded border border-cyan-800 bg-gray-800 p-3 mb-4 text-sm">{message}</p>}
       <div className="flex flex-wrap gap-2 items-center mb-4">
         <>{canEdit&&<><button disabled={busy||!undoPlans.length} onClick={undoMap} className="border border-gray-600 rounded p-2 disabled:opacity-40">Undo map edit</button><button disabled={busy||!redoPlans.length} onClick={redoMap} className="border border-gray-600 rounded p-2 disabled:opacity-40">Redo map edit</button></>}</><div role="group" aria-label="Ship view" className="flex flex-wrap gap-1">{(['2d', 'cutaway', 'exterior', 'paint', 'walkthrough'] as const).map(v => <button key={v} aria-pressed={view===v} onClick={()=>setView(v)} className={`rounded px-3 py-2 text-sm ${view===v?'bg-cyan-800':'bg-gray-800 border border-gray-700'}`}>{v==='2d'?'2D':v==='cutaway'?'Cutaway':v==='exterior'?'Exterior':v==='paint'?'Paint':'Walkthrough'}</button>)}</div>
+        <DeckPlanExport ship={ship} deck={deck} dirty={dirty}/>
         <label className="text-sm flex items-center gap-2 min-w-0 max-w-full">Deck<select aria-label="Current deck" value={deck.id} onChange={e => switchDeck(e.target.value)} className="w-52 min-w-0 max-w-full bg-gray-800 border border-gray-600 rounded p-2">{ship.plan.decks.map(d => <option value={d.id} key={d.id}>{d.name}</option>)}</select></label>
         {canEdit && <button disabled={busy || ship.plan.decks.length >= 20} onClick={() => { const d = newDeck(`Deck ${ship.plan.decks.length + 1}`); change({ ...ship.plan, decks: [...ship.plan.decks, d] }); switchDeck(d.id) }} className="text-sm border border-gray-600 rounded p-2">Add deck</button>}
         {view === '2d' && (canEdit ? ['select', 'move', 'pan', 'room', 'wall', 'door', 'label', 'fixture'] : ['select', 'pan']).map(t => <button key={t} aria-pressed={tool === t} disabled={busy} onClick={() => { setTool(t as ShipTool); setSelection(null) }} className={`capitalize rounded px-3 py-2 text-sm ${tool === t ? 'bg-cyan-800 border border-cyan-500' : 'bg-gray-800 border border-gray-700'}`}>{t==='move'?'Move':t}</button>)}
         {canEdit&&view==='2d'&&<button disabled={busy} onClick={addOpening} className="text-sm rounded p-2 border border-gray-600">Add opening</button>}
         {canEdit && view === '2d' && <button disabled={busy} onClick={addConnection} className="text-sm rounded p-2 border border-gray-600">Connect decks</button>}
       </div>
+      {canEdit&&<ShipEditTools plan={ship.plan} deck={deck} selection={selection} disabled={busy} guides={guides} onGuides={setGuides} onChange={change} onSelect={inspect} onMessage={setMessage}/>}
       <div className={`grid grid-cols-1 ${view==='paint'||view==='walkthrough'?'':'xl:grid-cols-[minmax(0,1fr)_340px]'} gap-4 items-start`}>
-        {view === 'paint' ? <DeckPaintView plan={ship.plan} deck={deck} disabled={!canEdit||busy} onChange={change}/> : view === 'walkthrough' ? <ShipWalkthrough plan={ship.plan} deckId={deck.id} onDeck={switchDeck} onFallback={()=>setView('2d')}/> : view === '2d' ? <ShipGrid key={`${deck.id}:${tool}`} deck={deck} plan={ship.plan} editable={canEdit && !busy} tool={tool} selection={selection} onSelect={inspect} onChange={change} onDeck={switchDeck} onMessage={setMessage} /> : <ShipViewer3D key={view} plan={ship.plan} deckId={deck.id} mode={view} selection={selection} onSelect={(s, targetDeck)=>{if(targetDeck)setDeckId(targetDeck);inspect(s)}} onFallback={()=>setView('2d')} editable={canEdit&&!busy} onChange={change} onSurface={setSurfaceFace} />}
+        {view === 'paint' ? <DeckPaintView guides={guides} plan={ship.plan} deck={deck} disabled={!canEdit||busy} onChange={change}/> : view === 'walkthrough' ? <ShipWalkthrough plan={ship.plan} deckId={deck.id} onDeck={switchDeck} onFallback={()=>setView('2d')}/> : view === '2d' ? <ShipGrid guides={guides} key={`${deck.id}:${tool}`} deck={deck} plan={ship.plan} editable={canEdit && !busy} tool={tool} selection={selection} onSelect={inspect} onChange={change} onDeck={switchDeck} onMessage={setMessage} /> : <ShipViewer3D key={view} plan={ship.plan} deckId={deck.id} mode={view} selection={selection} onSelect={(s, targetDeck)=>{if(targetDeck)setDeckId(targetDeck);inspect(s)}} onFallback={()=>setView('2d')} editable={canEdit&&!busy} onChange={change} onSurface={setSurfaceFace} />}
         {view!=='paint'&&view!=='walkthrough'&&<aside className="min-w-0 h-[min(640px,75dvh)] flex flex-col [overflow-wrap:anywhere] [overflow-anchor:none] border border-gray-700 bg-gray-800 rounded-xl overflow-hidden">
           <div className="flex shrink-0 border-b border-gray-700">{(['inspect', 'inventory', 'ship'] as const).map(t => <button key={t} onClick={() => setTab(t)} className={`flex-1 text-sm py-3 ${tab === t ? 'text-cyan-300 bg-gray-900' : 'text-gray-400'}`}>{t[0].toUpperCase() + t.slice(1)}</button>)}</div>
           <div className="p-4 space-y-4 min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]">

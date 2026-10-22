@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import {type ShipPlan,newId,validatePlan} from './ships'
 import {type SurfaceQuad,EMPTY_SURFACES} from './ship-surfaces'
-import {type FootTile,EMPTY_PAINT,paintTiles,PAINT_STRIDE,strokeTiles} from './ship-paint'
+import {type FootTile,EMPTY_PAINT,paintTiles,PAINT_STRIDE,strokeTiles,decodePaint} from './ship-paint'
 
 export function exteriorBrush(q:SurfaceQuad,at:FootTile,size:number):FootTile[]{
  const result:FootTile[]=[],half=Math.floor((size-1)/2)
@@ -54,7 +54,7 @@ function surfaceCoordinates(mesh:THREE.Mesh,point:THREE.Vector3){
 
 // The first ray hit remains authoritative. Live geometry is a disposable stroke
 // preview; finishing the stroke commits one atomic edit to the document/history.
-export function attachExteriorPaint({canvas,camera,scene,objects,size,color,erase,underside,onCommit,onMessage,render,onOrbit,onGesture}:{canvas:HTMLCanvasElement;camera:THREE.Camera;scene:THREE.Scene;objects:THREE.Object3D[];size:number;color:string;erase:boolean;underside:boolean;onCommit:(stroke:ExteriorStroke,color:string|null)=>boolean|void;onMessage:(s:string)=>void;render:()=>void;onOrbit?:(dx:number,dy:number)=>void;onGesture?:(active:boolean)=>void}){
+export function attachExteriorPaint({canvas,camera,scene,objects,size,color,erase,underside,sampleColor,onCommit,onMessage,render,onOrbit,onGesture}:{canvas:HTMLCanvasElement;camera:THREE.Camera;scene:THREE.Scene;objects:THREE.Object3D[];size:number;color:string;erase:boolean;underside:boolean;sampleColor?:(color:string)=>void;onCommit:(stroke:ExteriorStroke,color:string|null)=>boolean|void;onMessage:(s:string)=>void;render:()=>void;onOrbit?:(dx:number,dy:number)=>void;onGesture?:(active:boolean)=>void}){
  const ray=new THREE.Raycaster(),pointer=new THREE.Vector2(),preview=new THREE.Group(),live=new THREE.Group(),settled=new THREE.Group();scene.add(preview,live,settled)
  type Entry={q:SurfaceQuad;mesh:THREE.Mesh;tiles:Map<number,FootTile>;overlay?:THREE.Mesh;dirty:boolean}
  type Pick={mesh:THREE.Mesh;q:SurfaceQuad;at:FootTile}
@@ -125,8 +125,8 @@ export function attachExteriorPaint({canvas,camera,scene,objects,size,color,eras
   if([...committed.values()].reduce((n,e)=>n+e.tiles.size,0)>50000){cancel();onMessage('Paint saved to the edit history. Start another drag to continue.')}render()
  }
 
- function down(e:PointerEvent){if(e.button!==0)return;e.preventDefault();e.stopImmediatePropagation();if(pointerState){cancel();return}canvas.focus?.({preventScroll:true});clear(preview);visibility.clear();alt=e.altKey;pointerState={id:e.pointerId,x:e.clientX,y:e.clientY};onGesture?.(true);canvas.setPointerCapture(e.pointerId);if(!alt)begin(e.clientX,e.clientY)}
- function move(e:PointerEvent){e.stopImmediatePropagation();clear(preview)
+ function down(e:PointerEvent){if(e.button!==0)return;if(sampleColor){e.preventDefault();e.stopImmediatePropagation();const picked=hit(e.clientX,e.clientY);if(picked){const p=local(picked);sampleColor(decodePaint(p.q.paint??EMPTY_PAINT).get(p.at.y*PAINT_STRIDE+p.at.x)??p.q.color);onMessage('Color sampled. Select Paint exterior to paint.')}return}e.preventDefault();e.stopImmediatePropagation();if(pointerState){cancel();return}canvas.focus?.({preventScroll:true});clear(preview);visibility.clear();alt=e.altKey;pointerState={id:e.pointerId,x:e.clientX,y:e.clientY};onGesture?.(true);canvas.setPointerCapture(e.pointerId);if(!alt)begin(e.clientX,e.clientY)}
+ function move(e:PointerEvent){e.stopImmediatePropagation();if(sampleColor)return;clear(preview)
   if(!pointerState){visibility.clear();if(!e.altKey&&!alt)sample(e.clientX,e.clientY,false);render();return}if(pointerState.id!==e.pointerId)return
   const previous={x:pointerState.x,y:pointerState.y};pointerState.x=e.clientX;pointerState.y=e.clientY
   if(e.altKey||alt){finishStroke();if(!pointerState)return;onOrbit?.(e.clientX-previous.x,e.clientY-previous.y);visibility.clear();canvas.dataset.paintOrbit='true';render();return}

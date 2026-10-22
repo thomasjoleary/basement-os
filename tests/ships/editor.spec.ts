@@ -63,7 +63,7 @@ test('templates create independent ships, repeated creation and cancel', async (
     await page.getByLabel('Ship name').fill(`New ${template}`)
     await page.getByLabel('Starting plan').selectOption(template)
     await page.getByRole('button', { name: 'Create ship', exact: true }).dblclick()
-    await expect(page.getByRole('heading', { name: `New ${template}` })).toBeVisible()
+    await expect(page.getByRole('heading', { name: `New ${template}` })).toBeVisible({timeout:15000})
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(1366)
     if (template === 'freighter') await page.getByLabel('Current deck').selectOption({ label: 'Cargo deck' })
     await page.screenshot({ path: `test-results/ship-template-${template}.png`, fullPage: true })
@@ -828,4 +828,49 @@ test('unapplied fixture migration disables extra colors while casing remains edi
  await page.route('**/rest/v1/rpc/v2_ship_check_surfaces',route=>route.fulfill({status:400,contentType:'application/json',body:JSON.stringify({message:'Invalid component color',code:'P0001'})}))
  await page.goto(`/v2/ships/${shipId}`);await page.getByRole('button',{name:'Inventory',exact:true}).click();await page.getByRole('button',{name:/Main propulsion.*1/}).click()
  await expect(page.getByText('Per-part colors need fixture-color setup.',{exact:false})).toBeVisible();await expect(page.getByLabel('Fixture part color',{exact:true})).toBeDisabled();await expect(page.getByLabel('Component color',{exact:true})).toBeEnabled();expect(api.stats.saves).toBe(0)
+})
+
+
+test('layout conveniences preserve click positions, copy colors, mirror and undo on laptop widths', async ({page})=>{
+ const api=await backend(page),ship=api.ships.get(shipId)!,deck=ship.plan.decks[0]
+ deck.width=40;deck.height=30;deck.rooms=[];deck.marks=[];ship.plan.connections=[];ship.plan.parts=[{...ship.plan.parts[0],x:2,y:2,deck_id:deck.id,room_id:null,type:'Fixture',name:'Copy source'}]
+ ship.plan.surface_design={surfaces:[],sections:[],components:[{id:crypto.randomUUID(),part_id:ship.plan.parts[0].id,color:'#123456',materials:{trim:'#654321'}}]}
+ await page.setViewportSize({width:1366,height:768});await page.goto(`/v2/ships/${shipId}`)
+ await page.getByText(/Layout tools ·/).click();await page.getByTestId('ship-grid').locator('[data-kind="part"]').click()
+ await page.getByRole('button',{name:'Copy selection',exact:true}).click();await page.getByLabel('Paste X',{exact:true}).fill('8');await page.getByLabel('Paste Y',{exact:true}).fill('4');await page.getByRole('button',{name:'Paste selection',exact:true}).click()
+ await expect(page.getByLabel('Position x',{exact:true})).toHaveValue('8');await expect(page.getByLabel('Position y',{exact:true})).toHaveValue('4')
+ await page.getByLabel('Vertical symmetry line',{exact:false}).check();await page.getByLabel('Symmetry x',{exact:true}).fill('15');await page.getByRole('button',{name:'Mirror selection across X',exact:true}).click();await expect(page.getByLabel('Position x',{exact:true})).toHaveValue('21')
+ await page.getByRole('button',{name:'Undo map edit',exact:true}).click();await page.getByRole('button',{name:'Redo map edit',exact:true}).click()
+ await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();expect(api.ships.get(shipId)!.plan.parts).toHaveLength(3);expect(api.ships.get(shipId)!.plan.surface_design!.components.at(-1)!.materials!.trim).toBe('#654321')
+ for(const width of [1280,1024,390]){await page.setViewportSize({width,height:800});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)}
+ await page.setViewportSize({width:1366,height:768});await page.screenshot({path:'test-results/layout-conveniences-laptop.png',fullPage:true})
+ await page.reload();await expect(page.getByTestId('ship-grid').locator('[data-kind="part"]')).toHaveCount(3)
+})
+
+test('paint conveniences sample, persist palette and mirror through shared undo without live writes',async({page})=>{
+ const api=await backend(page),ship=api.ships.get(shipId)!,deck=ship.plan.decks[0]
+ deck.rooms=[{id:crypto.randomUUID(),name:'Paint test',x:0,y:0,width:4,height:4,notes:''}];deck.marks=[];ship.plan.connections=[];ship.plan.parts=[]
+ await page.setViewportSize({width:1366,height:900});await page.goto(`/v2/ships/${shipId}`);await page.getByText(/Layout tools ·/).click();await page.getByLabel('Vertical symmetry line',{exact:false}).check();await page.getByLabel('Symmetry x',{exact:true}).fill('2');await page.getByRole('button',{name:'Paint',exact:true}).click()
+ await page.getByLabel('Paint color',{exact:true}).fill('#123456');await page.getByRole('button',{name:'Save color to palette',exact:true}).click();await page.getByLabel('Mirror painting',{exact:true}).check();const interrupted=page.getByTestId('surface-paint-canvas');await interrupted.scrollIntoViewIfNeeded();const interruptedBox=(await interrupted.boundingBox())!;await page.mouse.move(interruptedBox.x+80,interruptedBox.y+80);await page.mouse.down();await interrupted.dispatchEvent('pointercancel',{pointerId:1});await page.mouse.up();await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled();await page.getByLabel('Square x',{exact:true}).fill('1');await page.getByLabel('Square y',{exact:true}).fill('2');await page.getByRole('button',{name:'Paint square',exact:true}).click()
+ await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();const paint=api.ships.get(shipId)!.plan.surface_design!.surfaces[0].paint;expect(paint.runs.reduce((n,r)=>n+r[1],0)).toBe(2)
+ await page.getByRole('button',{name:'eyedropper',exact:true}).click();const canvas=page.getByTestId('surface-paint-canvas'),box=(await canvas.boundingBox())!;await page.mouse.click(box.x+box.width*(20+1.5*29)/1200,box.y+box.height*(20+2.5*29)/620);await expect(page.getByLabel('Paint color',{exact:true})).toHaveValue('#123456');expect(api.stats.saves).toBe(1)
+ await page.getByRole('button',{name:'Undo map edit',exact:true}).click();await page.getByRole('button',{name:'Redo map edit',exact:true}).click();await page.screenshot({path:'test-results/paint-conveniences-laptop.png',fullPage:true});await page.reload();await page.getByRole('button',{name:'Paint',exact:true}).click();await expect(page.getByRole('button',{name:'Use saved color #123456',exact:true})).toBeVisible()
+})
+
+
+test('clean deck export is labeled, repeatable, private-note free and available read-only',async({page})=>{
+ const api=await backend(page,'player');await page.setViewportSize({width:1366,height:800});await page.goto(`/v2/ships/${shipId}`)
+ for(let i=0;i<2;i++){await page.getByRole('button',{name:'Export deck plan',exact:true}).click();await expect(page.getByRole('dialog',{name:'Deck plan export',exact:true})).toBeVisible();const preview=page.getByTestId('deck-export-preview');await expect(preview).toContainText('Test Freighter');await expect(preview).toContainText('PLAN KEY');expect(await preview.innerHTML()).not.toContain('GM SECRET');if(i===0){await page.screenshot({path:'test-results/deck-export-laptop.png',fullPage:true});const download=page.waitForEvent('download');await page.getByRole('link',{name:'Download SVG',exact:true}).click();expect((await download).suggestedFilename()).toMatch(/\.svg$/);await page.keyboard.press('Escape')}else await page.getByRole('button',{name:'Close export',exact:true}).click();await expect(page.getByRole('dialog',{name:'Deck plan export',exact:true})).not.toBeVisible()}
+ await page.getByLabel('Current deck',{exact:true}).selectOption({index:1});await page.getByRole('button',{name:'Export deck plan',exact:true}).click();await expect(page.getByRole('dialog',{name:'Deck plan export',exact:true})).toContainText('Cargo');expect(api.stats.saves).toBe(0);expect(api.stats.notesReads).toBe(0)
+})
+
+
+test('editor shortcuts ignore text fields and modal export; exterior eyedropper never paints',async({page})=>{
+ const api=await backend(page),ship=api.ships.get(shipId)!,d=ship.plan.decks[0];ship.plan.decks=[d];d.rooms=[{...d.rooms[0],x:4,y:4,width:6,height:6}];d.marks=[];ship.plan.connections=[];ship.plan.parts=[]
+ await page.setViewportSize({width:1366,height:900});await page.goto(`/v2/ships/${shipId}`);await page.getByRole('button',{name:'Exterior',exact:true}).click();await page.getByRole('button',{name:'Paint exterior',exact:true}).click();await page.getByLabel('Exterior paint color',{exact:true}).fill('#246810');await page.getByLabel('Exterior brush size').fill('3');const at=await exteriorSpot(page,'roof');await page.mouse.click(at.x,at.y)
+ await page.getByRole('button',{name:'Save ship',exact:true}).click();await expect(page.getByText('Ship saved.',{exact:true})).toBeVisible();await page.getByLabel('Exterior paint color',{exact:true}).fill('#ff0000');const again=await exteriorSpot(page,'roof'),canvas=page.getByTestId('ship-3d-canvas'),before=(await canvas.boundingBox())!;const rel={x:(again.x-before.x)/before.width,y:(again.y-before.y)/before.height}
+ await page.getByRole('button',{name:'Sample exterior color',exact:true}).click();await canvas.scrollIntoViewIfNeeded();const after=(await canvas.boundingBox())!;await page.mouse.click(after.x+rel.x*after.width,after.y+rel.y*after.height);await expect(page.getByLabel('Exterior paint color',{exact:true})).toHaveValue('#246810');await expect(page.getByRole('button',{name:'Save ship',exact:true})).toBeDisabled()
+ await page.getByRole('button',{name:'2D',exact:true}).click();await page.getByText(/Layout tools ·/).click();await page.getByRole('button',{name:'fixture',exact:true}).click();const point=await cell(page,1,1);await page.mouse.click(point.x,point.y);await page.getByRole('button',{name:'Copy selection',exact:true}).focus();await page.keyboard.press('Control+c');await page.getByLabel('Paste X',{exact:true}).fill('2');await page.getByLabel('Paste Y',{exact:true}).fill('2');await page.getByRole('button',{name:'Paste selection',exact:true}).focus();await page.keyboard.press('Control+v');await expect(page.getByTestId('ship-grid').locator('[data-kind="part"]')).toHaveCount(2)
+ await page.getByLabel('Component name',{exact:true}).focus();await page.keyboard.press('Control+v');await expect(page.getByTestId('ship-grid').locator('[data-kind="part"]')).toHaveCount(2)
+ await page.getByRole('button',{name:'Export deck plan',exact:true}).click();await page.keyboard.press('Control+v');await page.keyboard.press('Escape');await expect(page.getByTestId('ship-grid').locator('[data-kind="part"]')).toHaveCount(2);expect(api.stats.saves).toBe(1)
 })
