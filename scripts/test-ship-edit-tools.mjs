@@ -70,3 +70,10 @@ check('room reflection swaps implicit hull defaults as well as explicit sections
  const result=pasteSelection(plan,deck.id,copySelection(plan,deck.id,{kind:'room',id:room.id}),{x:0,y:0},{axis:'y',line:10});assert.equal(result.error,undefined);const sections=result.plan.surface_design.sections.filter(s=>s.room_id===result.selection.id);assert.equal(sections.find(s=>s.side==='rear').extension_ft,6.5);assert.equal(sections.find(s=>s.side==='front').extension_ft,0)
 })
 console.log(`${count} final editor and export checks passed`)
+
+check('room copies retain doors on right and rear boundaries, including reflected edges',()=>{
+ const source=structuredClone(plan);source.decks[0].marks=[{id:newId(),kind:'door',name:'Right door',x:6,y:2,length:1,vertical:true},{id:newId(),kind:'door',name:'Rear door',x:2,y:6,length:1,vertical:false}]
+ const clip=copySelection(source,deck.id,{kind:'room',id:room.id}),pasted=pasteSelection(source,deck.id,clip,{x:10,y:10});assert.equal(pasted.error,undefined);assert.deepEqual(pasted.plan.decks[0].marks.slice(-2).map(m=>[m.x,m.y]),[[15,11],[11,15]])
+ const mirrored=pasteSelection(source,deck.id,clip,{x:0,y:0},{axis:'x',line:10});assert.equal(mirrored.error,undefined);assert.equal(mirrored.plan.decks[0].marks.at(-2).x,14)
+})
+console.log(`${count} final editor and export checks passed`)

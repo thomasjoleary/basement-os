@@ -25,7 +25,7 @@ export function pasteSelection(plan:ShipPlan,deckId:string,clip:ShipClipboard,at
   if(part&&clip.plan.connections.some(c=>c.aperture?.ladder_part_id===part.id)||room&&clip.plan.connections.some(c=>c.from_deck===source.id&&inside(c.from)||c.to_deck===source.id&&inside(c.to)))return fail('This selection contains a deck connection. Copy its fixtures separately or add a new opening explicitly.')
   const shift=(p:Point,w=0,h=0):Point=>mirror?{x:mirror.axis==='x'?2*mirror.line-p.x-w:p.x,y:mirror.axis==='y'?2*mirror.line-p.y-h:p.y}:{x:p.x+at.x-item.x,y:p.y+at.y-item.y}
   const parts=part?[part]:room?clip.plan.parts.filter(p=>p.deck_id===source.id&&(p.room_id===room.id||inside(p))):[]
-  const marks=mark?[mark]:room?source.marks.filter(m=>inside(m)):[]
+  const marks=mark?[mark]:room?source.marks.filter(m=>m.kind==='label'?inside(m):m.x>=room.x&&m.y>=room.y&&m.x+(m.vertical?0:m.length)<=room.x+room.width&&m.y+(m.vertical?m.length:0)<=room.y+room.height):[]
   const ids=new Map<string,string>(),map=(old:string)=>{if(!ids.has(old))ids.set(old,newId());return ids.get(old)!}
   if(room){const r={...room,...shift(room,room.width,room.height),id:map(room.id)}
     if(deck.rooms.some(a=>r.x<a.x+a.width&&r.x+r.width>a.x&&r.y<a.y+a.height&&r.y+r.height>a.y))return fail('The copied room overlaps an existing room. Choose an empty destination.')
