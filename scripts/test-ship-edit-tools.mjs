@@ -77,3 +77,10 @@ check('room copies retain doors on right and rear boundaries, including reflecte
  const mirrored=pasteSelection(source,deck.id,clip,{x:0,y:0},{axis:'x',line:10});assert.equal(mirrored.error,undefined);assert.equal(mirrored.plan.decks[0].marks.at(-2).x,14)
 })
 console.log(`${count} final editor and export checks passed`)
+
+check('deck export grid defaults on, aligns five-foot cells and is entirely optional',()=>{
+ const ship={id:newId(),name:'Grid test',description:'',owner_id:null,crew_ids:[],plan,version:1},on=exportDeckSvg(ship,deck),off=exportDeckSvg(ship,deck,false,false)
+ assert.match(on,/<pattern id="deck-grid" width="32" height="32" x="0" y="0" patternUnits="userSpaceOnUse">/);assert.ok(on.includes('data-export-grid="room"'));assert.ok(on.includes(`width="${deck.width*32}" height="${deck.height*32}" fill="url(#deck-grid)"`));assert.ok(on.includes('Grid shown:'));assert.ok(off.includes('Grid omitted;'));assert.ok(!off.includes('deck-grid'));assert.ok(!off.includes('data-export-grid'))
+ assert.equal(exportDeckSvg(ship,deck),on);assert.ok(on.includes('paint-order="stroke"'));assert.ok(on.indexOf('data-export-grid="room"')<on.indexOf('>R1</text>'))
+})
+console.log(`${count} final editor and export checks passed`)

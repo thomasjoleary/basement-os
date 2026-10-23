@@ -22,7 +22,7 @@ The flat painter's **eyedropper** samples the selected square or its base surfac
 
 ## Deck-plan export
 
-**Export deck plan** previews the current deck as a clean, labeled top-down diagram. **Download SVG** saves a self-contained scalable vector file that can be opened or printed in a browser. The plan includes rooms, exterior component footprints, walls/doors, marked openings, dimensions, orientation, scale and a numbered legend. Unsaved edits are labeled as a draft. Change the current deck to export another deck.
+**Export deck plan** previews the current deck as a clean, labeled top-down diagram. **Include grid** is enabled by default and adds the editor-aligned five-foot grid to the preview and download. Turn it off for a clean grid-free plan; the choice is retained while this editor is open. **Download SVG** saves a self-contained scalable vector file that can be opened or printed in a browser. The plan includes rooms, exterior component footprints, walls/doors, marked openings, dimensions, orientation, scale and a numbered legend. Unsaved edits are labeled as a draft. Change the current deck to export another deck.
 
 Assigned readers can export the plan they can already view. Export contains no GM notes, public notes, account identifiers, ownership or crew assignments. Labels are XML-escaped; the file contains no script or external resources. Export does not save or mutate the campaign.
 
